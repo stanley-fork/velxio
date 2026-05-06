@@ -4,29 +4,36 @@ Goal de Phase 1: que el `merged.bin` que ya genera `arduino-cli` arranque en QEM
 
 **Crítico**: NO emular nada del SoC que no sea estrictamente necesario para boot + GPIO + UART + delay. Stubs `qemu_log_unimp()` para todo lo demás.
 
-## 1. Fork inicial
+## 1. Branch inicial
+
+Base = el fork del usuario, ya clonado en `third-party/qemu-lcgamboa/` (43 commits ahead de upstream lcgamboa, branch `picsimlab-esp32`). Ver inventario completo en [`02_fork_inventory.md`](02_fork_inventory.md).
 
 ```bash
-cd third-party/   # o crear wokwi-libs/qemu-esp32p4/
-git clone --depth 1 -b esp-develop https://github.com/espressif/qemu.git qemu-esp32p4
-cd qemu-esp32p4
+cd third-party/qemu-lcgamboa
+git remote add espressif https://github.com/espressif/qemu.git   # para cherry-pick futuros
 git checkout -b feat/esp32p4-machine
 ```
 
-Branch base: **`esp-develop`** (no `master`) — es la rama con los patches Espressif aplicados.
+> No se está forkeando un repo nuevo — extendemos el fork ya existente. Las CI workflows actuales (`build-libqemu.yml`) automáticamente compilan `feat/esp32p4-machine` cuando hagamos push, gracias al matcher de branches del workflow (necesita check; si no, ajustar).
 
-## 2. Build local del C3 primero (sanity check)
+## 2. Build local sanity-check (compilar el C3)
 
-Antes de tocar nada, verificar que el build funciona:
+Antes de tocar nada, verificar que el build local funciona usando los scripts del fork:
 
 ```bash
-./configure --target-list=riscv32-softmmu \
-            --disable-werror \
-            --disable-docs \
-            --disable-gtk \
-            --disable-vnc \
-            --disable-sdl \
-            --enable-debug
+# Linux/macOS (build-libqemu local)
+cd third-party/qemu-lcgamboa
+bash build_libqemu-esp32.sh
+
+# Windows
+bash build_libqemu-esp32-win.sh
+```
+
+Esto produce `libqemu-xtensa.{so,dll,dylib}` + `libqemu-riscv32.{so,dll,dylib}`.
+
+Para test funcional del C3 con binario standalone (no library):
+```bash
+./configure --target-list=riscv32-softmmu --disable-werror --enable-debug
 ninja -C build qemu-system-riscv32
 ./build/qemu-system-riscv32 -M esp32c3 -nographic
 ```
@@ -67,16 +74,21 @@ Direcciones críticas (extraer del TRM al iniciar; estos son rangos típicos de 
 
 Estrategia para esos: crear `hw/misc/esp32p4_unimp.c` que registra una `MemoryRegion` por base del peripheral, retorna 0 en lecturas y log warning en escrituras. Así el bootloader/IDF arranca sin colgarse.
 
-## 5. Cambios en `hw/riscv/`
+## 5. Cambios en `hw/riscv/` (relativos a `third-party/qemu-lcgamboa/`)
 
 Archivos nuevos:
-- `esp32p4.c` — derivado de `esp32c3.c`. Renombrar `Esp32C3MachineState` → `Esp32P4MachineState`, ajustar `memmap[]`, instanciar peripherals según tabla §4.
-- `esp32p4_clk.c` / `.h` — derivar de `esp32c3_clk.c`. PLL targets distintos.
-- `esp32p4_intmatrix.c` / `.h` — verificar si P4 conserva el "interrupt matrix" o usa CLIC directo (TRM Cap 12 dice que sí hay matrix).
+- `esp32p4.c` — derivado de `esp32c3.c` (634 LOC base). Renombrar `Esp32C3MachineState` → `Esp32P4MachineState`, ajustar `memmap[]`, instanciar peripherals según tabla §4.
+- `esp32p4_picsimlab.c` — derivado de `esp32c3_picsimlab.c` (1083 LOC). Variante con bridges Velxio (host-call exports). **Esta es la que Velxio cargará como libqemu**.
+- `esp32p4_clk.c` / `.h` — derivar de `esp32c3_clk.c` (179 LOC). PLL targets distintos: 400 MHz HP, 40 MHz LP, XTAL típicamente 40 MHz.
+- `esp32p4_intmatrix.c` / `.h` — derivar de `esp32c3_intmatrix.c` (426 LOC). Verificar TRM Cap 12: el P4 tiene Interrupt Matrix + CLIC + CLINT (los tres). El intmatrix routea peripheral IRQs a CLIC inputs.
 
 Archivos a modificar:
-- `meson.build` — agregar `'esp32p4.c', 'esp32p4_clk.c', 'esp32p4_intmatrix.c'` cuando `CONFIG_ESP32P4`.
-- `Kconfig` — `config ESP32P4 bool select RISCV32_CPU select ESP32P4_PERIPHS`.
+- `hw/riscv/meson.build` — agregar `'esp32p4.c', 'esp32p4_clk.c', 'esp32p4_intmatrix.c', 'esp32p4_picsimlab.c'` con flag `CONFIG_ESP32P4`.
+- `hw/riscv/Kconfig` — `config ESP32P4 bool select RISCV32_CPU select ESP32P4_PERIPHS`.
+- `configs/devices/riscv32-softmmu/default.mak` — `CONFIG_ESP32P4=y`.
+
+Archivos del lado del bridge Velxio (siguiendo el patrón de `velxio_camera_export.c`):
+- `hw/misc/velxio_p4_export.c` — host-call symbols para inyectar/recibir GPIO writes, ADC values, sensor data desde Velxio backend.
 
 ## 6. Validación
 
@@ -98,20 +110,22 @@ Activar trace en GPIO writes (`-d unimp,trace:esp32p4_gpio_*`). Verificar que ca
 
 ## 7. Integración Velxio (después de Smoke 3)
 
+Como Velxio carga `libqemu-riscv32` directamente (no spawn de proceso), la integración es:
+
 `backend/app/services/esp_qemu_manager.py`:
 ```python
-_MACHINE: dict[str, tuple[str, str]] = {
-    'esp32':    (QEMU_XTENSA,  'esp32'),
-    'esp32-s3': (QEMU_XTENSA,  'esp32s3'),
-    'esp32-c3': (QEMU_RISCV32, 'esp32c3'),
-    'esp32-p4': (QEMU_RISCV32_P4, 'esp32p4'),  # binary del fork nuevo
+_MACHINE = {
+    'esp32':    ('xtensa',  'esp32_picsimlab'),
+    'esp32-c3': ('riscv32', 'esp32c3_picsimlab'),
+    'esp32-p4': ('riscv32', 'esp32p4_picsimlab'),  # ← una línea
 }
-QEMU_RISCV32_P4 = os.environ.get('QEMU_RISCV32_P4_BINARY', QEMU_RISCV32)
 ```
 
-Bootloader offset: 0x2000 en P4 (¡ojo!, no 0x0000 ni 0x1000 — verificar `flash_args` que produce `arduino-cli`).
+Bootloader offset en P4 (verificar contra `flash_args` que produce `arduino-cli` — ver `03_compilation_test.md` §6 del autosearch).
 
 `frontend/src/types/board.ts`: agregar `'esp32-p4'`. `boardPinMapping.ts`: 55 pines según datasheet.
+
+CI auto-compila la nueva binary y la publica al release `qemu-prebuilt` cuando hagamos push de `feat/esp32p4-machine` a `picsimlab-esp32` (vía PR merge), gracias al workflow `build-libqemu.yml`.
 
 ## 8. Cuándo Phase 1 está hecho
 

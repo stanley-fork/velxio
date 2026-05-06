@@ -2,35 +2,35 @@
 
 ## Las 4 opciones reales
 
-| Opción | Lenguaje | Esfuerzo Phase 1 (boot + blink + Serial) | Esfuerzo total | Integra a Velxio | Veredicto |
+| Opción | Lenguaje | Esfuerzo Phase 1 | Esfuerzo total | Integra a Velxio | Veredicto |
 |---|---|---|---|---|---|
-| **A**. Forkear `espressif/qemu`, agregar `hw/riscv/esp32p4.c` | C | **3-6 semanas** | 3-6 meses | 1 línea en `esp_qemu_manager.py` | ✅ **GANADOR** |
-| B. Modificar `lcgamboa/qemu` | C | 4-7 semanas | 4-7 meses | 1 línea | ❌ peor que A |
-| C. Modificar rvemu / riscv-rust / TinyEMU | Rust → WASM | 2-3 meses | 12-18 meses | reescribir bridge | ❌ |
-| D. Escribir desde cero estilo `avr8js`/`rp2040js` | TS | 6-12 meses | 2-4 años | nativo browser | ❌ |
+| **A0**. Forkear `davidmonterocrespo24/qemu-lcgamboa` (tu fork) | C | **2-5 sem** | 3-6 meses | ya integrado vía libqemu | ✅ **GANADOR** |
+| A1. Forkear `espressif/qemu` upstream | C | 3-6 sem | 3-6 meses | 1 línea + setup CI/build | ⚠️ peor que A0 |
+| B. Forkear `lcgamboa/qemu` upstream | C | 4-7 sem | 4-7 meses | 1 línea + setup CI/build | ❌ |
+| C. Modificar rvemu / riscv-rust / TinyEMU | Rust → WASM | 4-7 meses | 12-18 meses | reescribir bridge | ❌ |
+| D. Escribir desde cero estilo `avr8js`/`rp2040js` | TS | 6-9 meses | 16-24 meses | nativo browser | ❌ corto plazo, ✅ largo plazo (ver hybrid) |
 
-## Por qué A (forkear `espressif/qemu`) gana, sin discusión
+> **Update 2026-05-06**: revisé `davidmonterocrespo24/qemu-lcgamboa` (43 commits ahead de lcgamboa). El fork **ya tiene toda la infra Velxio**: libqemu shared library, CI multi-plataforma (Linux amd64+arm64, Windows, macOS Intel+ARM), host-bridge `velxio_*_export.c`, ESP32-CAM end-to-end como prueba de capacidad. **Por eso A0 gana a A1**: agregar `hw/riscv/esp32p4.c` es el mismo trabajo, pero acá la distribución, packaging y bridge a Velxio ya están resueltos. Detalle completo en [`02_fork_inventory.md`](02_fork_inventory.md).
+
+## Por qué A0 (forkear tu propio `qemu-lcgamboa`) gana, sin discusión
 
 1. **El CPU ya está hecho y bien.** QEMU upstream emula RV32IMAFC + Zb + A perfectamente. Toda la complejidad del decoder, pipeline, MMU, exceptions, atomics — ya resuelta. **No tiene sentido reimplementar lo más difícil**.
 
-2. **Velxio ya integra QEMU.** El backend (`backend/app/services/esp_qemu_manager.py:41`) corre `qemu-system-riscv32 -M esp32c3` para ESP32-C3. Sumar P4 es:
-   ```python
-   _MACHINE: dict[str, tuple[str, str]] = {
-       'esp32-c3': (QEMU_RISCV32, 'esp32c3'),
-       'esp32-p4': (QEMU_RISCV32, 'esp32p4'),  # ← una línea
-   }
-   ```
-   Cero infraestructura nueva. UART, GPIO chardev, hot-reload de firmware, WebSocket bridge — todo gratis.
+2. **Velxio ya integra el fork.** El backend usa `libqemu-riscv32.{so,dll,dylib}` que sale de la CI del fork. Sumar P4 al backend es agregar `'esp32-p4': (..., 'esp32p4')` al `_MACHINE` dict y la nueva binary se distribuye automáticamente. UART, GPIO chardev, hot-reload, WebSocket bridge, host-call exports — todo gratis.
 
-3. **`esp32c3.c` es un template casi listo.** Verificado:
-   - 691 líneas de C en el machine file principal.
+3. **`esp32c3.c` del fork es un template casi listo.** Verificado:
+   - 634 líneas de C en `hw/riscv/esp32c3.c` + 1083 en `esp32c3_picsimlab.c` (variante con bridges Velxio).
    - Pattern muy mecánico: declarar memory regions (irom, drom, iram, dram, rtcram), mapear peripherals a `DR_REG_*` addresses, wire interrupts, instanciar UART/GPIO/SPI/I2C/RNG/AES/SHA/HMAC/RSA/RTC.
-   - **AES, SHA, RSA, HMAC, eFuse**: mismo IP block en C3 y P4 → reutilizables casi tal cual.
-   - **GPIO, UART, SPI, I2C, LEDC, Timer Group**: mismo IP, distinta cantidad/direcciones → adaptar memory map.
+   - **AES, SHA, RSA, HMAC, eFuse, LEDC, DS, XTS_AES**: mismo IP block en C3 y P4 → reutilizables casi tal cual.
+   - **GPIO, UART, SPI, I2C, Timer Group, SAR ADC**: mismo IP, distinta cantidad/direcciones → adaptar memory map.
 
-4. **Compilable a WASM.** El mismo fork QEMU se puede compilar con Emscripten (ya hay precedente en `test/esp32-emulator/qemu-wasm/Dockerfile` para Xtensa). Si en el futuro queremos correr P4 100% en browser, el path está abierto.
+4. **Vos ya demostraste capacidad de agregar peripherals nuevos.** Commit `ff8eee0f8b` agrega ESP32-CAM end-to-end (OV2640 SCCB + I2S DVP + VSYNC IRQ + descriptor walker) — exactamente el mismo patrón requerido para los peripherals nuevos del P4 (MIPI-CSI, USB OTG HS, etc., aunque esos quedan para Phase 3+).
 
-5. **Upstreamable.** Espressif tiene [issue #127](https://github.com/espressif/qemu/issues/127) explícitamente pidiendo este soporte. Tu fork puede convertirse en su contribución oficial. Mantenimiento futuro = de ellos.
+5. **CI auto-compila para 5 plataformas.** Cualquier commit a `picsimlab-esp32` (o branch derivada) dispara build de libqemu para Linux amd64+arm64, Windows, macOS Intel+ARM, y publica binarios a `davidmonterocrespo24/velxio` releases tag `qemu-prebuilt`. **Cero trabajo adicional de packaging para distribuir el P4 a deployments Velxio**.
+
+6. **Compilable a WASM.** El mismo fork se puede compilar con Emscripten (ya hay precedente en `test/esp32-emulator/qemu-wasm/Dockerfile`). Si en el futuro queremos correr P4 100% en browser, el path está abierto.
+
+7. **Cherry-pick desde `espressif/qemu` cuando publiquen P4.** Espressif tiene [issue #127](https://github.com/espressif/qemu/issues/127) abierto pidiendo soporte oficial. Cuando aterrice (meses/años), agregamos `espressif/qemu` como remoto secundario y mergeamos lo aplicable. La base QEMU del fork (8.1.3) vs Espressif (9.2.2) puede requerir ajustes menores, pero el código de `hw/riscv/esp32*` es self-contained.
 
 ## Por qué descartar las otras
 
