@@ -6,6 +6,7 @@
 ✅ **CI auto-trigger** `b5d2fd732d` — `feat/**` dispara build-libqemu.
 ✅ **Build + Phase 0 smoke** — machine init corre, CPU ejecuta.
 ✅ **UART0 + `-bios` loader** `24e67a8852` — `Hi\n` end-to-end desde firmware RISC-V hand-rolled, confirmado en stdout.
+✅ **Named peripheral stubs** `c976734cc2` — 22 peripherals (TIMG0/1, I²C×2, GP-SPI×2, USB Serial/JTAG, LEDC, Intmtx, ADC, GPIO/IO MUX, SYSTIMER, HP/LP SYSREG, PMU, LP_WDT, LP_UART, LP eFuse, etc.) registrados con `create_unimplemented_device()`. Visibles en `info mtree`, logging por peripheral, sin faults en accesos.
 
 ## Build + smoke tests (verificados 2026-05-06)
 
@@ -47,6 +48,22 @@ Hi
 ```
 
 Pipeline validado: instrucción RISC-V → SW al MMIO UART0 (0x500CA000) → chardev backend → stdout host.
+
+### Phase 1.B — Stubs absorben sin faultear
+
+Programa de 13 instrucciones (`/tmp/systimer_test.bin`) que:
+1. Lee de SYSTIMER (0x500E2000) — stub devuelve 0.
+2. Escribe a GPIO_MATRIX (0x500E0000) — stub absorbe.
+3. Escribe "OK\n" a UART0.
+
+```
+$ qemu-system-riscv32 -M esp32p4 -bios /tmp/systimer_test.bin -nographic
+[esp32p4] loaded 52 bytes of BIOS '/tmp/systimer_test.bin' at 0x4fc00000
+[esp32p4] machine init complete (UART0 + named peripheral stubs)
+OK
+```
+
+Confirma que la CPU pasa por accesos a 22 peripherals sin fault. Cada uno tendrá su impl real cuando se justifique (TIMG/SYSTIMER reales son los siguientes target).
 
 Test 3 con `merged.bin` falla en `-drive if=mtd` porque la máquina aún no tiene SPI flash modelado. Eso llega cuando agreguemos `hw/ssi/esp32p4_spi.c`.
 
