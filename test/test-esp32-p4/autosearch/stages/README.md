@@ -27,8 +27,10 @@ Tablero de estado: **una fila por fase**, ordenadas. Lo que viene primero es lo 
 | 2.I.sha (stub) | Crypto block stubs + SHA_BUSY=0 → ROM `ets_sha_*` returns | ✅ done | `5706e8c` | [phase_2i_sha.md](phase_2i_sha.md) |
 | 2.J | `-kernel` ELF path + magic check bypass → **app reaches pmu_hp_system_init** | ✅ done | `887d5d1` | [phase_2j_kernel_elf.md](phase_2j_kernel_elf.md) |
 | 2.J.next | CPU1 wait loop bypass → **app runs through call_start_cpu0 + ~30 init fns** | ✅ done | `1f06095` | [phase_2j_kernel_elf.md](phase_2j_kernel_elf.md) |
-| 2.J.uart | Investigación: app NOT stuck, ejecutando lento. Requiere scheduler/interrupts. | ✅ analyzed | (this commit) | [phase_2j_kernel_elf.md](phase_2j_kernel_elf.md) |
-| **2.K** | **Interrupt delivery — wire CLIC IRQs to CPU + SYSTIMER tick + UART RX** | ⏭️ **next** | — | TBD |
+| 2.J.uart | Investigación: app NOT stuck, ejecutando lento. Requiere scheduler/interrupts. | ✅ analyzed | `adeb86f` | [phase_2j_kernel_elf.md](phase_2j_kernel_elf.md) |
+| 2.K.systimer | SYSTIMER OP_REG snapshot protocol — exits IDF poll loops | ✅ done | `e408a19` | [phase_2k_systimer.md](phase_2k_systimer.md) |
+| 2.K.init_skip | Skip do_system_init_fn → app reaches **C++ static init + pthread + FreeRTOS port** | ✅ done | `53f8358` | [phase_2k_init_skip.md](phase_2k_init_skip.md) |
+| **2.K.scheduler** | **Reach `vTaskStartScheduler` — needs CLIC IRQ wiring for timer interrupts** | ⏭️ **next** | — | TBD |
 | 2.B | TIMG real (timers + WDT) | ⏳ pending | — | (see roadmap) |
 | 2.C | HP_SYSREG + Reset/Clock real | ⏳ pending | — | (see roadmap) |
 | 2.D | CLIC + Interrupt Matrix | ⏳ pending | — | (see roadmap) |

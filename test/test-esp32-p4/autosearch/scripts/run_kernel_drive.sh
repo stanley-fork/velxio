@@ -5,8 +5,10 @@ cd /root
   -kernel /root/blink.elf \
   -drive file=/root/blink.merged.bin,if=mtd,format=raw \
   -nographic \
-  > /root/qkrn_long.log 2>&1 &
+  -d in_asm -D /root/qkrn.log > /root/qkrn_long.log 2>&1 &
 QPID=$!
-sleep 180
+sleep 15
 kill -15 $QPID 2>/dev/null
 wait 2>/dev/null
+echo "=== STDOUT ==="
+cat /root/qkrn_long.log
