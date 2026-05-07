@@ -9,6 +9,12 @@
 ✅ **Named peripheral stubs** `c976734cc2` — 22 peripherals registrados con `create_unimplemented_device()`. Visibles en `info mtree`, logging por peripheral, sin faults.
 ✅ **Real eFuse + SYSTIMER + GPIO** `b9abf3712a` — 3 sysbus devices reales (~458 LOC) reemplazan los stubs correspondientes. Smoke test de 138 instrucciones RV32I valida que: MAC se lee como `0xDEADBE7C`, SYSTIMER avanza entre lecturas, GPIO bit 2 se setea/limpia con W1TS/W1TC y emite log "pin 2 -> 0/1".
 ✅ **`-kernel` ELF loader + 64 MB extflash + trampolín** `cd03e7a73a` — `blink.ino.elf` carga, sus 5 PT_LOAD segments aterrizan en HP SPM/extflash/L2MEM/LP SRAM, trampolín de 12 bytes en HP ROM salta al entry `0x4FF00C40`. CPU ejecuta `call_start_cpu0`, llama a `rv_utils_dbgr_is_attached`, regresa, llega a `CSRRS x, 0x7C1, x` (CSR custom Espressif CLIC) y se detiene. **Estamos ejecutando código del runtime ESP-IDF**.
+✅ **Phase 1.E — 4 unblocks consecutivos** `b0c4aad8f5`:
+  - **SP init en el trampolín**: `sp` partía en 0, primera push escribía a `0xFFFFFFFC` → store fault. Trampolín ahora setea `sp = 0x4FF80000` (~256 KB dentro de L2MEM).
+  - **Custom CSRs + CLIC standard como scratch RW**: 0x7C0-0x7FF + 0x307 (mtvt) + 0x345-0x349 (mnxti family) + 0xFB1 (mintstatus). El runtime IDF setea CLIC vectoring temprano y exige que esos CSRs acepten writes.
+  - **HP ROM lleno de `ret`**: cualquier call al ROM (esp_rom_delay_us, ets_*) retorna inmediatamente. Sin la blob oficial Espressif esto deja al caller continuar.
+  - **PF_X overlay pass**: ESP-IDF emite `.flash.text` (R-X) y `.flash.rodata` (RW) ambos en VA `0x40000020`. Segundo pase del ELF loader re-escribe solo segmentos con PF_X, así código gana sobre datos.
+  - **Resultado**: el CPU ahora ejecuta `pmu_lp_system_init`, `pmu_init`, varios stages del bootloader, hasta `bootloader_flash_execute_command_common` que necesita el controlador SPI flash real (~500 LOC + cache MMU — siguiente milestone).
 
 ## Build + smoke tests (verificados 2026-05-06)
 
@@ -79,10 +85,22 @@ El CPU ejecuta (verificado con `-d in_asm`):
 CSR `0x7C1` es un CSR custom de Espressif (CLIC mintstatus o similar). QEMU upstream no lo conoce → illegal instruction trap → IDF runtime no tiene exception handler todavía → loop.
 
 **Para superar este bloqueante** (Phase 1.E):
-- Agregar CSRs custom `0x7C0..0x7CF` en `target/riscv/esp_cpu.c` como scratch RW.
-- Stubear `HP_SYSREG` (0x500E5000) reads/writes para clock control.
-- Implementar mínimamente CLIC + CLINT.
-- (opcional) Cache MMU real translando 0x40000000 → contenido de flash.
+- Agregar CSRs custom `0x7C0..0x7CF` en `target/riscv/esp_cpu.c` como scratch RW. ✅ commit b0c4aad8f5
+- Stubear `HP_SYSREG` (0x500E5000) reads/writes para clock control. ⏳ aún hay reads que devuelven 0
+- Implementar mínimamente CLIC + CLINT. ⏳ los CSRs aceptan writes pero no hay routing real
+- (opcional) Cache MMU real translando 0x40000000 → contenido de flash. ⏳
+
+### Phase 1.F — Bloqueante actual: SPI flash controller
+
+Con los 4 fixes de Phase 1.E el runtime avanza hasta:
+
+```
+fault_load at PC 0x4FF00446 (bootloader_flash_execute_command_common+0xCC), tval 0x00000019
+```
+
+`bootloader_flash_execute_command_common` necesita el controller SPI flash real (clonando `hw/ssi/esp32c3_spi.c`, ~500 LOC) más la cache MMU para que el contenido de flash sea visible vía el cache window. Eso es ~1-2 sesiones de trabajo más.
+
+Después siguen: TIMG con WDT auto-disable, HP_SYSREG real, eventualmente: I2C, LEDC, RNG, etc. para que `setup()` y `loop()` funcionen.
 
 ### Phase 1.C — eFuse + SYSTIMER + GPIO reales
 
