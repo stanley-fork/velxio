@@ -17,8 +17,9 @@ Tablero de estado: **una fila por fase**, ordenadas. Lo que viene primero es lo 
 | **2** | **PROFESSIONAL ROADMAP** — implementación completa sin hacks | 🚧 wip | — | [PHASE_2_PROFESSIONAL_ROADMAP.md](PHASE_2_PROFESSIONAL_ROADMAP.md) |
 | 2.A.1 | Flash blob via `-drive if=mtd` + ROM ret-fill sync write | ✅ done | `07ac21b` | (see roadmap) |
 | 2.A.2 | Cache/MSPI smart stubs + ROM patch → **UART output real** | ✅ done | `4253b3e` | (see roadmap) |
-| 2.A.3 | Cache controller TRM-conformant (replaces smart stub + ROM patch) | ⏳ pending | — | (see roadmap) |
-| **2.B** | **TIMG real (timers + WDT) — fix recursive panic** | ⏭️ **next** | — | (see roadmap) |
+| 2.A.3 | Section-data pass + reset-cause/strap overrides → **full ROM banner** | ✅ done | `780ad0c` | (see roadmap) |
+| 2.A.4 | Investigate `ets_ops_table_ptr` runtime overwrite (something zeroes after init) | ⏭️ next | — | (see roadmap) |
+| 2.B | TIMG real (timers + WDT) | ⏳ pending | — | (see roadmap) |
 | 2.C | HP_SYSREG + Reset/Clock real | ⏳ pending | — | (see roadmap) |
 | 2.D | CLIC + Interrupt Matrix | ⏳ pending | — | (see roadmap) |
 | 2.E | eFuse extended (chip rev, BLK0) | ⏳ pending | — | (see roadmap) |

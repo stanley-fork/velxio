@@ -25,7 +25,7 @@
   - 1 ROM patch: `Cache_Invalidate_All` (`0x4FC10982`) → return success (deref-NULL bug por BSS hardware-state que no modelamos).
   - Trace muestra `uart_hal_write_fifo` + `uart_hal_get_txfifo_count` ejecutando — **UART real escribe a stdout**.
   - Output garbled "EGGGGGGGG..." = principio del banner "Guru Meditation Error" del ROM panic handler. ROM cae en panic recursivo (probablemente eFuse read), pero **UART output works**.
-  - Próximo blocker: el panic recursivo. Phase 2.B (TIMG/WDT) o Phase 2.E (eFuse extended) lo destrabará.
+✅ **Phase 2.A.3** `780ad0c50c` — **¡Banner completo del ROM!** `ESP-ROM:esp32p4-20230811 / Build:Aug 11 2023 / rst:0x1 (POWERON),boot:0x8 (SPI_FAST_FLASH_BOOT)`. Tres fixes: BIOS section-data pass (15 secciones `.data.*` no-PT_LOAD), reset-cause override (`0x50111010 → 0x80`), GPIO strap (offset 0x38 → 0x08). USB Serial tx patch para forzar output solo via UART0. ROM aún panica downstream (PC `0x4FC02954`, A5=0x8067) — algo overwrites `ets_ops_table_ptr` al runtime; Phase 2.A.4 investiga.
 ✅ **Phase 1.E — 4 unblocks consecutivos** `b0c4aad8f5`:
   - **SP init en el trampolín**: `sp` partía en 0, primera push escribía a `0xFFFFFFFC` → store fault. Trampolín ahora setea `sp = 0x4FF80000` (~256 KB dentro de L2MEM).
   - **Custom CSRs + CLIC standard como scratch RW**: 0x7C0-0x7FF + 0x307 (mtvt) + 0x345-0x349 (mnxti family) + 0xFB1 (mintstatus). El runtime IDF setea CLIC vectoring temprano y exige que esos CSRs acepten writes.
