@@ -14,6 +14,19 @@ Tablero de estado: **una fila por fase**, ordenadas. Lo que viene primero es lo 
 | 1.F-lite | RVA+RVF + CLIC MMIO + flash bypass + smart sysreg stubs | ✅ done | `fe94cea` | [phase_1f_lite_unblocks.md](phase_1f_lite_unblocks.md) |
 | 1.F.bis | More smart-stub overrides + runtime patches → spi_flash_cache_enabled | ✅ done | `d4505f8` | [phase_1f_bis_more_unblocks.md](phase_1f_bis_more_unblocks.md) |
 | 1.F.ter | `__assert_func` no-op patch → past cache asserts, into regi2c spin | ✅ done | `19537aa` | [phase_1l_iterative_patches.md](phase_1l_iterative_patches.md) |
+| **2** | **PROFESSIONAL ROADMAP** — implementación completa sin hacks | 🚧 wip | — | [PHASE_2_PROFESSIONAL_ROADMAP.md](PHASE_2_PROFESSIONAL_ROADMAP.md) |
+| 2.A.1 | Flash blob via `-drive if=mtd` + ROM ret-fill sync write | ✅ done | `07ac21b` | (see roadmap) |
+| 2.A.2 | Cache MMU controller (real register decode + non-identity mappings) | ⏭️ next | — | (see roadmap) |
+| 2.B | TIMG real (timers + WDT) | ⏳ pending | — | (see roadmap) |
+| 2.C | HP_SYSREG + Reset/Clock real | ⏳ pending | — | (see roadmap) |
+| 2.D | CLIC + Interrupt Matrix | ⏳ pending | — | (see roadmap) |
+| 2.E | eFuse extended (chip rev, BLK0) | ⏳ pending | — | (see roadmap) |
+| 2.F | SYSTIMER complete | ⏳ pending | — | (see roadmap) |
+| 2.G | GPIO + IO MUX full | ⏳ pending | — | (see roadmap) |
+| 2.H | UART complete (5 ports + IRQ) | ⏳ pending | — | (see roadmap) |
+| 2.I | RNG + USB Serial/JTAG + crypto | ⏳ pending | — | (see roadmap) |
+| 2.J | Multi-core HP + LP | ⏳ pending | — | (see roadmap) |
+| 2.K | I2C, SPI master, LEDC, ADC, RMT | ⏳ pending | — | (see roadmap) |
 | 1.F | SPI flash controller real (P4 no tiene uno separado — ver lite) | ⏸️ N/A | — | [phase_1f_spi_flash.md](phase_1f_spi_flash.md) |
 | 1.G | Cache MMU (flash window translation) | ⏳ pending | — | [phase_1g_cache_mmu.md](phase_1g_cache_mmu.md) |
 | 1.H | TIMG con WDT auto-disable | ⏳ pending | — | [phase_1h_timg_wdt.md](phase_1h_timg_wdt.md) |
