@@ -40,9 +40,10 @@ Tablero de estado: **una fila por fase**, ordenadas. Lo que viene primero es lo 
 | 2.Q | **Instrumented esp_cpu IRQ dispatch → root cause: `mtvec=0` when first trap fires (bypass skipped IDF mtvec setup); first trap clears mstatus.MIE permanently.** | ✅ done w/ findings | (this commit) | [phase_2q_irq_diagnostics.md](phase_2q_irq_diagnostics.md) |
 | 2.R | **mret stub at `0x4FC1FFB0` + trampoline writes mtvec → end-to-end IRQ delivery validated.** mstatus stable at 0x1888 (MIE=1) across continuous SYSTIMER ticks. | ✅ done | (this commit) | [phase_2r_mtvec_stub.md](phase_2r_mtvec_stub.md) |
 | 2.S | **CLIC mode dispatch in `target/riscv/`**: override `write_mtvec` to accept mode 3, dispatch via `*(mtvt + cause*4)`, route SYSTIMER to free cause 17. IDF `_interrupt_handler` now runs on every tick. | ✅ done | (this commit) | [phase_2s_clic_mode.md](phase_2s_clic_mode.md) |
-| 2.T | **Investigated**: bypass-dropped flow stuck in `esp_ota_get_running_partition` ESP_LOGE retry loop because `esp_partition_find` returns NULL (partition list empty). NOT a Cache MMU issue (eager-copy works fine). HP_SYS_CLKRST clock-update override verified working. | 🔬 done w/ findings | (this commit) | [phase_2t_partition_blocker.md](phase_2t_partition_blocker.md) |
-| **2.T-fix** | **Force-load partition table OR patch `esp_ota_get_running_partition` to return a fixed entry** | ⏭️ **next** | — | TBD |
-| 2.U | Drop Phase 2.M-2.O bypass patches, run natural Arduino flow (depends on 2.T-fix) | ⏳ planned | — | TBD |
+| 2.T | **Investigated**: bypass-dropped flow stuck in `esp_ota_get_running_partition` ESP_LOGE retry loop because `esp_partition_find` returns NULL (partition list empty). NOT a Cache MMU issue (eager-copy works fine). HP_SYS_CLKRST clock-update override verified working. | 🔬 done w/ findings | (prior commit) | [phase_2t_partition_blocker.md](phase_2t_partition_blocker.md) |
+| 2.T-fix | **Function-entry stub** at `0x4000549C` returns pointer to fake `esp_partition_t` at `0x4FFA0030`. Bypass-dropped flow now reaches IDF panic handler full register dump (huge progress). New blocker: instruction fetch fault to `0x3FFFF820` (likely fake-struct field deref). | ✅ done | (this commit) | [phase_2t_fix_partition_stub.md](phase_2t_fix_partition_stub.md) |
+| **2.T-fix.next** | **Identify source of `0x3FFFF820` fetch** + populate fake esp_partition_t fields it derefs | ⏭️ **next** | — | TBD |
+| 2.U | Drop Phase 2.M-2.O bypass patches, run natural Arduino flow (depends on 2.T-fix.next) | ⏳ planned | — | TBD |
 | 2.V | `mnxti`/`mintstatus` real semantics (multi-level preemption) | ⏳ planned | — | TBD |
 | 2.B | TIMG real (timers + WDT) | ⏳ pending | — | (see roadmap) |
 | 2.C | HP_SYSREG + Reset/Clock real | ⏳ pending | — | (see roadmap) |
