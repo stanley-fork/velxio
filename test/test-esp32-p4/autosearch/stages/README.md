@@ -32,7 +32,8 @@ Tablero de estado: **una fila por fase**, ordenadas. Lo que viene primero es lo 
 | 2.K.init_skip | Skip do_system_init_fn → app reaches **C++ static init + pthread + FreeRTOS port** | ✅ done | `53f8358` | [phase_2k_init_skip.md](phase_2k_init_skip.md) |
 | 2.K.frame_info | Skip `__register_frame_info` libgcc DWARF init → reach `vTaskStartScheduler` | ✅ done | `ce6110f` | [phase_2k_init_skip.md](phase_2k_init_skip.md) |
 | 2.L | Crosscore err bypass + static idle-task buffers → **xTaskCreate + heap_caps + intr_alloc** | ✅ done | `0cf82e7` | [phase_2l_freertos.md](phase_2l_freertos.md) |
-| **2.L.next** | **heap_caps_alloc_failed → abort. Need working heap or more pvPortMalloc patches.** | ⏭️ **next** | — | TBD |
+| 2.L.next | Bump allocator + vSystimerSetup bypass → **vTaskStartScheduler runs end-to-end** | ✅ done | `08e104d` | [phase_2l_next_bumpalloc.md](phase_2l_next_bumpalloc.md) |
+| **2.M** | **CLIC IRQ delivery → tasks actually run, app_main reached** | ⏭️ **next** | — | TBD |
 | 2.B | TIMG real (timers + WDT) | ⏳ pending | — | (see roadmap) |
 | 2.C | HP_SYSREG + Reset/Clock real | ⏳ pending | — | (see roadmap) |
 | 2.D | CLIC + Interrupt Matrix | ⏳ pending | — | (see roadmap) |
