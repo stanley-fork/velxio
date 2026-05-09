@@ -8,7 +8,7 @@
 set -euo pipefail
 
 REPO=/mnt/c/Desarrollo/velxio/third-party/qemu-lcgamboa
-BUILD_DIR=/tmp/qemu-p4-build
+BUILD_DIR=${BUILD_DIR:-$HOME/qemu-p4-build}  # was /tmp — cleaned by tmpfiles between runs
 
 if ! command -v gcc >/dev/null || ! command -v meson >/dev/null || ! command -v ninja >/dev/null; then
     echo "[+] Installing build dependencies (sudo required)..."
