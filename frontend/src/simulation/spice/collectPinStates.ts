@@ -72,8 +72,25 @@ export function collectPinStates(
     const pwmDuty = pm.getPwmValue(arduinoPin);
     if (pwmDuty > 0) {
       result[pinName] = { type: 'pwm', duty: pwmDuty };
-    } else if (pm.getPinState(arduinoPin)) {
-      result[pinName] = { type: 'digital', v: vcc };
+    } else {
+      // ALWAYS emit a digital source — even when the pin is currently
+      // LOW. NetlistBuilder turns this into a `V_<board>_<pin>` card,
+      // and MixedModeScheduler.onMcuPinChange later calls
+      // `alterSource('V_<board>_<pin>', vcc | 0)` on every MCU edge.
+      // If the V-source isn't in the netlist (because we skipped it
+      // here while LOW), the alter is a silent no-op against a name
+      // that doesn't exist; the LED then never lights up no matter
+      // how many times the sketch toggles the pin afterwards.
+      //
+      // This was the root cause of the reported "sometimes the LED
+      // works after Run, sometimes it doesn't" symptom. The behaviour
+      // was deterministic but appeared random because it depended on
+      // whether the AVR happened to be in the HIGH half of its blink
+      // cycle at the moment runSolve() captured pin states.
+      result[pinName] = {
+        type: 'digital',
+        v: pm.getPinState(arduinoPin) ? vcc : 0,
+      };
     }
   }
   return result;
