@@ -44,8 +44,10 @@ import threading
 import time
 from pathlib import Path
 
-# Make `app.*` resolvable (mirrors conftest in pro/backend/tests).
-sys.path.insert(0, '/app/backend')
+# Make `app.*` resolvable. Inside the prod container the backend
+# package lives at /app/app/ — the pro overlay is COPYed beside it
+# at build time as /app/app/pro/.
+sys.path.insert(0, '/app')
 
 BOOT_IMAGES = Path('/var/cache/velxio/boot-images/raspberry-pi-3-virt')
 KERNEL    = BOOT_IMAGES / 'velxio-kernel-arm64'
@@ -231,21 +233,23 @@ def run() -> int:
                 sock.sendall(cmd)
                 sent_test = True
 
-            if sent_test and b'CHIP=0x60' in buf:
+            if sent_test and b'CHIP=0x60' in buf and b'BLOCK=' in buf:
                 print('[test] OK — guest read chip ID = 0x60')
                 # Also check that BLOCK= came back as 16 hex chars (8 bytes)
                 txt = buf.decode('utf-8', 'replace')
                 for ln in txt.splitlines():
                     if ln.startswith('BLOCK='):
-                        if len(ln) - len('BLOCK=') == 16:
+                        # Allow trailing CR / ANSI from the shell echo
+                        value = ln[len('BLOCK='):].strip().split()[0]
+                        if len(value) == 16:
                             print(f'[test] OK — block read {ln}')
                             return 0
-                        print(f'FAIL: block length wrong: {ln}',
+                        print(f'FAIL: block length wrong ({len(value)}): {ln}',
                               file=sys.stderr)
                         return 1
-                print('FAIL: chip id OK but no block readback observed',
-                      file=sys.stderr)
-                return 1
+                # Fall through: BLOCK= present but no parseable line yet,
+                # keep draining
+                continue
 
             if sent_test and (b'Traceback' in buf or b'ModuleNotFoundError' in buf):
                 print('FAIL: guest python raised:', file=sys.stderr)
