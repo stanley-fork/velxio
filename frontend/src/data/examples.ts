@@ -163,41 +163,85 @@ void loop() {
       {
         type: 'wokwi-led',
         id: 'led-red',
-        x: 400,
+        x: 460,
         y: 100,
         properties: { color: 'red', pin: 13 },
       },
       {
         type: 'wokwi-led',
         id: 'led-yellow',
-        x: 400,
+        x: 460,
         y: 200,
         properties: { color: 'yellow', pin: 12 },
       },
       {
         type: 'wokwi-led',
         id: 'led-green',
-        x: 400,
+        x: 460,
         y: 300,
         properties: { color: 'green', pin: 11 },
       },
+      // Series current-limiting resistors — one per LED. 220Ω is the
+      // textbook value for a 5 V supply and a standard red/yellow/green
+      // diode. Without them ngspice can't converge on a forward-biased
+      // short and the LEDs stay dark on the canvas.
+      {
+        type: 'wokwi-resistor',
+        id: 'r-red',
+        x: 320,
+        y: 110,
+        properties: { value: '220' },
+      },
+      {
+        type: 'wokwi-resistor',
+        id: 'r-yellow',
+        x: 320,
+        y: 210,
+        properties: { value: '220' },
+      },
+      {
+        type: 'wokwi-resistor',
+        id: 'r-green',
+        x: 320,
+        y: 310,
+        properties: { value: '220' },
+      },
     ],
     wires: [
+      // Pin → resistor → LED anode (current-limit) → GND (cathode).
+      {
+        id: 'wire-red-pin',
+        start: { componentId: 'arduino-uno', pinName: '13' },
+        end: { componentId: 'r-red', pinName: '1' },
+        color: '#ff0000',
+      },
       {
         id: 'wire-red',
-        start: { componentId: 'arduino-uno', pinName: '13' },
+        start: { componentId: 'r-red', pinName: '2' },
         end: { componentId: 'led-red', pinName: 'A' },
         color: '#ff0000',
       },
       {
-        id: 'wire-yellow',
+        id: 'wire-yellow-pin',
         start: { componentId: 'arduino-uno', pinName: '12' },
+        end: { componentId: 'r-yellow', pinName: '1' },
+        color: '#ffaa00',
+      },
+      {
+        id: 'wire-yellow',
+        start: { componentId: 'r-yellow', pinName: '2' },
         end: { componentId: 'led-yellow', pinName: 'A' },
         color: '#ffaa00',
       },
       {
-        id: 'wire-green',
+        id: 'wire-green-pin',
         start: { componentId: 'arduino-uno', pinName: '11' },
+        end: { componentId: 'r-green', pinName: '1' },
+        color: '#00ff00',
+      },
+      {
+        id: 'wire-green',
+        start: { componentId: 'r-green', pinName: '2' },
         end: { componentId: 'led-green', pinName: 'A' },
         color: '#00ff00',
       },
@@ -265,9 +309,18 @@ void loop() {
       {
         type: 'wokwi-led',
         id: 'led-1',
-        x: 400,
+        x: 460,
         y: 250,
         properties: { color: 'red', pin: 13 },
+      },
+      // Series 220Ω current limiter — protects the LED from the
+      // 5 V Arduino rail (textbook value).
+      {
+        type: 'wokwi-resistor',
+        id: 'r-led',
+        x: 320,
+        y: 270,
+        properties: { value: '220' },
       },
     ],
     wires: [
@@ -278,8 +331,14 @@ void loop() {
         color: '#00aaff',
       },
       {
-        id: 'wire-led',
+        id: 'wire-led-pin',
         start: { componentId: 'arduino-uno', pinName: '13' },
+        end: { componentId: 'r-led', pinName: '1' },
+        color: '#ff0000',
+      },
+      {
+        id: 'wire-led',
+        start: { componentId: 'r-led', pinName: '2' },
         end: { componentId: 'led-1', pinName: 'A' },
         color: '#ff0000',
       },
@@ -337,15 +396,29 @@ void loop() {
       {
         type: 'wokwi-led',
         id: 'led-1',
-        x: 400,
+        x: 460,
         y: 150,
         properties: { color: 'blue', pin: 9 },
+      },
+      // Series 220Ω current limiter (textbook value for blue LED + 5 V).
+      {
+        type: 'wokwi-resistor',
+        id: 'r-led',
+        x: 320,
+        y: 170,
+        properties: { value: '220' },
       },
     ],
     wires: [
       {
-        id: 'wire-led',
+        id: 'wire-led-pin',
         start: { componentId: 'arduino-uno', pinName: '9' },
+        end: { componentId: 'r-led', pinName: '1' },
+        color: '#0000ff',
+      },
+      {
+        id: 'wire-led',
+        start: { componentId: 'r-led', pinName: '2' },
         end: { componentId: 'led-1', pinName: 'A' },
         color: '#0000ff',
       },
@@ -584,30 +657,59 @@ void loop() {
       {
         type: 'wokwi-led',
         id: 'led-red',
-        x: 450,
+        x: 500,
         y: 100,
         properties: { color: 'red', pin: 8 },
       },
       {
         type: 'wokwi-led',
         id: 'led-green',
-        x: 550,
+        x: 600,
         y: 100,
         properties: { color: 'green', pin: 9 },
       },
       {
         type: 'wokwi-led',
         id: 'led-blue',
-        x: 450,
+        x: 500,
         y: 200,
         properties: { color: 'blue', pin: 10 },
       },
       {
         type: 'wokwi-led',
         id: 'led-yellow',
-        x: 550,
+        x: 600,
         y: 200,
         properties: { color: 'yellow', pin: 11 },
+      },
+      // Series 220Ω current limiters — one per LED.
+      {
+        type: 'wokwi-resistor',
+        id: 'r-led-red',
+        x: 380,
+        y: 110,
+        properties: { value: '220' },
+      },
+      {
+        type: 'wokwi-resistor',
+        id: 'r-led-green',
+        x: 380,
+        y: 130,
+        properties: { value: '220' },
+      },
+      {
+        type: 'wokwi-resistor',
+        id: 'r-led-blue',
+        x: 380,
+        y: 210,
+        properties: { value: '220' },
+      },
+      {
+        type: 'wokwi-resistor',
+        id: 'r-led-yellow',
+        x: 380,
+        y: 230,
+        properties: { value: '220' },
       },
       {
         type: 'wokwi-pushbutton',
@@ -640,26 +742,50 @@ void loop() {
     ],
     wires: [
       {
-        id: 'wire-led-red',
+        id: 'wire-led-red-pin',
         start: { componentId: 'arduino-uno', pinName: '8' },
+        end: { componentId: 'r-led-red', pinName: '1' },
+        color: '#ff0000',
+      },
+      {
+        id: 'wire-led-red',
+        start: { componentId: 'r-led-red', pinName: '2' },
         end: { componentId: 'led-red', pinName: 'A' },
         color: '#ff0000',
       },
       {
-        id: 'wire-led-green',
+        id: 'wire-led-green-pin',
         start: { componentId: 'arduino-uno', pinName: '9' },
+        end: { componentId: 'r-led-green', pinName: '1' },
+        color: '#00ff00',
+      },
+      {
+        id: 'wire-led-green',
+        start: { componentId: 'r-led-green', pinName: '2' },
         end: { componentId: 'led-green', pinName: 'A' },
         color: '#00ff00',
       },
       {
-        id: 'wire-led-blue',
+        id: 'wire-led-blue-pin',
         start: { componentId: 'arduino-uno', pinName: '10' },
+        end: { componentId: 'r-led-blue', pinName: '1' },
+        color: '#0000ff',
+      },
+      {
+        id: 'wire-led-blue',
+        start: { componentId: 'r-led-blue', pinName: '2' },
         end: { componentId: 'led-blue', pinName: 'A' },
         color: '#0000ff',
       },
       {
-        id: 'wire-led-yellow',
+        id: 'wire-led-yellow-pin',
         start: { componentId: 'arduino-uno', pinName: '11' },
+        end: { componentId: 'r-led-yellow', pinName: '1' },
+        color: '#ffaa00',
+      },
+      {
+        id: 'wire-led-yellow',
+        start: { componentId: 'r-led-yellow', pinName: '2' },
         end: { componentId: 'led-yellow', pinName: 'A' },
         color: '#ffaa00',
       },

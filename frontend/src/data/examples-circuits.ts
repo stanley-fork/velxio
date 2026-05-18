@@ -1448,14 +1448,26 @@ void loop() {
       ...Array.from({ length: 8 }, (_, i) => ({
         type: 'wokwi-led',
         id: `led${i}`,
-        x: 400 + i * 30,
+        x: 460 + i * 30,
         y: 300,
         properties: { color: 'red' },
+      })),
+      // Series 220Ω resistors — one per LED. Without them ngspice
+      // can't solve a forward-biased short and the LEDs stay dark.
+      ...Array.from({ length: 8 }, (_, i) => ({
+        type: 'wokwi-resistor',
+        id: `r${i}`,
+        x: 340,
+        y: 280 + i * 10,
+        properties: { value: '220' },
       })),
     ],
     wires: [
       ...Array.from({ length: 8 }, (_, i) =>
-        w(`wl${i}`, ['arduino-mega', `${22 + i}`], [`led${i}`, 'A']),
+        w(`wp${i}`, ['arduino-mega', `${22 + i}`], [`r${i}`, '1']),
+      ),
+      ...Array.from({ length: 8 }, (_, i) =>
+        w(`wl${i}`, [`r${i}`, '2'], [`led${i}`, 'A']),
       ),
       ...Array.from({ length: 8 }, (_, i) =>
         w(`wg${i}`, [`led${i}`, 'C'], ['arduino-mega', 'GND'], '#000000'),
