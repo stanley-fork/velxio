@@ -1888,28 +1888,51 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
     },
 
     // ── Components ────────────────────────────────────────────────────────
+    // Default canvas shown on a bare /editor visit: an external LED on
+    // pin 13 PROTECTED BY A 220Ω SERIES RESISTOR (the canonical Blink
+    // wiring textbooks teach). Without the resistor the LED is a direct
+    // short forward-biased between 5V and GND — real hardware blows the
+    // diode, and the ngspice solver returns an indeterminate / NaN branch
+    // current so the visual LED never lights up on the canvas either.
     components: [
       {
         id: 'led-builtin',
         metadataId: 'led',
-        x: 350,
+        x: 380,
         y: 100,
         properties: { color: 'red' },
+      },
+      {
+        id: 'r-builtin',
+        metadataId: 'resistor',
+        x: 240,
+        y: 130,
+        properties: { value: '220' },
       },
     ],
 
     wires: [
+      // Pin 13 → resistor pin 1 (current-limiting side).
+      {
+        id: 'wire-builtin-pin13',
+        start: { componentId: 'arduino-uno', pinName: '13', x: 0, y: 0 },
+        end: { componentId: 'r-builtin', pinName: '1', x: 0, y: 0 },
+        waypoints: [],
+        color: '#22c55e',
+      },
+      // Resistor pin 2 → LED anode.
       {
         id: 'wire-builtin-anode',
-        start: { componentId: 'arduino-uno', pinName: '13', x: 0, y: 0 },
+        start: { componentId: 'r-builtin', pinName: '2', x: 0, y: 0 },
         end: { componentId: 'led-builtin', pinName: 'A', x: 0, y: 0 },
         waypoints: [],
         color: '#22c55e',
       },
+      // LED cathode → GND.
       {
         id: 'wire-builtin-cathode',
-        start: { componentId: 'arduino-uno', pinName: 'GND.1', x: 0, y: 0 },
-        end: { componentId: 'led-builtin', pinName: 'C', x: 0, y: 0 },
+        start: { componentId: 'led-builtin', pinName: 'C', x: 0, y: 0 },
+        end: { componentId: 'arduino-uno', pinName: 'GND.1', x: 0, y: 0 },
         waypoints: [],
         color: '#000000',
       },
