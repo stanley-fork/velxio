@@ -552,8 +552,15 @@ export function createComponentFromMetadata(
   y: number;
   properties: Record<string, any>;
 } {
+  // Underscore separators (not '-') so the resulting id is safe to embed
+  // in SPICE component / source names. ngspice's WASM build truncates
+  // vector keys at '-', which broke branch-current lookups for any LED /
+  // ammeter wired up by the user (visible symptom: correct node voltage,
+  // dark LED). Also strip '-' from metadata.id (e.g. 'led-bar-graph') so
+  // the prefix doesn't reintroduce a hyphen.
+  const safePrefix = metadata.id.replace(/-/g, '_');
   return {
-    id: `${metadata.id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+    id: `${safePrefix}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
     metadataId: metadata.id,
     x,
     y,

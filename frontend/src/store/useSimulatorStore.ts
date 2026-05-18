@@ -1894,16 +1894,22 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
     // short forward-biased between 5V and GND — real hardware blows the
     // diode, and the ngspice solver returns an indeterminate / NaN branch
     // current so the visual LED never lights up on the canvas either.
+    // NOTE: component ids must NOT contain hyphens. ngspice (WASM build)
+    // truncates branch-current vector names at '-', so a sense source
+    // named V_led-builtin_sense yields the wrong key in branchCurrents
+    // and the LED's update() loop never sees the diode current — the
+    // node voltage is correct (the user sees ~1.84V on the wire) but the
+    // visual brightness stays at zero. Underscore is safe.
     components: [
       {
-        id: 'led-builtin',
+        id: 'led_builtin',
         metadataId: 'led',
         x: 380,
         y: 100,
         properties: { color: 'red' },
       },
       {
-        id: 'r-builtin',
+        id: 'r_builtin',
         metadataId: 'resistor',
         x: 240,
         y: 130,
@@ -1914,24 +1920,24 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
     wires: [
       // Pin 13 → resistor pin 1 (current-limiting side).
       {
-        id: 'wire-builtin-pin13',
+        id: 'wire_builtin_pin13',
         start: { componentId: 'arduino-uno', pinName: '13', x: 0, y: 0 },
-        end: { componentId: 'r-builtin', pinName: '1', x: 0, y: 0 },
+        end: { componentId: 'r_builtin', pinName: '1', x: 0, y: 0 },
         waypoints: [],
         color: '#22c55e',
       },
       // Resistor pin 2 → LED anode.
       {
-        id: 'wire-builtin-anode',
-        start: { componentId: 'r-builtin', pinName: '2', x: 0, y: 0 },
-        end: { componentId: 'led-builtin', pinName: 'A', x: 0, y: 0 },
+        id: 'wire_builtin_anode',
+        start: { componentId: 'r_builtin', pinName: '2', x: 0, y: 0 },
+        end: { componentId: 'led_builtin', pinName: 'A', x: 0, y: 0 },
         waypoints: [],
         color: '#22c55e',
       },
       // LED cathode → GND.
       {
-        id: 'wire-builtin-cathode',
-        start: { componentId: 'led-builtin', pinName: 'C', x: 0, y: 0 },
+        id: 'wire_builtin_cathode',
+        start: { componentId: 'led_builtin', pinName: 'C', x: 0, y: 0 },
         end: { componentId: 'arduino-uno', pinName: 'GND.1', x: 0, y: 0 },
         waypoints: [],
         color: '#000000',
