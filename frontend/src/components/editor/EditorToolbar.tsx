@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useEditorStore } from '../../store/useEditorStore';
-import { useSimulatorStore, getBoardPinManager } from '../../store/useSimulatorStore';
+import { useSimulatorStore } from '../../store/useSimulatorStore';
 import { useElectricalStore } from '../../store/useElectricalStore';
 import { verifyCircuit, type VerificationResult } from '../../simulation/verify/circuitVerifier';
 import { buildInputFromStore } from '../../simulation/spice/storeAdapter';
@@ -310,25 +310,36 @@ export const EditorToolbar = ({
         })),
         wires: sim.wires,
         boards: sim.boards.map((b) => {
+          // Realistic pre-flight: simulate the WORST CASE — every digital
+          // pin connected to a load is forced HIGH at the board's vcc.
+          // This is what we want because the user's sketch WILL eventually
+          // do `digitalWrite(pin, HIGH)` (otherwise why is the LED wired?).
+          // Testing idle state would never flag a missing series resistor
+          // because the LED draws zero current when its pin is LOW.
+          //
+          // Caveat: pins wired only to inputs (e.g. a pull-up resistor +
+          // button) get over-driven here too. The verifier rules are
+          // already tolerant — a properly-spec'd pull-up sees minimal
+          // current and doesn't trip overcurrent / overpower. A circuit
+          // that would actually fault under HIGH is flagged correctly.
           const pinStates: Record<string, PinSourceState> = {};
-          const pm = getBoardPinManager(b.id);
           const group = BOARD_PIN_GROUPS[b.boardKind] ?? BOARD_PIN_GROUPS.default;
-          if (pm) {
-            const pinNames = new Set<string>();
-            for (const w of sim.wires) {
-              if (w.start.componentId === b.id) pinNames.add(w.start.pinName);
-              if (w.end.componentId === b.id) pinNames.add(w.end.pinName);
-            }
-            for (const pinName of pinNames) {
-              // No mapping table here — verification is a best-effort
-              // snapshot; pins we can't identify just stay floating, which
-              // matches their pre-Run state anyway.
-              const arduinoPin = Number.parseInt(pinName, 10);
-              if (Number.isNaN(arduinoPin)) continue;
-              if (pm.getPinState(arduinoPin)) {
-                pinStates[pinName] = { type: 'digital', v: group.vcc };
-              }
-            }
+          const wiredPinNames = new Set<string>();
+          for (const w of sim.wires) {
+            if (w.start.componentId === b.id) wiredPinNames.add(w.start.pinName);
+            if (w.end.componentId === b.id) wiredPinNames.add(w.end.pinName);
+          }
+          for (const pinName of wiredPinNames) {
+            // Skip GND / power-rail pin names — they belong to the rail
+            // groups and don't need to be re-asserted as digital sources.
+            if (group.gnd.includes(pinName)) continue;
+            if (group.vcc_pins.includes(pinName)) continue;
+            const arduinoPin = Number.parseInt(pinName, 10);
+            // Skip pins we can't identify as a digital GPIO (e.g.
+            // 'AREF', 'RESET', 'TX', 'RX' on some boards). Those are
+            // either rail-ish or non-driven by the sketch.
+            if (Number.isNaN(arduinoPin)) continue;
+            pinStates[pinName] = { type: 'digital', v: group.vcc };
           }
           return { id: b.id, boardKind: b.boardKind, pinStates };
         }),

@@ -196,7 +196,16 @@ PartSimulationRegistry.register('led', {
           raw = sum / samples.length;
         }
       }
-      if (raw !== undefined) {
+      // Guard against NaN / Infinity coming back from ngspice. They
+      // happen on degenerate circuits (a forward-biased diode with no
+      // series resistor — the textbook "missing 220Ω" mistake — is
+      // the most common case). Without this guard the LED would mark
+      // `el.value = NaN > 1e-6 = false` and stay visually dark even
+      // when the user clicks "Run Anyway" past the verifier warning.
+      // Treat non-finite branch currents as "SPICE has nothing useful
+      // to say" → fall through to the digital fallback so at least the
+      // LED visually lights when its driver pin is HIGH.
+      if (raw !== undefined && Number.isFinite(raw)) {
         const current = Math.abs(raw);
         lastSpiceBrightness = Math.min(1, current / 0.02);
         lastSpiceTs = Date.now();
@@ -204,7 +213,7 @@ PartSimulationRegistry.register('led', {
         el.brightness = lastSpiceBrightness;
         return;
       }
-      if (Date.now() - lastSpiceTs < HOLD_MS && lastSpiceTs > 0) {
+      if (Date.now() - lastSpiceTs < HOLD_MS && lastSpiceTs > 0 && Number.isFinite(lastSpiceBrightness)) {
         el.value = lastSpiceBrightness > 1e-3;
         el.brightness = lastSpiceBrightness;
         return;
