@@ -26,6 +26,16 @@ export default defineConfig({
     poolOptions: {
       forks: {
         singleFork: false,
+        // Vitest 4's forks pool spawns workers with its own execArgv
+        // and does NOT inherit NODE_OPTIONS from the parent shell, so
+        // raising `--max-old-space-size` via the GHA env-var has no
+        // effect on the actual worker process. The full suite leaks
+        // ngspice WASM modules + singleton state across 117 files and
+        // hits Node's 4 GB default at the end of the run ("Worker
+        // exited unexpectedly / Ineffective mark-compacts near heap
+        // limit"). Bump to 8 GB at the pool level so it actually
+        // takes effect.
+        execArgv: ['--max-old-space-size=8192'],
       },
     },
     coverage: {
