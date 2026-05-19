@@ -129,5 +129,5 @@ export const BOARD_KIND_FQBN: Record<BoardKind, string | null> = {
   'esp32-c3': 'esp32:esp32:esp32c3',
   'xiao-esp32-c3': 'esp32:esp32:XIAO_ESP32C3',
   'aitewinrobot-esp32c3-supermini': 'esp32:esp32:esp32c3',
-  attiny85: 'ATTinyCore:avr:attinyx5:chip=85,clock=internal16mhz',
+  attiny85: 'ATTinyCore:avr:attinyx5:chip=85,clock=16pll',
 };
