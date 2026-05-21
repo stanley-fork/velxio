@@ -1,8 +1,8 @@
 {
   "name": "velxio-simulator",
   "displayName": "Velxio Simulator",
-  "description": "Local Arduino & ESP32 simulator for VS Code — compile, simulate, and debug embedded projects without leaving your editor",
-  "version": "0.1.0",
+  "description": "Local Arduino & ESP32 simulator for VS Code — compile, simulate, and debug embedded projects without leaving your editor. Requires a Velxio Pro subscription; 30-day free trial included.",
+  "version": "0.2.0",
   "publisher": "velxio",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -31,7 +31,8 @@
   ],
   "activationEvents": [
     "workspaceContains:velxio.toml",
-    "workspaceContains:diagram.json"
+    "workspaceContains:diagram.json",
+    "onUri"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -65,6 +66,30 @@
         "title": "Select Board",
         "category": "Velxio",
         "icon": "$(list-selection)"
+      },
+      {
+        "command": "velxio.signIn",
+        "title": "Sign In",
+        "category": "Velxio",
+        "icon": "$(sign-in)"
+      },
+      {
+        "command": "velxio.pasteLicenseKey",
+        "title": "Paste License Key",
+        "category": "Velxio",
+        "icon": "$(key)"
+      },
+      {
+        "command": "velxio.signOut",
+        "title": "Sign Out",
+        "category": "Velxio",
+        "icon": "$(sign-out)"
+      },
+      {
+        "command": "velxio.showLicenseStatus",
+        "title": "Show License Status",
+        "category": "Velxio",
+        "icon": "$(info)"
       }
     ],
     "menus": {
@@ -109,6 +134,11 @@
           "type": "string",
           "default": "",
           "description": "Path to arduino-cli executable (leave empty to auto-detect)"
+        },
+        "velxio.licenseApiBase": {
+          "type": "string",
+          "default": "https://velxio.dev",
+          "description": "Base URL for license validation. Override only if you're a Velxio developer testing against a staging environment."
         }
       }
     },
