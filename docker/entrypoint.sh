@@ -35,7 +35,7 @@ fi
 arduino-cli core update-index 2>/dev/null || true
 arduino-cli core install arduino:avr 2>/dev/null || true
 arduino-cli core install rp2040:rp2040 2>/dev/null || true
-arduino-cli core install ATTinyCore:avr 2>/dev/null || true
+arduino-cli core install ATTinyCore:avr@1.4.1 2>/dev/null || true
 
 # ESP32 compilation now uses ESP-IDF instead of arduino-cli.
 # arduino-cli ESP32 core is no longer needed for QEMU-compatible builds.

@@ -30,6 +30,17 @@ class ArduinoCLIService:
         "esp32": "esp32:esp32",
     }
 
+    # Version pins for `arduino-cli core install`.  Keyed by core ID; if a core
+    # is in this map we pass `<core>@<version>` instead of just `<core>`.
+    # ATTinyCore: >=1.5.0 depends on micronucleus hosted at azduino.com, which
+    # has been unreachable for extended periods.  1.4.1 is the last release
+    # whose micronucleus tool is on github.com (digistump release) AND still
+    # supports the FQBN options we use (clock=16pll, etc.). Compile-only —
+    # micronucleus itself is never invoked here.
+    CORE_INSTALL_VERSIONS: dict[str, str] = {
+        "ATTinyCore:avr": "1.4.1",
+    }
+
     def __init__(self, cli_path: str = "arduino-cli"):
         self.cli_path = cli_path
         self._ensure_board_urls()
@@ -147,12 +158,14 @@ class ArduinoCLIService:
         if self._is_core_installed(core_id):
             return {"needed": False, "installed": True, "core_id": core_id, "log": ""}
 
-        # Install the core
-        print(f"[arduino-cli] Auto-installing core {core_id} for board {fqbn}...")
+        # Install the core (optionally pinned to a specific version)
+        version = self.CORE_INSTALL_VERSIONS.get(core_id)
+        install_spec = f"{core_id}@{version}" if version else core_id
+        print(f"[arduino-cli] Auto-installing core {install_spec} for board {fqbn}...")
 
         def _install():
             return subprocess.run(
-                [self.cli_path, "core", "install", core_id],
+                [self.cli_path, "core", "install", install_spec],
                 capture_output=True, text=True
             )
 
