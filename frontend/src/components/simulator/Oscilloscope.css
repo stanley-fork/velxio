@@ -291,3 +291,41 @@
   width: 100%;
   height: 100%;
 }
+
+/* ── Trigger status badge ───────────────────────────────────────────────── */
+.osc-trigger-status {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border: 1px solid currentColor;
+}
+
+.osc-trigger-status-idle {
+  color: #6b7280;
+}
+
+.osc-trigger-status-armed {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.1);
+  animation: osc-pulse-armed 1.5s ease-in-out infinite;
+}
+
+.osc-trigger-status-triggered {
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.1);
+}
+
+.osc-trigger-status-captured {
+  color: #ff9800;
+  background: rgba(255, 152, 0, 0.15);
+  border-color: #ff9800;
+}
+
+@keyframes osc-pulse-armed {
+  0%, 100% { opacity: 0.6; }
+  50%      { opacity: 1; }
+}

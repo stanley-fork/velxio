@@ -18,6 +18,8 @@ import {
   useOscilloscopeStore,
   type OscChannel,
   type OscSample,
+  type TriggerMode,
+  type TriggerEdge,
 } from '../../store/useOscilloscopeStore';
 import { useSimulatorStore } from '../../store/useSimulatorStore';
 import { BOARD_KIND_LABELS } from '../../types/board';
@@ -84,6 +86,12 @@ function drawWaveform(
   color: string,
   windowEndMs: number,
   windowMs: number,
+  /**
+   * Trigger marker — when not null, render a vertical orange line at this
+   * X fraction (0..1) of the canvas to show where the trigger event
+   * landed.  Mirrors the orange "T" cursor on a real Tektronix / Rigol.
+   */
+  triggerXFrac: number | null = null,
 ): void {
   const { width, height } = canvas;
   const ctx = canvas.getContext('2d');
@@ -109,6 +117,22 @@ function drawWaveform(
   ctx.moveTo(0, height / 2);
   ctx.lineTo(width, height / 2);
   ctx.stroke();
+
+  // Trigger marker — drawn under the trace so the waveform sits on top.
+  if (triggerXFrac !== null) {
+    const x = Math.round(triggerXFrac * width);
+    ctx.strokeStyle = '#ff9800';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, height);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#ff9800';
+    ctx.font = 'bold 9px monospace';
+    ctx.fillText('T', x + 2, 10);
+  }
 
   if (samples.length === 0) return;
 
@@ -198,6 +222,9 @@ interface ChannelCanvasProps {
   samples: OscSample[];
   windowEndMs: number;
   windowMs: number;
+  /** X fraction (0..1) of the trigger marker, or null when no marker should
+   *  be drawn (e.g. auto mode or the trigger event is outside the window). */
+  triggerXFrac: number | null;
 }
 
 const ChannelCanvas: React.FC<ChannelCanvasProps> = ({
@@ -205,6 +232,7 @@ const ChannelCanvas: React.FC<ChannelCanvasProps> = ({
   samples,
   windowEndMs,
   windowMs,
+  triggerXFrac,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -221,8 +249,8 @@ const ChannelCanvas: React.FC<ChannelCanvasProps> = ({
     canvas.height = Math.floor(height) * window.devicePixelRatio;
     const ctx = canvas.getContext('2d');
     if (ctx) ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
-    drawWaveform(canvas, samples, channel.color, windowEndMs, windowMs);
-  }, [samples, channel.color, windowEndMs, windowMs]);
+    drawWaveform(canvas, samples, channel.color, windowEndMs, windowMs, triggerXFrac);
+  }, [samples, channel.color, windowEndMs, windowMs, triggerXFrac]);
 
   return (
     <div ref={wrapRef} className="osc-channel-canvas-wrap">
@@ -364,6 +392,16 @@ export const Oscilloscope: React.FC = () => {
     addChannel,
     removeChannel,
     clearSamples,
+    triggerMode,
+    triggerChannelId,
+    triggerEdge,
+    triggerPosition,
+    triggeredAtMs,
+    triggerStatus,
+    setTriggerMode,
+    setTriggerChannel,
+    setTriggerEdge,
+    rearmTrigger,
   } = useOscilloscopeStore();
 
   // Any board running → oscilloscope can capture
@@ -420,14 +458,35 @@ export const Oscilloscope: React.FC = () => {
 
   const windowMs = NUM_DIVS * timeDivMs;
 
+  // ── Window positioning ─────────────────────────────────────────────────
+  // Auto mode: window's right edge tracks the most recent sample across
+  // all channels (free-running).  Normal / single mode with a latched
+  // trigger: pin the window around the trigger event so it lands at
+  // `triggerPosition * windowMs` from the left.  Normal / single mode
+  // with NO trigger yet: fall back to free-running so the user can still
+  // see what's happening while waiting for the first edge.
   let windowEndMs = 0;
-  for (const ch of channels) {
-    const buf = samples[ch.id] ?? [];
-    if (buf.length > 0) {
-      windowEndMs = Math.max(windowEndMs, buf[buf.length - 1].timeMs);
+  if (triggerMode !== 'auto' && triggeredAtMs !== null) {
+    windowEndMs = triggeredAtMs + (1 - triggerPosition) * windowMs;
+  } else {
+    for (const ch of channels) {
+      const buf = samples[ch.id] ?? [];
+      if (buf.length > 0) {
+        windowEndMs = Math.max(windowEndMs, buf[buf.length - 1].timeMs);
+      }
     }
   }
   windowEndMs = Math.max(windowEndMs, windowMs);
+
+  // X fraction (0..1) of the trigger marker within the visible window.
+  // null = no marker (auto mode or trigger event outside the window).
+  let triggerXFrac: number | null = null;
+  if (triggerMode !== 'auto' && triggeredAtMs !== null) {
+    const windowStartMs = windowEndMs - windowMs;
+    if (triggeredAtMs >= windowStartMs && triggeredAtMs <= windowEndMs) {
+      triggerXFrac = (triggeredAtMs - windowStartMs) / windowMs;
+    }
+  }
 
   const handleAddChannel = useCallback(
     (boardId: string, pin: number, pinLabel: string) => {
@@ -500,6 +559,72 @@ export const Oscilloscope: React.FC = () => {
           {capturing ? `⏸ ${t('editor.oscilloscope.pause')}` : `▶ ${t('editor.oscilloscope.run')}`}
         </button>
 
+        {/* ── Trigger ─────────────────────────────────────────────────────
+            Mode + source + edge are the three knobs a real DSO exposes.
+            Auto = free-running (current default).  Normal = window pins
+            on every triggering edge.  Single = arm once, freeze on first
+            edge — click again to re-arm. */}
+        <span className="osc-label" title="Trigger configuration">Trigger</span>
+        <select
+          className="osc-select"
+          value={triggerMode}
+          onChange={(e) => setTriggerMode(e.target.value as TriggerMode)}
+          title="Trigger mode"
+        >
+          <option value="auto">Auto</option>
+          <option value="normal">Normal</option>
+          <option value="single">Single</option>
+        </select>
+
+        {triggerMode !== 'auto' && (
+          <>
+            <select
+              className="osc-select"
+              value={triggerChannelId ?? channels[0]?.id ?? ''}
+              onChange={(e) => setTriggerChannel(e.target.value || null)}
+              title="Trigger source"
+              disabled={channels.length <= 1}
+            >
+              {channels.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {boardShortName(c.boardId)}:{c.label}
+                </option>
+              ))}
+            </select>
+
+            <select
+              className="osc-select"
+              value={triggerEdge}
+              onChange={(e) => setTriggerEdge(e.target.value as TriggerEdge)}
+              title="Trigger edge"
+            >
+              <option value="rising">↑ Rising</option>
+              <option value="falling">↓ Falling</option>
+              <option value="either">⇅ Either</option>
+            </select>
+
+            <span
+              className={`osc-trigger-status osc-trigger-status-${triggerStatus}`}
+              title={`Trigger status: ${triggerStatus}`}
+            >
+              {triggerStatus === 'armed' && 'Armed'}
+              {triggerStatus === 'triggered' && 'Triggered'}
+              {triggerStatus === 'captured' && 'Captured'}
+              {triggerStatus === 'idle' && 'Idle'}
+            </span>
+
+            {triggerMode === 'single' && triggerStatus === 'captured' && (
+              <button
+                className="osc-btn osc-btn-active"
+                onClick={rearmTrigger}
+                title="Re-arm and capture the next triggering edge"
+              >
+                Re-arm
+              </button>
+            )}
+          </>
+        )}
+
         {/* Clear */}
         <button
           className="osc-btn osc-btn-danger"
@@ -542,6 +667,7 @@ export const Oscilloscope: React.FC = () => {
                   samples={samples[ch.id] ?? []}
                   windowEndMs={windowEndMs}
                   windowMs={windowMs}
+                  triggerXFrac={triggerXFrac}
                 />
               </div>
             ))}
