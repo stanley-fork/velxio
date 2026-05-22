@@ -581,9 +581,30 @@ class ESPIDFCompiler:
     # dynamically: user-installed libs → IDF component; arduino-esp32 bundled
     # libs → skip (already compiled in); not found → warning.
     _BUILTIN_HEADERS = frozenset({
-        # C/C++ standard library
+        # C standard library
         'math.h', 'stdint.h', 'stdio.h', 'stdlib.h', 'string.h', 'stdarg.h',
         'stddef.h', 'stdbool.h', 'float.h', 'limits.h', 'assert.h',
+        'ctype.h', 'errno.h', 'inttypes.h', 'locale.h', 'setjmp.h',
+        'signal.h', 'time.h', 'wchar.h', 'wctype.h',
+        # C++ standard library wrappers and STL.
+        # MUST be marked built-in — otherwise the user_libs bundler resolves
+        # them against /root/Arduino/libraries/ArduinoSTL (an AVR-only
+        # uClibc++ port) and drags in complex.cpp / vector.cpp / …, none of
+        # which compile against ESP-IDF's libstdc++.
+        'cstdint', 'cstddef', 'cstdio', 'cstdlib', 'cstring', 'cmath',
+        'cassert', 'cctype', 'cerrno', 'cfloat', 'climits', 'clocale',
+        'csetjmp', 'csignal', 'cstdarg', 'ctime', 'cwchar', 'cwctype',
+        'cinttypes',
+        'algorithm', 'array', 'atomic', 'bitset', 'chrono', 'codecvt',
+        'complex', 'condition_variable', 'deque', 'exception', 'fstream',
+        'functional', 'future', 'initializer_list', 'iomanip', 'ios',
+        'iosfwd', 'iostream', 'istream', 'iterator', 'limits', 'list',
+        'locale', 'map', 'memory', 'mutex', 'new', 'numeric', 'optional',
+        'ostream', 'queue', 'random', 'ratio', 'regex', 'set', 'sstream',
+        'stack', 'stdexcept', 'streambuf', 'string', 'string_view',
+        'system_error', 'thread', 'tuple', 'type_traits', 'typeindex',
+        'typeinfo', 'unordered_map', 'unordered_set', 'utility', 'valarray',
+        'variant', 'vector', 'any',
         # Arduino core types — part of arduino-esp32 source, not installable libraries
         'Arduino.h', 'HardwareSerial.h', 'Stream.h', 'Print.h', 'WString.h',
         'pgmspace.h', 'IPAddress.h',
