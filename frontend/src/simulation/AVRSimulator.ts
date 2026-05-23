@@ -269,6 +269,15 @@ export class AVRSimulator {
   private cpu: CPU | null = null;
   /** Peripherals kept alive by reference so GC doesn't collect their CPU hooks */
   private peripherals: unknown[] = [];
+  /**
+   * Pending RX bytes waiting to be fed to the USART. avr8js's writeByte
+   * rejects (returns false, drops the byte) whenever rxBusyValue is set
+   * — and rxBusyValue stays set for `cyclesPerChar` after each call.
+   * A naive `for c of text: usart.writeByte(c)` loop therefore only
+   * delivers the first character. We buffer the rest here and drain
+   * one byte at a time on each frame's tick.
+   */
+  private serialRxQueue: number[] = [];
   private portB: AVRIOPort | null = null;
   private portC: AVRIOPort | null = null;
   private portD: AVRIOPort | null = null;
@@ -434,6 +443,7 @@ export class AVRSimulator {
         // waveform during Serial.print. See emitUartTxFrame() for details.
         this.emitUartTxFrame(value);
       };
+      this.usart.onRxComplete = () => this.drainSerialRxQueue();
       this.usart.onConfigurationChange = () => {
         if (this.onBaudRateChange && this.usart) this.onBaudRateChange(this.usart.baudRate);
         // Seed idle HIGH on the TX pin the first time TXEN flips on.
@@ -845,6 +855,7 @@ export class AVRSimulator {
           if (this.onSerialData) this.onSerialData(String.fromCharCode(value));
           this.emitUartTxFrame(value);
         };
+        this.usart.onRxComplete = () => this.drainSerialRxQueue();
         this.usart.onConfigurationChange = () => {
           if (this.onBaudRateChange && this.usart) this.onBaudRateChange(this.usart.baudRate);
           this.handleUartConfigChange();
@@ -937,11 +948,34 @@ export class AVRSimulator {
 
   /**
    * Send a byte to the Arduino serial port (RX) — as if typed in the Serial Monitor.
+   *
+   * AVR has no hardware RX FIFO, so avr8js's writeByte() rejects every
+   * call while rxBusyValue is set (one full cyclesPerChar after the
+   * previous byte). A naive loop would only deliver the first character.
+   * Queue the bytes here and drain one at a time from onRxComplete.
    */
   serialWrite(text: string): void {
     if (!this.usart) return;
     for (let i = 0; i < text.length; i++) {
-      this.usart.writeByte(text.charCodeAt(i));
+      this.serialRxQueue.push(text.charCodeAt(i));
+    }
+    this.drainSerialRxQueue();
+  }
+
+  /**
+   * Pump the next pending RX byte into the USART. Called once from
+   * serialWrite() to kick the pipeline, then re-armed from
+   * usart.onRxComplete after every byte the sketch actually receives.
+   * The cyclesPerChar gap that avr8js enforces between writeByte calls
+   * gives the sketch time to read UDR0 between bytes — same pacing the
+   * real chip sees at the configured baud rate.
+   */
+  private drainSerialRxQueue(): void {
+    if (!this.usart) return;
+    if (this.serialRxQueue.length === 0) return;
+    const next = this.serialRxQueue[0];
+    if (this.usart.writeByte(next)) {
+      this.serialRxQueue.shift();
     }
   }
 
