@@ -22,8 +22,22 @@ if(DEFINED ENV{ARDUINO_ESP32_PATH})
         list(APPEND _cam_includes "${_cam_root}/conversions/include")
     endif()
 
+    # Glob every .cpp / .c that the espidf_compiler dropped into main/
+    # alongside main.cpp. Multi-file Arduino projects (robot-desktop-eyes,
+    # any wokwi.zip with helper .cpp files, etc.) define classes/free
+    # functions in their own translation units; if SRCS only names
+    # "main.cpp" the linker dies with "undefined reference to Foo::bar()"
+    # for every symbol that lives in a helper .cpp.
+    #
+    # CONFIGURE_DEPENDS makes CMake re-glob on every cmake run, which is
+    # what we want — the persistent build dir is reused across compiles
+    # and the file set changes per sketch.
+    file(GLOB _user_srcs CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_LIST_DIR}/*.cpp"
+        "${CMAKE_CURRENT_LIST_DIR}/*.c")
+
     idf_component_register(
-        SRCS "main.cpp"
+        SRCS ${_user_srcs}
         INCLUDE_DIRS "." ${_cam_includes}
         # `driver` brings in the i2c_master_* + i2c_cmd_link_* symbols
         # libesp32-camera.a's sccb.c references at link time. arduino-esp32
