@@ -29,10 +29,14 @@ if(DEFINED ENV{ARDUINO_ESP32_PATH})
     # "main.cpp" the linker dies with "undefined reference to Foo::bar()"
     # for every symbol that lives in a helper .cpp.
     #
-    # CONFIGURE_DEPENDS makes CMake re-glob on every cmake run, which is
-    # what we want — the persistent build dir is reused across compiles
-    # and the file set changes per sketch.
-    file(GLOB _user_srcs CONFIGURE_DEPENDS
+    # No CONFIGURE_DEPENDS — ESP-IDF's component_get_requirements.cmake
+    # evaluates each component's CMakeLists in script mode where
+    # CONFIGURE_DEPENDS isn't supported, and the build aborts with
+    # "CONFIGURE_DEPENDS is invalid for script and find package modes".
+    # We don't need it anyway: espidf_compiler wipes + restores main/
+    # from the template on every compile (touching CMakeLists.txt's
+    # mtime), so cmake re-globs naturally on the next configure run.
+    file(GLOB _user_srcs
         "${CMAKE_CURRENT_LIST_DIR}/*.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/*.c")
 
