@@ -2288,10 +2288,10 @@ class SSD1306_SPI(SSD1306):
     ],
     wires: [
       // OLED I2C — SDA = GPIO21, SCL = GPIO22 (matches SoftI2C in code)
-      { id: 'w-oled-vcc', start: { componentId: 'esp32', pinName: '3V3' },   end: { componentId: 'oled1', pinName: 'VCC' }, color: '#ff4444' },
+      { id: 'w-oled-vcc', start: { componentId: 'esp32', pinName: '3V3' },   end: { componentId: 'oled1', pinName: 'VIN' }, color: '#ff4444' },
       { id: 'w-oled-gnd', start: { componentId: 'esp32', pinName: 'GND.1' }, end: { componentId: 'oled1', pinName: 'GND' }, color: '#000000' },
-      { id: 'w-oled-sda', start: { componentId: 'esp32', pinName: '21' },    end: { componentId: 'oled1', pinName: 'SDA' }, color: '#22aaff' },
-      { id: 'w-oled-scl', start: { componentId: 'esp32', pinName: '22' },    end: { componentId: 'oled1', pinName: 'SCL' }, color: '#ff8800' },
+      { id: 'w-oled-sda', start: { componentId: 'esp32', pinName: '21' },    end: { componentId: 'oled1', pinName: 'DATA' }, color: '#22aaff' },
+      { id: 'w-oled-scl', start: { componentId: 'esp32', pinName: '22' },    end: { componentId: 'oled1', pinName: 'CLK' }, color: '#ff8800' },
       // Buttons — HIGH-when-pressed (one side to 3V3, other to GPIO). Code
       // reads pin.value() == 1 on press, so they sit between 3.3V and the
       // input pin. Add Pin.PULL_DOWN in MicroPython if the pin floats.

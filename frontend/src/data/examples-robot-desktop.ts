@@ -122,7 +122,7 @@ export const robotDesktopExamples: ExampleProject[] = [
       // off the ESP32. The two servos run off 3V3 too because the
       // simulator doesn't model the brown-out a real SG90 would
       // cause — on real hardware they'd need an external 5V.
-      w('p-oled-vcc', ['esp32', '3V3'], ['oled', 'VCC'], '#ff0000'),
+      w('p-oled-vcc', ['esp32', '3V3'], ['oled', 'VIN'], '#ff0000'),
       w('p-oled-gnd', ['oled', 'GND'], ['esp32', 'GND'], '#000000'),
       w('p-dht-vcc',  ['esp32', '3V3'], ['dht', 'VCC'], '#ff0000'),
       w('p-dht-gnd',  ['dht', 'GND'], ['esp32', 'GND'], '#000000'),
@@ -140,13 +140,13 @@ export const robotDesktopExamples: ExampleProject[] = [
       // ── I²C bus: OLED on the ESP32's default I²C (SDA=21, SCL=22).
       // U8G2_SSD1306_128X64_NONAME_F_HW_I2C in the sketch uses
       // Wire.begin() which defaults to these pins.
-      w('i2c-sda', ['esp32', '21'], ['oled', 'SDA'], '#ffd000'),
-      w('i2c-scl', ['esp32', '22'], ['oled', 'SCL'], '#00d0ff'),
+      w('i2c-sda', ['esp32', '21'], ['oled', 'DATA'], '#ffd000'),
+      w('i2c-scl', ['esp32', '22'], ['oled', 'CLK'], '#00d0ff'),
 
       // ── Sensor signal lines, matching Common.h's #define block.
       w('s-dht', ['dht', 'SDA'], ['esp32', '15'], '#00ffaa'),
       w('s-pir', ['pir', 'OUT'], ['esp32', '4'],  '#ff00ff'),
-      w('s-snd', ['sound', 'OUT'], ['esp32', '2'],  '#ffaa00'),
+      w('s-snd', ['sound', 'DOUT'], ['esp32', '2'],  '#ffaa00'),
       w('s-ldr', ['ldr', 'AO'], ['esp32', '34'], '#aaff00'),
 
       // ── Servo signal lines (PWM via LEDC on the ESP32).
