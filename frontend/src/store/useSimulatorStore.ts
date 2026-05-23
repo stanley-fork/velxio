@@ -1278,9 +1278,48 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
             const path = JSON.stringify(f.name);
             return `with open(${path},'w') as _f:\n    _f.write(${lit})`;
           });
-          const prelude = preludeLines.length
-            ? preludeLines.join('\n') + '\n'
-            : '';
+
+          // WiFi compat shim: replace `network` and `ntptime` with no-op
+          // stubs BEFORE user main.py imports them. The picsimlab QEMU
+          // fork's esp32_wifi NIC emulation is sufficient for Arduino's
+          // lightweight WiFi.h but not for MicroPython's full esp_wifi_init
+          // path — calling `network.WLAN(STA_IF)` hangs forever waiting
+          // for peripheral status bits that QEMU never sets, tripping the
+          // FreeRTOS task watchdog (TG1WDT_SYS_RESET ~26s after boot).
+          // The stubs let sketches degrade gracefully:
+          //   wlan.isconnected() → False
+          //   wlan.connect(...) → no-op
+          //   ntptime.settime() → raises OSError (most sketches already
+          //                       catch and print "Sync Failed")
+          const wifiStub = [
+            'import sys',
+            'class _StubWLAN:',
+            '    def __init__(self, *a, **k): pass',
+            '    def active(self, on=None): return False',
+            '    def connect(self, ssid=None, pwd=None): pass',
+            '    def disconnect(self): pass',
+            '    def isconnected(self): return False',
+            '    def ifconfig(self, c=None): return ("0.0.0.0", "0.0.0.0", "0.0.0.0", "0.0.0.0")',
+            '    def config(self, *a, **k): return None',
+            '    def status(self, *a): return -1',
+            '    def scan(self): return []',
+            'class _StubNetwork:',
+            '    STA_IF = 0',
+            '    AP_IF = 1',
+            '    WLAN = _StubWLAN',
+            'sys.modules["network"] = _StubNetwork()',
+            'class _StubNTP:',
+            '    host = "pool.ntp.org"',
+            '    timeout = 1',
+            '    @staticmethod',
+            '    def settime(): raise OSError("WiFi unavailable in simulator")',
+            '    @staticmethod',
+            '    def time(): raise OSError("WiFi unavailable in simulator")',
+            'sys.modules["ntptime"] = _StubNTP()',
+          ].join('\n');
+
+          const prelude = wifiStub + '\n' +
+            (preludeLines.length ? preludeLines.join('\n') + '\n' : '');
           esp32Bridge.setPendingMicroPythonCode(prelude + mainFile.content);
         }
       } else {
