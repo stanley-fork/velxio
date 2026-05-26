@@ -139,16 +139,12 @@ export class PinManager {
   }
 
   /**
-   * Soft cleanup for stopBoard: drop the MCU-output classification so
-   * the next Run doesn't keep emitting stale V-sources on the SPICE
-   * side from a pin the previous program had driven. The cached pin
-   * STATES (`pinStates`) stay put — components that hold visual state
-   * (7-segment, NeoPixel, LCD, dot-matrix) keep showing the last
-   * pattern, which is what users expect from a pause/stop. On resume,
-   * avr8js's port-listener fires only for bits that CHANGED relative
-   * to its internal oldValue, so blanking the cache here would race:
-   * if the sketch's port register matches what it was pre-stop, no
-   * pinChange fires and the display would never recover.
+   * Drop only the MCU-output classification (SPICE side). Used by
+   * paths that need to forget which pins were driven this session
+   * without disturbing the cached pin states or notifying listeners.
+   * For the user-facing Stop / Reset / firmware-reload flows use
+   * `hardResetPinStates` — those are cold boots and the next Run
+   * must start from setup() with every visual cleared.
    */
   resetPinStates(): void {
     this.outputPins.clear();

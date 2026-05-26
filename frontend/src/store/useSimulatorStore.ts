@@ -1599,13 +1599,19 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       } else if (isEsp32Kind(board.boardKind)) {
         getEsp32Bridge(boardId)?.disconnect();
       } else {
-        getBoardSimulator(boardId)?.stop();
+        // Stop is "cut power": pressing Run again must boot from setup()
+        // not resume mid-loop, so reset the CPU to PC=0 here. Without
+        // this the AVR keeps its program counter and the next Run picks
+        // up wherever it left off — which is fine for Pause but wrong
+        // for the physical Stop button users expect.
+        getBoardSimulator(boardId)?.reset();
       }
 
-      // Drop MCU-output classification so the next Run starts clean and
-      // collectPinStates doesn't emit stale V-sources before the new
-      // firmware has driven any pins.
-      getBoardPinManager(boardId)?.resetPinStates();
+      // Hard reset: clear cached pin states AND notify listeners so
+      // multiplexed displays (7-segment, LED matrix, NeoPixel) clear
+      // the frozen frame they were holding when power was cut, instead
+      // of carrying it into the next run.
+      getBoardPinManager(boardId)?.hardResetPinStates();
 
       set((s) => {
         const boards = s.boards.map((b) => (b.id === boardId ? { ...b, running: false } : b));
@@ -1629,15 +1635,11 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         const sim = getBoardSimulator(boardId);
         if (sim) {
           sim.reset();
-          // Reset is a hard reboot — the CPU starts at PC=0, every pin
-          // goes back to floating, every output classification is
-          // dropped. The hardResetPinStates call also notifies
-          // listeners that previously-HIGH pins are now LOW, so visual
-          // components (7-segment, NeoPixel, LCD) clear their stale
-          // pattern instead of freezing on whatever was lit at the
-          // moment of Reset. The Stop path uses the lighter
-          // resetPinStates() that ONLY drops the output classification
-          // (preserves the display so it can resume) — see PinManager.
+          // Hard reboot: CPU back to PC=0, every pin floats, every
+          // output classification dropped, and listeners notified so
+          // visual components (7-segment, NeoPixel, LCD) clear their
+          // stale frame instead of freezing on whatever was lit.
+          // Same semantics as Stop — both behave like cutting power.
           getBoardPinManager(boardId)?.hardResetPinStates();
           // NOTE: do NOT reassign sim.onSerialData here. sim.reset()
           // recreates the USART but the new usart.onByteTransmit
