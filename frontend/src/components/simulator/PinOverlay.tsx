@@ -37,11 +37,19 @@ interface PinOverlayProps {
   componentY: number;
   onPinClick: (componentId: string, pinName: string, x: number, y: number) => void;
   showPins: boolean;
-  /** Extra offset to compensate for wrapper padding/border. Default: 4 (x), 6 (y) for component wrappers. Pass 0 when the element has no wrapper. */
+  /** Extra offset to compensate for wrapper padding (4) + border (2) = 6 on each side. Default 6/6 for component wrappers. Pass 0 when the element has no wrapper (e.g. boards rendered without DynamicComponent). */
   wrapperOffsetX?: number;
   wrapperOffsetY?: number;
   /** Current canvas zoom level — used to keep touch targets usable at any zoom */
   zoom?: number;
+  /**
+   * CSS rotation (degrees) applied to the underlying DynamicComponent
+   * wrapper. The overlay div lives OUTSIDE that wrapper so it doesn't
+   * inherit the transform — without this prop we rotate the pin
+   * coordinates manually around the wrapper's centre so the clickable
+   * boxes follow the visually-rotated pin tips.
+   */
+  rotation?: number;
 }
 
 export const PinOverlay: React.FC<PinOverlayProps> = ({
@@ -50,11 +58,13 @@ export const PinOverlay: React.FC<PinOverlayProps> = ({
   componentY,
   onPinClick,
   showPins,
-  wrapperOffsetX = 4,
+  wrapperOffsetX = 6,
   wrapperOffsetY = 6,
   zoom = 1,
+  rotation = 0,
 }) => {
   const [pins, setPins] = useState<PinInfo[]>([]);
+  const [wrapperBox, setWrapperBox] = useState<{ w: number; h: number } | null>(null);
   const isCoarse = useIsCoarsePointer();
 
   useEffect(() => {
@@ -62,6 +72,14 @@ export const PinOverlay: React.FC<PinOverlayProps> = ({
       const element = document.getElementById(componentId);
       if (element && (element as any).pinInfo) {
         setPins((element as any).pinInfo);
+        // Capture the wrapper's unrotated bounding box for the rotation
+        // pivot. offsetWidth/Height stay constant regardless of CSS
+        // transforms, so they reflect the LAYOUT box — exactly what
+        // CSS rotates around with transform-origin: center center.
+        const wrapper = element.closest('.dynamic-component-wrapper') as HTMLElement | null;
+        if (wrapper) {
+          setWrapperBox({ w: wrapper.offsetWidth, h: wrapper.offsetHeight });
+        }
         return true;
       }
       return false;
@@ -71,7 +89,7 @@ export const PinOverlay: React.FC<PinOverlayProps> = ({
       const t = setTimeout(tryRead, 50);
       return () => clearTimeout(t);
     }
-  }, [componentId]);
+  }, [componentId, rotation]);
 
   if (!showPins || pins.length === 0) {
     return null;
@@ -96,8 +114,39 @@ export const PinOverlay: React.FC<PinOverlayProps> = ({
       }}
     >
       {pins.map((pin, index) => {
-        const pinX = pin.x;
-        const pinY = pin.y;
+        // Container origin in CANVAS space is (componentX + wrapperOffsetX,
+        // componentY + wrapperOffsetY). The wrapper top-left in canvas
+        // space is (componentX - (6 - wrapperOffsetX), componentY - (6 -
+        // wrapperOffsetY)) for the DynamicComponent path, but more
+        // simply: padding+border on the wrapper is 6px on each side, so
+        // the wrapper-top-left equals containerOrigin - (6 - offset).
+        // Pivot for CSS rotation (transform-origin: center center) is
+        // wrapperTopLeft + (wrapperW/2, wrapperH/2). Express it in
+        // container-local coords by subtracting containerOrigin.
+        let pinX = pin.x;
+        let pinY = pin.y;
+        const angle = ((rotation % 360) + 360) % 360;
+        if (angle !== 0 && wrapperBox) {
+          // Wrapper interior padding+border is 6 px on each side
+          // (DynamicComponent: padding:4 + border:2). For boards rendered
+          // directly the caller passes wrapperOffsetX/Y = 0, so the
+          // 6 - offset arithmetic still resolves correctly (6 - 0 = 6
+          // would be wrong for boards which don't have a wrapper at
+          // all — but boards also pass rotation = 0 so we never enter
+          // this branch for them).
+          const wrapperInner = 6;
+          const wrapperLeftLocal = -(wrapperInner - wrapperOffsetX);
+          const wrapperTopLocal = -(wrapperInner - wrapperOffsetY);
+          const pivotX = wrapperLeftLocal + wrapperBox.w / 2;
+          const pivotY = wrapperTopLocal + wrapperBox.h / 2;
+          const theta = (angle * Math.PI) / 180;
+          const cos = Math.cos(theta);
+          const sin = Math.sin(theta);
+          const dx = pin.x - pivotX;
+          const dy = pin.y - pivotY;
+          pinX = pivotX + dx * cos - dy * sin;
+          pinY = pivotY + dx * sin + dy * cos;
+        }
 
         return (
           <div

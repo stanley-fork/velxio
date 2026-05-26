@@ -1976,6 +1976,7 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
               onPinClick={handlePinClick}
               showPins={showPinsForComponent}
               zoom={zoom}
+              rotation={Number(component.properties?.rotation) || 0}
             />
           )}
         </div>
