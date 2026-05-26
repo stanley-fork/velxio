@@ -1787,8 +1787,18 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       const boardId = activeBoardId ?? INITIAL_BOARD_ID;
       const pm = getBoardPinManager(boardId) ?? legacyPinManager;
 
-      getBoardSimulator(boardId)?.stop();
-      simulatorMap.delete(boardId);
+      // Multi-board flows (addBoard, loadProjectState) already create
+      // sims + register them in simulatorMap, AND Interconnect wraps
+      // sim.onSerialData for cross-board UART forwarding. SimulatorCanvas
+      // runs initSimulator() once on mount as a legacy single-board
+      // "make sure a sim exists for the active board" helper. If we let
+      // it through here when a sim ALREADY exists we wipe simulatorMap,
+      // recreate the sim, and silently drop the Interconnect wrapper —
+      // every cross-board wire stops forwarding bytes (Nano never sees
+      // anything the Uno sends). Skip out early in that case.
+      const existingSim = getBoardSimulator(boardId);
+      if (existingSim) return;
+
       getEsp32Bridge(boardId)?.disconnect();
       esp32BridgeMap.delete(boardId);
 

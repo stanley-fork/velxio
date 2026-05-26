@@ -301,13 +301,7 @@ export class AVRSimulator {
   private scheduledPinChanges: Array<{ cycle: number; pin: number; state: boolean }> = [];
 
   /** Serial output buffer — subscribers receive each byte or line */
-  private _onSerialData: ((char: string) => void) | null = null;
-  public get onSerialData(): ((char: string) => void) | null { return this._onSerialData; }
-  public set onSerialData(v: ((char: string) => void) | null) {
-    const who = new Error().stack?.split('\n').slice(1, 6).join(' | ');
-    console.log('[AVR-DBG] onSerialData SET (fn?', typeof v === 'function', ') from', who);
-    this._onSerialData = v;
-  }
+  public onSerialData: ((char: string) => void) | null = null;
   /** Fires whenever the sketch changes Serial baud rate (Serial.begin) */
   public onBaudRateChange: ((baudRate: number) => void) | null = null;
   /**
