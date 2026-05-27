@@ -156,6 +156,37 @@ function randomNonce(): string {
 }
 
 /**
+ * USB serial port info returned by the Rust shell's `list_serial_ports`
+ * command. The hardware-flash modal reads this to populate the port
+ * dropdown. `vid` / `pid` etc. are absent for non-USB ports (legacy
+ * RS-232, Bluetooth SPP virtual COM ports).
+ */
+export interface SerialPortInfo {
+  path: string;
+  vid?: number | null;
+  pid?: number | null;
+  manufacturer?: string | null;
+  product?: string | null;
+  serial_number?: string | null;
+}
+
+/**
+ * Enumerate USB serial ports plugged into the host. Empty array
+ * when the Tauri runtime isn't present (web build) so the UI can
+ * render its "open Velxio Desktop to flash real boards" CTA without
+ * blowing up.
+ */
+export async function listSerialPorts(): Promise<SerialPortInfo[]> {
+  if (!isTauri()) return [];
+  try {
+    return await invoke<SerialPortInfo[]>('list_serial_ports');
+  } catch (err) {
+    tryLog('listSerialPorts: command failed', { err: String(err) });
+    return [];
+  }
+}
+
+/**
  * Read the current license gate state (v0.3.0+). Defaults the grandfather
  * fields to {0, false} outside Tauri so dev-in-browser doesn't crash.
  */

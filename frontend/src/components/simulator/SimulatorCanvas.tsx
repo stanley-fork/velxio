@@ -42,7 +42,9 @@ import {
 import { useIsCoarsePointer } from '../../utils/useTouchDevice';
 import type { ComponentMetadata } from '../../types/component-metadata';
 import type { BoardKind } from '../../types/board';
-import { BOARD_KIND_LABELS } from '../../types/board';
+import { BOARD_KIND_FQBN, BOARD_KIND_LABELS } from '../../types/board';
+import { FlashModal } from './FlashModal';
+import { isTauri as isTauriRuntimeFn } from '../../desktop/tauriBridge';
 import { isEsp32Family } from '../../types/boardOptions';
 import { BoardOptionsModal } from './BoardOptionsModal';
 import { useOscilloscopeStore } from '../../store/useOscilloscopeStore';
@@ -227,6 +229,13 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
   const [boardToRemove, setBoardToRemove] = useState<string | null>(null);
   // Board Options modal — id of the board whose options are being edited.
   const [boardOptionsModalFor, setBoardOptionsModalFor] = useState<string | null>(null);
+  // Hardware-flash modal: set to a board id when the user picks
+  // "Flash to real board" from the board context menu. The FlashModal
+  // owns its own port-picker / progress UI; we just gate the mount.
+  const [flashModalFor, setFlashModalFor] = useState<string | null>(null);
+  // Cached Tauri-runtime probe — used to gate the "Flash to real
+  // board" menu item in web builds. Hooks-stable across re-renders.
+  const isTauriRuntime = useRef(isTauriRuntimeFn()).current;
 
   // Click vs drag detection
   const [clickStartTime, setClickStartTime] = useState<number>(0);
@@ -2872,6 +2881,65 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
                     margin: '4px 0',
                   }}
                 />
+                {/* Hardware flash — only useful inside Tauri (web can't
+                    talk to USB serial without WebSerial). Hidden in web
+                    so the item doesn't tease a feature that won't work
+                    until the WebSerial track lands. */}
+                {isTauriRuntime && (
+                  <button
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      width: '100%',
+                      padding: '7px 14px',
+                      background: 'none',
+                      border: 'none',
+                      color: !!board?.compiledProgram ? '#e6e6e9' : '#666',
+                      cursor: !!board?.compiledProgram ? 'pointer' : 'not-allowed',
+                      fontSize: 13,
+                      textAlign: 'left',
+                    }}
+                    onMouseEnter={(e) => {
+                      if (board?.compiledProgram) e.currentTarget.style.background = '#2a2d2e';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'none';
+                    }}
+                    disabled={!board?.compiledProgram}
+                    title={
+                      board?.compiledProgram
+                        ? 'Flash the compiled sketch to a real USB-attached board'
+                        : 'Compile the sketch first'
+                    }
+                    onClick={() => {
+                      if (!board?.compiledProgram) return;
+                      setFlashModalFor(boardContextMenu.boardId);
+                      setBoardContextMenu(null);
+                    }}
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                    </svg>
+                    Flash to real board
+                  </button>
+                )}
+                <div
+                  style={{
+                    height: 1,
+                    background: '#3c3c3c',
+                    margin: '4px 0',
+                  }}
+                />
                 <button
                   style={{
                     display: 'flex',
@@ -2919,6 +2987,31 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
                 </button>
               </div>
             </>
+          );
+        })()}
+
+      {/* Hardware flash modal — opens from board context menu when
+          the user has compiled the sketch + clicks "Flash to real
+          board". Only present in Tauri (web hides the menu item). */}
+      {flashModalFor &&
+        (() => {
+          const b = boards.find((x) => x.id === flashModalFor);
+          if (!b) return null;
+          const fqbn = BOARD_KIND_FQBN[b.boardKind];
+          if (!fqbn) {
+            // The board kind has no arduino-cli FQBN (e.g. some
+            // virtual boards or chips). Auto-close — surface a toast
+            // via the existing menu-event system if/when that exists.
+            console.warn('[flash] no FQBN for board kind', b.boardKind);
+            setFlashModalFor(null);
+            return null;
+          }
+          return (
+            <FlashModal
+              board={b}
+              fqbn={fqbn}
+              onClose={() => setFlashModalFor(null)}
+            />
           );
         })()}
 
