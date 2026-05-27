@@ -62,13 +62,26 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
 )
 
-# CORS for local development
+# CORS — local Vite dev, the prod web origin, AND the Velxio Desktop
+# Tauri origins. The desktop bundle runs from a non-http scheme so
+# every fetch to velxio.dev is cross-origin and the browser blocks
+# preflight unless we explicitly allow the Tauri scheme(s).
+#
+# Tauri origin per OS:
+#   - macOS / Linux: `tauri://localhost`
+#   - Windows:       `http://tauri.localhost`
+#   - older Tauri:   `https://tauri.localhost`
+# All three are listed so the desktop bundle works regardless of
+# host OS or Tauri version.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",
         "http://localhost:5174",
         "http://localhost:5175",
+        "tauri://localhost",
+        "http://tauri.localhost",
+        "https://tauri.localhost",
         settings.FRONTEND_URL,
     ],
     allow_credentials=True,
