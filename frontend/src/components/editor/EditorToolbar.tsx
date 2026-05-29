@@ -9,7 +9,7 @@ import { BOARD_PIN_GROUPS } from '../../simulation/spice/boardPinGroups';
 import { CircuitVerificationModal } from '../simulator/CircuitVerificationModal';
 import type { PinSourceState } from '../../simulation/spice/types';
 import type { BoardKind, LanguageMode } from '../../types/board';
-import { BOARD_KIND_FQBN, BOARD_KIND_LABELS, BOARD_SUPPORTS_MICROPYTHON } from '../../types/board';
+import { BOARD_KIND_FQBN, BOARD_KIND_LABELS, BOARD_SUPPORTS_MICROPYTHON, isPiBoardKind } from '../../types/board';
 import { compileCode } from '../../services/compilation';
 import {
   compileRom,
@@ -23,7 +23,8 @@ import { LibraryManagerModal } from '../simulator/LibraryManagerModal';
 import { InstallLibrariesModal } from '../simulator/InstallLibrariesModal';
 import { parseCompileResult } from '../../utils/compilationLogger';
 import type { CompilationLog } from '../../utils/compilationLogger';
-import { exportToWokwiZip, importFromWokwiZip } from '../../utils/wokwiZip';
+import { exportToWokwiZip } from '../../utils/wokwiZip';
+import { importProjectFile, PROJECT_FILE_ACCEPT } from '../../utils/importProject';
 import { readFirmwareFile } from '../../utils/firmwareLoader';
 import {
   trackCompileCode,
@@ -60,6 +61,8 @@ const BOARD_PILL_ICON: Record<BoardKind, string> = {
   'arduino-mega': '▬',
   'raspberry-pi-pico': '◆',
   'raspberry-pi-3': '⬛',
+  'raspberry-pi-4': '⬛',
+  'raspberry-pi-5': '⬛',
   esp32: '⬡',
   'esp32-s3': '⬡',
   'esp32-c3': '⬡',
@@ -71,6 +74,8 @@ const BOARD_PILL_COLOR: Record<BoardKind, string> = {
   'arduino-mega': '#4fc3f7',
   'raspberry-pi-pico': '#ce93d8',
   'raspberry-pi-3': '#ef9a9a',
+  'raspberry-pi-4': '#ef9a9a',
+  'raspberry-pi-5': '#ef9a9a',
   esp32: '#a5d6a7',
   'esp32-s3': '#a5d6a7',
   'esp32-c3': '#a5d6a7',
@@ -158,6 +163,10 @@ export const EditorToolbar = ({
     setCompiling(true);
     setMessage(null);
     setConsoleOpen(true);
+    // Wipe the previous build's output before we append anything new.
+    // Issue #209: lingering logs from prior compiles made it impossible
+    // to tell the latest errors / warnings apart from stale ones.
+    setCompileLogs([]);
     trackCompileCode();
 
     // ── Chip-program path ───────────────────────────────────────────────
@@ -258,7 +267,7 @@ export const EditorToolbar = ({
     const kind = activeBoard?.boardKind;
 
     // Raspberry Pi 3B doesn't need arduino-cli compilation
-    if (kind === 'raspberry-pi-3') {
+    if (isPiBoardKind(kind)) {
       addLog({
         timestamp: new Date(),
         type: 'info',
@@ -375,6 +384,13 @@ export const EditorToolbar = ({
       } else {
         const errText = result.error || result.stderr || 'Compile failed';
         setMessage({ type: 'error', text: errText });
+        // Issue #208: drop the previous successful program from this
+        // board so a subsequent Run cannot silently execute stale code
+        // that doesn't match the editor any more. The Run button gates
+        // on `!compiledProgram` and will refuse + force a re-compile.
+        if (activeBoardId) {
+          updateBoard(activeBoardId, { compiledProgram: null });
+        }
         // Detect missing library errors — common patterns:
         // "No such file or directory" for #include, "fatal error: XXX.h"
         const looksLikeMissingLib =
@@ -565,7 +581,7 @@ export const EditorToolbar = ({
       }
 
       const isQemuBoard =
-        board?.boardKind === 'raspberry-pi-3' ||
+        board?.boardKind && isPiBoardKind(board.boardKind) ||
         board?.boardKind === 'esp32' ||
         board?.boardKind === 'esp32-s3' ||
         board?.boardKind === 'esp32-cam' ||
@@ -592,10 +608,6 @@ export const EditorToolbar = ({
             compiledProgramLen: updatedBoard?.compiledProgram?.length ?? 0,
             autoRunFlag: autoRunAfterCompile.current,
           });
-          // For QEMU boards, always start even if compiledProgram is empty —
-          // the bridge can be told to start without firmware (for waiting on
-          // a later upload) and is the safest path when the binary may be
-          // present on the bridge but not yet reflected in the store.
           if (autoRunAfterCompile.current) {
             autoRunAfterCompile.current = false;
             if (updatedBoard?.compiledProgram) {
@@ -605,7 +617,20 @@ export const EditorToolbar = ({
               startBoard(activeBoardId);
               setMessage(null);
             } else {
+              // handleCompile returned without producing a firmware/program.
+              // Most common causes: arduino-cli unreachable, ESP-IDF compile
+              // error in the user's sketch, MicroPython firmware download
+              // failed, or the bridge rejected the load. handleCompile has
+              // already addLog'd the underlying error — surface a top-level
+              // toast too so the user knows their Run click didn't silently
+              // succeed.
+              const isMicropython = updatedBoard?.languageMode === 'micropython';
+              const errText = isMicropython
+                ? 'MicroPython firmware did not load. Click "Load MicroPython" to retry, or check the console for the underlying error.'
+                : 'Compilation produced no firmware. Check the output console for the underlying error.';
               console.warn('[handleRun] compile finished but no compiledProgram — not starting');
+              setMessage({ type: 'error', text: errText });
+              addLog({ timestamp: new Date(), type: 'error', message: errText });
             }
           }
           return;
@@ -712,7 +737,7 @@ export const EditorToolbar = ({
     for (const board of boardsList) {
       const label = BOARD_KIND_LABELS[board.boardKind] ?? board.boardKind;
 
-      if (board.boardKind === 'raspberry-pi-3') {
+      if (isPiBoardKind(board.boardKind)) {
         addLog({
           timestamp: new Date(),
           type: 'info',
@@ -814,7 +839,7 @@ export const EditorToolbar = ({
       codeChangedSinceLastCompile ||
       boardsList.some(
         (b) =>
-          b.boardKind !== 'raspberry-pi-3' &&
+          !isPiBoardKind(b.boardKind) &&
           b.languageMode !== 'micropython' &&
           !b.compiledProgram,
       );
@@ -829,7 +854,7 @@ export const EditorToolbar = ({
     for (const board of refreshed) {
       if (board.running) continue;
       const isQemu =
-        board.boardKind === 'raspberry-pi-3' ||
+        isPiBoardKind(board.boardKind) ||
         board.boardKind === 'esp32' ||
         board.boardKind === 'esp32-s3';
       if (isQemu || board.compiledProgram || board.languageMode === 'micropython') {
@@ -853,6 +878,101 @@ export const EditorToolbar = ({
       await exportToWokwiZip(files, components, wires, legacyBoardType, projectName, boardPosition);
     } catch (err) {
       setMessage({ type: 'error', text: 'Export failed.' });
+    }
+  };
+
+  // Phase 3 D3.2 — Schematic screenshot. Pro-tier-gated by the backend.
+  // Same UX pattern as BOM export: everyone can click; 402 redirects to
+  // /pricing. The server-side headless chromium renders the canvas and
+  // returns a PNG, which we trigger a download for.
+  const handleExportScreenshot = async () => {
+    const projectId = currentProject?.id;
+    if (!projectId) {
+      setMessage({ type: 'error', text: 'Save the project before exporting an image.' });
+      return;
+    }
+    setMessage({ type: 'info', text: 'Rendering screenshot — may take 5-10 seconds…' });
+    try {
+      const resp = await fetch(`/api/pro/projects/${projectId}/screenshot.png`, {
+        credentials: 'include',
+      });
+      if (resp.status === 402) {
+        window.location.href = '/pricing?from=screenshot_export';
+        return;
+      }
+      if (resp.status === 401) {
+        window.location.href = `/login?redirect=${encodeURIComponent(window.location.pathname)}`;
+        return;
+      }
+      if (resp.status === 422) {
+        setMessage({ type: 'error', text: 'Add at least one component to export an image.' });
+        return;
+      }
+      if (!resp.ok) {
+        setMessage({ type: 'error', text: 'Screenshot export failed.' });
+        return;
+      }
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const cd = resp.headers.get('Content-Disposition') || '';
+      const m = /filename="?([^"]+)"?/.exec(cd);
+      a.download = m ? m[1] : `velxio-${projectId}.png`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setMessage({ type: 'success', text: 'Screenshot downloaded.' });
+    } catch {
+      setMessage({ type: 'error', text: 'Screenshot export failed.' });
+    }
+  };
+
+  // Phase 3 D3.1 — BOM export. Pro-tier-gated by the backend (402 if not pro).
+  // We let everyone click; the 402 response feeds the upgrade prompt below
+  // so free/maker users hit the funnel naturally instead of an obviously-
+  // locked button (which they'd just dismiss).
+  const handleExportBom = async () => {
+    const projectId = currentProject?.id;
+    if (!projectId) {
+      setMessage({ type: 'error', text: 'Save the project before exporting a BOM.' });
+      return;
+    }
+    try {
+      const resp = await fetch(`/api/pro/projects/${projectId}/bom.csv`, {
+        credentials: 'include',
+      });
+      if (resp.status === 402) {
+        // Pro-required. Bounce to /pricing with a hint so the page can
+        // surface the right upgrade message. (The backend returned a
+        // structured `detail.error = 'pro_required'` payload but for the
+        // MVP we just route to pricing.)
+        window.location.href = '/pricing?from=bom_export';
+        return;
+      }
+      if (resp.status === 401) {
+        window.location.href = `/login?redirect=${encodeURIComponent(window.location.pathname)}`;
+        return;
+      }
+      if (!resp.ok) {
+        setMessage({ type: 'error', text: 'BOM export failed.' });
+        return;
+      }
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      // Filename comes from Content-Disposition; pick a fallback.
+      const cd = resp.headers.get('Content-Disposition') || '';
+      const m = /filename="?([^"]+)"?/.exec(cd);
+      a.download = m ? m[1] : `bom-${projectId}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setMessage({ type: 'error', text: 'BOM export failed.' });
     }
   };
 
@@ -903,7 +1023,14 @@ export const EditorToolbar = ({
     importInputRef.current.value = '';
     if (!file) return;
     try {
-      const result = await importFromWokwiZip(file);
+      const result = await importProjectFile(file);
+      if (result.kind === 'vlx') {
+        // importVlxFile already wrote into the stores.
+        setMessage({ type: 'success', text: `Imported ${file.name}` });
+        return;
+      }
+      // .zip path: apply the parsed payload to the stores ourselves, then
+      // surface any missing libraries via the existing install modal.
       const { loadFiles } = useEditorStore.getState();
       const { setComponents, setWires, setBoardType, setBoardPosition, stopSimulation } =
         useSimulatorStore.getState();
@@ -1110,11 +1237,13 @@ export const EditorToolbar = ({
           {centerSlot && <div className="toolbar-center-slot">{centerSlot}</div>}
 
           <div className="toolbar-group toolbar-group-right">
-            {/* Hidden file input for import (always present) */}
+            {/* Hidden file input for project import. Accepts both .vlx
+                (Velxio native) and .zip (Wokwi bundle); the dispatcher in
+                utils/importProject.ts picks the right loader by extension. */}
             <input
               ref={importInputRef}
               type="file"
-              accept=".zip"
+              accept={PROJECT_FILE_ACCEPT}
               style={{ display: 'none' }}
               onChange={handleImportFile}
             />
@@ -1176,6 +1305,30 @@ export const EditorToolbar = ({
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                 <polyline points="17 8 12 3 7 8" />
                 <line x1="12" y1="3" x2="12" y2="15" />
+              </svg>
+            </button>
+            <button
+              onClick={() => handleExportBom()}
+              className="tb-btn"
+              title={t('editor.toolbar.exportBom')}
+            >
+              {/* Spreadsheet / list icon — distinguishes the BOM from the
+                  generic project Export ZIP that sits next to it. */}
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="4" width="18" height="16" rx="2" />
+                <line x1="3" y1="10" x2="21" y2="10" />
+                <line x1="9" y1="4" x2="9" y2="20" />
+              </svg>
+            </button>
+            <button
+              onClick={() => handleExportScreenshot()}
+              className="tb-btn"
+              title={t('editor.toolbar.exportScreenshot')}
+            >
+              {/* Camera/image icon — circuit-to-image export */}
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                <circle cx="12" cy="13" r="4" />
               </svg>
             </button>
             <button

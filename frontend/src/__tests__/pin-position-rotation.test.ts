@@ -63,11 +63,11 @@ describe('calculatePinPosition — rotation math', () => {
       wrapperH: 48,
       pins: [{ name: 'A', x: 0, y: 14 }],
     });
-    // componentX/Y are the inner-element top-left after the +4/+6 wrapper
-    // offset that updateWirePositions applies. With component.x = 100 →
-    // componentX = 104.
-    const pos = calculatePinPosition('comp0', 'A', 104, 106, 0);
-    expect(pos).toEqual({ x: 104, y: 120 });
+    // componentX/Y are the inner-element top-left after the +6/+6
+    // wrapper offset that updateWirePositions applies. With
+    // component.x = 100 → componentX = 106.
+    const pos = calculatePinPosition('comp0', 'A', 106, 106, 0);
+    expect(pos).toEqual({ x: 106, y: 120 });
   });
 
   it('rotates a left-side pin to the bottom when rotation = 90°', () => {
@@ -80,18 +80,18 @@ describe('calculatePinPosition — rotation math', () => {
       wrapperH: 48,
       pins: [{ name: 'A', x: 0, y: 14 }],
     });
-    const pos = calculatePinPosition('comp90', 'A', 104, 106, 90);
+    const pos = calculatePinPosition('comp90', 'A', 106, 106, 90);
     expect(pos).not.toBeNull();
     // Walk through the math to keep the assertion expressive:
-    //   wrapperLeft = 104 - 4 = 100
+    //   wrapperLeft = 106 - 6 = 100
     //   wrapperTop  = 106 - 6 = 100
     //   pivot       = (100 + 36, 100 + 24) = (136, 124)
-    //   unrotated   = (104 + 0, 106 + 14) = (104, 120)
-    //   dx, dy      = (-32, -4)
-    //   90° → (dx*0 - dy*1, dx*1 + dy*0) = (4, -32)
-    //   result      = (136 + 4, 124 - 32) = (140, 92)
+    //   unrotated   = (106 + 0, 106 + 14) = (106, 120)
+    //   dx, dy      = (-30, -4)
+    //   90° → (dx*0 - dy*1, dx*1 + dy*0) = (4, -30)
+    //   result      = (136 + 4, 124 - 30) = (140, 94)
     expect(pos!.x).toBeCloseTo(140, 5);
-    expect(pos!.y).toBeCloseTo(92, 5);
+    expect(pos!.y).toBeCloseTo(94, 5);
   });
 
   it('rotates 180° flips both axes around the wrapper centre', () => {
@@ -103,11 +103,11 @@ describe('calculatePinPosition — rotation math', () => {
     });
     // unrotated Y is on the right edge midpoint
     //   wrapperLeft = 100, wrapperTop = 100, pivot = (136, 124)
-    //   unrotated = (104+72, 106+24) = (176, 130)
-    //   dx, dy = (40, 6)
-    //   180° → (-40, -6) → (96, 118)
-    const pos = calculatePinPosition('comp180', 'Y', 104, 106, 180);
-    expect(pos!.x).toBeCloseTo(96, 5);
+    //   unrotated = (106+72, 106+24) = (178, 130)
+    //   dx, dy = (42, 6)
+    //   180° → (-42, -6) → (94, 118)
+    const pos = calculatePinPosition('comp180', 'Y', 106, 106, 180);
+    expect(pos!.x).toBeCloseTo(94, 5);
     expect(pos!.y).toBeCloseTo(118, 5);
   });
 
@@ -118,8 +118,8 @@ describe('calculatePinPosition — rotation math', () => {
       wrapperH: 48,
       pins: [{ name: 'Y', x: 72, y: 24 }],
     });
-    const base = calculatePinPosition('comp360', 'Y', 104, 106, 0);
-    const full = calculatePinPosition('comp360', 'Y', 104, 106, 360);
+    const base = calculatePinPosition('comp360', 'Y', 106, 106, 0);
+    const full = calculatePinPosition('comp360', 'Y', 106, 106, 360);
     expect(full!.x).toBeCloseTo(base!.x, 5);
     expect(full!.y).toBeCloseTo(base!.y, 5);
   });
@@ -132,15 +132,14 @@ describe('calculatePinPosition — rotation math', () => {
       pins: [{ name: 'A', x: 0, y: 14 }],
     });
     // -90° (= 270°) sends a left-edge pin to the TOP of the wrapper.
-    //   dx, dy = (-32, -4)
-    //   -90° → (-dy, dx) = (4, -32) → wait, that's +90°. Let's check.
+    //   dx, dy = (-30, -4)
     //   Standard 2D rotation matrix [cos -sin; sin cos] with θ=-90°
     //     cos = 0, sin = -1
-    //     (dx*0 - dy*(-1), dx*(-1) + dy*0) = (dy, -dx) = (-4, 32)
-    //   result = (136 - 4, 124 + 32) = (132, 156)
-    const pos = calculatePinPosition('compNeg', 'A', 104, 106, -90);
+    //     (dx*0 - dy*(-1), dx*(-1) + dy*0) = (dy, -dx) = (-4, 30)
+    //   result = (136 - 4, 124 + 30) = (132, 154)
+    const pos = calculatePinPosition('compNeg', 'A', 106, 106, -90);
     expect(pos!.x).toBeCloseTo(132, 5);
-    expect(pos!.y).toBeCloseTo(156, 5);
+    expect(pos!.y).toBeCloseTo(154, 5);
   });
 });
 
@@ -186,17 +185,19 @@ describe('useSimulatorStore — rotating a component re-stamps wires', () => {
       wires: [
         {
           id: 'w1',
-          start: { componentId: 'g1', pinName: 'A', x: 104, y: 120 },
-          end: { componentId: 'g1', pinName: 'A', x: 104, y: 120 },
+          start: { componentId: 'g1', pinName: 'A', x: 106, y: 120 },
+          end: { componentId: 'g1', pinName: 'A', x: 106, y: 120 },
           color: '#000',
           waypoints: [],
         },
       ],
     });
 
-    // Initial position should match the unrotated math.
+    // Initial position should match the unrotated math (component.x=100
+    // plus +6 wrapper offset, plus pin.x=0 → 106 for X; same on Y plus
+    // pin.y=14 → 120).
     const before = useSimulatorStore.getState().wires[0];
-    expect(before.start.x).toBe(104);
+    expect(before.start.x).toBe(106);
     expect(before.start.y).toBe(120);
 
     // Now rotate 90° via updateComponent — the wire should follow.
@@ -205,6 +206,6 @@ describe('useSimulatorStore — rotating a component re-stamps wires', () => {
     } as any);
     const after = useSimulatorStore.getState().wires[0];
     expect(after.start.x).toBeCloseTo(140, 5);
-    expect(after.start.y).toBeCloseTo(92, 5);
+    expect(after.start.y).toBeCloseTo(94, 5);
   });
 });

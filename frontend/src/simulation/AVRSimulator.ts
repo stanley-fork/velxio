@@ -269,6 +269,15 @@ export class AVRSimulator {
   private cpu: CPU | null = null;
   /** Peripherals kept alive by reference so GC doesn't collect their CPU hooks */
   private peripherals: unknown[] = [];
+  /**
+   * Pending RX bytes waiting to be fed to the USART. avr8js's writeByte
+   * rejects (returns false, drops the byte) whenever rxBusyValue is set
+   * — and rxBusyValue stays set for `cyclesPerChar` after each call.
+   * A naive `for c of text: usart.writeByte(c)` loop therefore only
+   * delivers the first character. We buffer the rest here and drain
+   * one byte at a time on each frame's tick.
+   */
+  private serialRxQueue: number[] = [];
   private portB: AVRIOPort | null = null;
   private portC: AVRIOPort | null = null;
   private portD: AVRIOPort | null = null;
@@ -305,6 +314,13 @@ export class AVRSimulator {
   private lastPortCValue = 0;
   private lastPortDValue = 0;
   private lastOcrValues: number[] = [];
+  /**
+   * Last known TXEN bit value, used to detect 0→1 transitions and seed the
+   * TX pin baseline at idle HIGH the moment the firmware enables the USART.
+   * Without this seed the oscilloscope shows a floating/LOW baseline until
+   * the first byte transmits, which doesn't match real hardware.
+   */
+  private lastTxEnable = false;
 
   constructor(pinManager: PinManager, boardVariant: 'uno' | 'mega' | 'tiny85' = 'uno') {
     this.pinManager = pinManager;
@@ -423,9 +439,15 @@ export class AVRSimulator {
       this.usart = new AVRUSART(this.cpu, activeUsart0Config, 16000000);
       this.usart.onByteTransmit = (value: number) => {
         if (this.onSerialData) this.onSerialData(String.fromCharCode(value));
+        // Synthesize the UART frame on PD1 so the oscilloscope sees a real
+        // waveform during Serial.print. See emitUartTxFrame() for details.
+        this.emitUartTxFrame(value);
       };
+      this.usart.onRxComplete = () => this.drainSerialRxQueue();
       this.usart.onConfigurationChange = () => {
         if (this.onBaudRateChange && this.usart) this.onBaudRateChange(this.usart.baudRate);
+        // Seed idle HIGH on the TX pin the first time TXEN flips on.
+        this.handleUartConfigChange();
       };
 
       this.twi = new AVRTWI(this.cpu, activeTwiConfig, 16000000);
@@ -507,6 +529,88 @@ export class AVRSimulator {
     let i = this.scheduledPinChanges.length;
     while (i > 0 && this.scheduledPinChanges[i - 1].cycle > atCycle) i--;
     this.scheduledPinChanges.splice(i, 0, { cycle: atCycle, pin, state });
+  }
+
+  /**
+   * Synthesize a real bit-level UART frame on the TX pin so an oscilloscope
+   * sees a waveform during Serial.print, matching real ATmega328P / ATmega2560
+   * behavior. avr8js's USART only intercepts the byte at the UDR0 register
+   * level — it never toggles PD1 (Uno/Nano) / PE1 (Mega), so without this
+   * shim the TX pin is flat in the scope while real hardware would show the
+   * UART frame at the configured baud rate.
+   *
+   * Frame layout (8N1, the Arduino default):
+   *   [start LOW] [data LSB ... data MSB] [parity?] [stop1] [stop2?]
+   *
+   * We honour avr8js's USART configuration getters (bitsPerChar, parityEnabled,
+   * parityOdd, stopBits, baudRate) so unusual configurations stay accurate.
+   *
+   * Each transition is emitted via onPinChangeWithTime so the oscilloscope
+   * stamps it with simulator time (cpu.cycles / 16_000 ms), giving bit-level
+   * timing that holds at any sweep speed.
+   */
+  private emitUartTxFrame(byte: number): void {
+    const usart = this.usart;
+    if (!usart || !this.cpu || !this.onPinChangeWithTime) return;
+    if (!usart.txEnable) return;
+
+    const baud = usart.baudRate;
+    if (!baud || baud <= 0) return;
+
+    // ATmega328P (Uno/Nano) UART0: TX = PD1 → Arduino pin 1
+    // ATmega2560 (Mega)    UART0: TX = PE1 → Arduino pin 1 (Mega TX0)
+    // ATtiny85 has no hardware USART so this method is never called.
+    const txPin = 1;
+
+    const freqHz = 16_000_000;
+    const cyclesPerBit = freqHz / baud;
+    const startCycle = this.cpu.cycles;
+
+    // Build the frame bit-by-bit. UART idles HIGH; start = LOW; data LSB first;
+    // optional parity; stop bit(s) HIGH.  Idle->start gives the first transition.
+    const dataBits = usart.bitsPerChar; // typically 8
+    const bits: boolean[] = [false]; // start bit
+    let onesCount = 0;
+    for (let i = 0; i < dataBits; i++) {
+      const b = (byte >> i) & 1;
+      bits.push(b !== 0);
+      onesCount += b;
+    }
+    if (usart.parityEnabled) {
+      // Even parity = bit that makes total ones even; odd = total ones odd.
+      const parity = usart.parityOdd ? (onesCount % 2 === 0) : (onesCount % 2 !== 0);
+      bits.push(parity);
+    }
+    for (let i = 0; i < usart.stopBits; i++) bits.push(true);
+
+    // Emit only the bits that change state to keep buffer churn minimal.
+    // The "previous" state at startCycle is idle HIGH.
+    let prevState = true;
+    for (let i = 0; i < bits.length; i++) {
+      if (bits[i] !== prevState) {
+        const timeMs = (startCycle + i * cyclesPerBit) / 16_000;
+        this.onPinChangeWithTime(txPin, bits[i], timeMs);
+        prevState = bits[i];
+      }
+    }
+    // After the stop bit(s) the line is already HIGH (idle) so no trailing
+    // transition is needed — the next byte will start from HIGH automatically.
+  }
+
+  /**
+   * Seed the TX pin at idle HIGH when the firmware sets TXEN for the first
+   * time (typically inside Serial.begin).  Without this seed the scope's
+   * "initial state before the first byte" defaults to LOW, hiding the start
+   * bit transition of the very first byte sent.
+   */
+  private handleUartConfigChange(): void {
+    if (!this.usart || !this.cpu) return;
+    const tx = this.usart.txEnable;
+    if (tx && !this.lastTxEnable && this.onPinChangeWithTime) {
+      const timeMs = this.cpu.cycles / 16_000;
+      this.onPinChangeWithTime(1, true, timeMs);
+    }
+    this.lastTxEnable = tx;
   }
 
   /** Flush all scheduled pin changes whose target cycle has been reached. */
@@ -687,6 +791,18 @@ export class AVRSimulator {
         // Poll PWM registers every frame
         this.pollPwmRegisters();
 
+        // Try to drain any pending RX byte every frame. The primary
+        // drain path is onRxComplete (re-fires after each successful
+        // delivery), but that callback only ever fires AFTER a byte was
+        // accepted — if the very first delivery attempt fails (sketch
+        // hasn't called Serial.begin yet, so rxEnable is false) nothing
+        // would ever re-kick the queue and bytes from a sibling board
+        // sit there forever. A per-frame retry is cheap (no-op when the
+        // queue is empty or rxBusyValue is set) and makes the link
+        // self-heal across both startup races and Serial.end()/begin()
+        // toggles in the sketch.
+        if (this.serialRxQueue.length > 0) this.drainSerialRxQueue();
+
         frameCount++;
         if (frameCount % 60 === 0) {
           console.log(`[CPU] Frame ${frameCount}, PC: ${this.cpu.pc}, Cycles: ${this.cpu.cycles}`);
@@ -715,6 +831,13 @@ export class AVRSimulator {
       this.animationFrame = null;
     }
     this.scheduledPinChanges = [];
+
+    // Drop any bytes the previous run had queued for the sketch's RX
+    // but never delivered (RX disabled, busy, or the sketch hadn't
+    // reached Serial.begin yet). Without this the next run starts with
+    // a stale tail that drains into the fresh USART before the sketch
+    // is ready, and from the user's point of view the link is "dead".
+    this.serialRxQueue = [];
 
     console.log('AVR simulation stopped');
   }
@@ -749,9 +872,12 @@ export class AVRSimulator {
         this.usart = new AVRUSART(this.cpu, usart0Config, 16000000);
         this.usart.onByteTransmit = (value: number) => {
           if (this.onSerialData) this.onSerialData(String.fromCharCode(value));
+          this.emitUartTxFrame(value);
         };
+        this.usart.onRxComplete = () => this.drainSerialRxQueue();
         this.usart.onConfigurationChange = () => {
           if (this.onBaudRateChange && this.usart) this.onBaudRateChange(this.usart.baudRate);
+          this.handleUartConfigChange();
         };
 
         this.twi = new AVRTWI(this.cpu, twiConfig, 16000000);
@@ -841,11 +967,34 @@ export class AVRSimulator {
 
   /**
    * Send a byte to the Arduino serial port (RX) — as if typed in the Serial Monitor.
+   *
+   * AVR has no hardware RX FIFO, so avr8js's writeByte() rejects every
+   * call while rxBusyValue is set (one full cyclesPerChar after the
+   * previous byte). A naive loop would only deliver the first character.
+   * Queue the bytes here and drain one at a time from onRxComplete.
    */
   serialWrite(text: string): void {
     if (!this.usart) return;
     for (let i = 0; i < text.length; i++) {
-      this.usart.writeByte(text.charCodeAt(i));
+      this.serialRxQueue.push(text.charCodeAt(i));
+    }
+    this.drainSerialRxQueue();
+  }
+
+  /**
+   * Pump the next pending RX byte into the USART. Called once from
+   * serialWrite() to kick the pipeline, then re-armed from
+   * usart.onRxComplete after every byte the sketch actually receives.
+   * The cyclesPerChar gap that avr8js enforces between writeByte calls
+   * gives the sketch time to read UDR0 between bytes — same pacing the
+   * real chip sees at the configured baud rate.
+   */
+  private drainSerialRxQueue(): void {
+    if (!this.usart) return;
+    if (this.serialRxQueue.length === 0) return;
+    const next = this.serialRxQueue[0];
+    if (this.usart.writeByte(next)) {
+      this.serialRxQueue.shift();
     }
   }
 

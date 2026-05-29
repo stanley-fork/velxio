@@ -933,6 +933,10 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
           const boardPm = pinManagerMap.get(id);
           if (boardPm) boardPm.triggerPinChange(gpioPin, state, 'mcu');
         };
+        // Wire scope sampling for ESP32 (GPIO transitions + synthesized
+        // UART TX bits).  Mirrors what AVR/RP2040 simulators get for free
+        // by passing the oscilloscope callback into createSimulator().
+        bridge.onPinChangeWithTime = getOscilloscopeCallback(id);
         bridge.onCrash = () => {
           set({ esp32CrashBoardId: id });
         };
@@ -1274,9 +1278,104 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
             const path = JSON.stringify(f.name);
             return `with open(${path},'w') as _f:\n    _f.write(${lit})`;
           });
-          const prelude = preludeLines.length
-            ? preludeLines.join('\n') + '\n'
-            : '';
+
+          // WiFi compat shim: replace `network`, `ntptime`, `urequests`
+          // with smart stubs BEFORE user main.py imports them. The
+          // picsimlab QEMU fork's esp32_wifi NIC emulation is sufficient
+          // for Arduino's lightweight WiFi.h but not for MicroPython's
+          // full esp_wifi_init path — calling `network.WLAN(STA_IF)`
+          // hangs forever waiting for peripheral status bits QEMU never
+          // sets, tripping the FreeRTOS task watchdog after ~26s.
+          //
+          // Smart stub behaviour (so examples like smart-ui-eyes WORK
+          // end-to-end, not just degrade gracefully):
+          //   wlan.isconnected() → True after first 2 calls (simulates
+          //                        ~1 second connection)
+          //   wlan.ifconfig() → plausible LAN IPs
+          //   ntptime.settime() → sets machine.RTC to host's current
+          //                       UTC so localtime() returns real time
+          //   urequests.get(url) → returns a Response stub whose .json()
+          //                        decodes a stubbed payload (weather
+          //                        for openweathermap URLs, generic {}
+          //                        otherwise). Backed by client-side
+          //                        fixtures so the example screens show
+          //                        useful data instead of "API Error".
+          const now = new Date();
+          const fakeWeatherCity = 'Simulator City';
+          const wifiStub = [
+            'import sys',
+            'import json as _json',
+            'try:',
+            '    import machine as _machine',
+            'except ImportError:',
+            '    _machine = None',
+            '',
+            'class _StubWLAN:',
+            '    def __init__(self, *a, **k):',
+            '        self._calls = 0',
+            '    def active(self, on=None): return True',
+            '    def connect(self, ssid=None, pwd=None): pass',
+            '    def disconnect(self): pass',
+            '    def isconnected(self):',
+            '        self._calls += 1',
+            '        return self._calls > 2',
+            '    def ifconfig(self, c=None): return ("10.0.2.15", "255.255.255.0", "10.0.2.2", "10.0.2.3")',
+            '    def config(self, *a, **k): return b"velxio"',
+            '    def status(self, *a): return 1010',
+            '    def scan(self): return []',
+            'class _StubNetwork:',
+            '    STA_IF = 0',
+            '    AP_IF = 1',
+            '    WLAN = _StubWLAN',
+            'sys.modules["network"] = _StubNetwork()',
+            '',
+            '# ntptime: pre-load RTC with host UTC so localtime() works.',
+            `_VLX_BOOT_UTC = (${now.getUTCFullYear()}, ${now.getUTCMonth() + 1}, ${now.getUTCDate()}, ${now.getUTCDay() || 7}, ${now.getUTCHours()}, ${now.getUTCMinutes()}, ${now.getUTCSeconds()}, 0)`,
+            'class _StubNTP:',
+            '    host = "pool.ntp.org"',
+            '    timeout = 1',
+            '    @staticmethod',
+            '    def settime():',
+            '        if _machine is not None:',
+            '            try: _machine.RTC().datetime(_VLX_BOOT_UTC)',
+            '            except Exception: pass',
+            '    @staticmethod',
+            '    def time(): return 0',
+            'sys.modules["ntptime"] = _StubNTP()',
+            '',
+            '# urequests: fake responses so examples that call HTTP APIs',
+            '# show real-looking data on the OLED instead of "API Error".',
+            `_VLX_WEATHER = {"main": {"temp": 22.5, "humidity": 58, "pressure": 1013}, "weather": [{"main": "Clouds", "description": "partly cloudy"}], "name": "${fakeWeatherCity}", "wind": {"speed": 3.4}}`,
+            'class _StubResponse:',
+            '    def __init__(self, payload):',
+            '        self._payload = payload',
+            '        self.status_code = 200',
+            '        self.text = _json.dumps(payload)',
+            '        self.content = self.text.encode()',
+            '    def json(self): return self._payload',
+            '    def close(self): pass',
+            '    def __enter__(self): return self',
+            '    def __exit__(self, *a): pass',
+            'class _StubURequests:',
+            '    @staticmethod',
+            '    def _route(url):',
+            '        u = url.lower()',
+            '        if "openweathermap" in u or "weather" in u: return _VLX_WEATHER',
+            '        if "ipify" in u or "myip" in u: return {"ip": "10.0.2.15"}',
+            '        if "worldtimeapi" in u: return {"datetime": "2026-05-25T00:00:00+00:00"}',
+            '        return {}',
+            '    @staticmethod',
+            '    def get(url, *a, **k): return _StubResponse(_StubURequests._route(url))',
+            '    @staticmethod',
+            '    def post(url, *a, **k): return _StubResponse({"ok": True})',
+            '    @staticmethod',
+            '    def head(url, *a, **k): return _StubResponse({})',
+            'sys.modules["urequests"] = _StubURequests()',
+            'sys.modules["requests"] = _StubURequests()',
+          ].join('\n');
+
+          const prelude = wifiStub + '\n' +
+            (preludeLines.length ? preludeLines.join('\n') + '\n' : '');
           esp32Bridge.setPendingMicroPythonCode(prelude + mainFile.content);
         }
       } else {
@@ -1439,7 +1538,13 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
                 f.content.includes('#include <WiFi.h>') ||
                 f.content.includes('#include <esp_wifi.h>') ||
                 f.content.includes('#include "WiFi.h"') ||
-                f.content.includes('WiFi.begin('),
+                f.content.includes('WiFi.begin(') ||
+                // MicroPython patterns — without these the WiFi NIC is never
+                // passed to QEMU, and `network.WLAN(STA_IF)` hangs forever
+                // trying to init a peripheral that doesn't exist, eventually
+                // tripping the FreeRTOS task watchdog (TG1WDT_SYS_RESET).
+                /import\s+network\b/.test(f.content) ||
+                /network\.WLAN/.test(f.content),
             );
           }
           esp32Bridge.wifiEnabled = hasWifi;
@@ -1494,13 +1599,19 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       } else if (isEsp32Kind(board.boardKind)) {
         getEsp32Bridge(boardId)?.disconnect();
       } else {
-        getBoardSimulator(boardId)?.stop();
+        // Stop is "cut power": pressing Run again must boot from setup()
+        // not resume mid-loop, so reset the CPU to PC=0 here. Without
+        // this the AVR keeps its program counter and the next Run picks
+        // up wherever it left off — which is fine for Pause but wrong
+        // for the physical Stop button users expect.
+        getBoardSimulator(boardId)?.reset();
       }
 
-      // Drop MCU-output classification so the next Run starts clean and
-      // collectPinStates doesn't emit stale V-sources before the new
-      // firmware has driven any pins.
-      getBoardPinManager(boardId)?.resetPinStates();
+      // Hard reset: clear cached pin states AND notify listeners so
+      // multiplexed displays (7-segment, LED matrix, NeoPixel) clear
+      // the frozen frame they were holding when power was cut, instead
+      // of carrying it into the next run.
+      getBoardPinManager(boardId)?.hardResetPinStates();
 
       set((s) => {
         const boards = s.boards.map((b) => (b.id === boardId ? { ...b, running: false } : b));
@@ -1524,11 +1635,19 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         const sim = getBoardSimulator(boardId);
         if (sim) {
           sim.reset();
-          // Drop MCU-output classification so the new program starts
-          // clean — no stale V-sources from the previous run.
-          getBoardPinManager(boardId)?.resetPinStates();
-          // Re-wire serial callback after reset
-          sim.onSerialData = (ch) => appendSerial(boardId, ch);
+          // Hard reboot: CPU back to PC=0, every pin floats, every
+          // output classification dropped, and listeners notified so
+          // visual components (7-segment, NeoPixel, LCD) clear their
+          // stale frame instead of freezing on whatever was lit.
+          // Same semantics as Stop — both behave like cutting power.
+          getBoardPinManager(boardId)?.hardResetPinStates();
+          // NOTE: do NOT reassign sim.onSerialData here. sim.reset()
+          // recreates the USART but the new usart.onByteTransmit
+          // already chains through `this.onSerialData`, which is the
+          // wrapper Interconnect installed for cross-board UART. The
+          // previous "re-wire" line was destroying that wrapper and
+          // silently breaking sibling-board serial forwarding after
+          // every Reset press.
           if (sim instanceof AVRSimulator) {
             sim.onBaudRateChange = (baud) => {
               set((s) => {
@@ -1595,6 +1714,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
           const boardPm = pinManagerMap.get(boardId);
           if (boardPm) boardPm.triggerPinChange(gpioPin, state, 'mcu');
         };
+        bridge.onPinChangeWithTime = getOscilloscopeCallback(boardId);
         bridge.onCrash = () => {
           set({ esp32CrashBoardId: boardId });
         };
@@ -1681,8 +1801,18 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       const boardId = activeBoardId ?? INITIAL_BOARD_ID;
       const pm = getBoardPinManager(boardId) ?? legacyPinManager;
 
-      getBoardSimulator(boardId)?.stop();
-      simulatorMap.delete(boardId);
+      // Multi-board flows (addBoard, loadProjectState) already create
+      // sims + register them in simulatorMap, AND Interconnect wraps
+      // sim.onSerialData for cross-board UART forwarding. SimulatorCanvas
+      // runs initSimulator() once on mount as a legacy single-board
+      // "make sure a sim exists for the active board" helper. If we let
+      // it through here when a sim ALREADY exists we wipe simulatorMap,
+      // recreate the sim, and silently drop the Interconnect wrapper —
+      // every cross-board wire stops forwarding bytes (Nano never sees
+      // anything the Uno sends). Skip out early in that case.
+      const existingSim = getBoardSimulator(boardId);
+      if (existingSim) return;
+
       getEsp32Bridge(boardId)?.disconnect();
       esp32BridgeMap.delete(boardId);
 
@@ -1696,6 +1826,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
           const boardPm = pinManagerMap.get(boardId);
           if (boardPm) boardPm.triggerPinChange(gpioPin, state, 'mcu');
         };
+        bridge.onPinChangeWithTime = getOscilloscopeCallback(boardId);
         bridge.onCrash = () => {
           set({ esp32CrashBoardId: boardId });
         };
@@ -2035,9 +2166,13 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         const component = state.components.find((c) => c.id === componentId);
         // Check if this componentId matches a board id
         const board = state.boards.find((b) => b.id === componentId);
-        // Components have a DynamicComponent wrapper with border:2px + padding:4px → offset (4,6)
-        // Boards are rendered directly without a wrapper, so no offset.
-        const compX = component ? component.x + 4 : board ? board.x : state.boardPosition.x;
+        // Components have a DynamicComponent wrapper with border:2px +
+        // padding:4px on EVERY side → inner element sits at (+6, +6)
+        // from the wrapper top-left. Earlier code used (+4, +6) — the
+        // 2 px X bias rotated visibly with the component and looked
+        // like wires came off the pins when rotated. Boards are
+        // rendered directly without that wrapper, so no offset.
+        const compX = component ? component.x + 6 : board ? board.x : state.boardPosition.x;
         const compY = component ? component.y + 6 : board ? board.y : state.boardPosition.y;
         // Boards never rotate; components carry their angle in properties.rotation.
         const rotation = component ? Number(component.properties?.rotation) || 0 : 0;
@@ -2067,11 +2202,12 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       const updatedWires = state.wires.map((wire) => {
         const updated = { ...wire };
 
-        // Resolve start — components have wrapper offset (4,6), boards do not
+        // Resolve start — components have wrapper offset (6,6) on
+        // both axes (padding:4 + border:2). Boards have no wrapper.
         const startComp = state.components.find((c) => c.id === wire.start.componentId);
         const startBoard = state.boards.find((b) => b.id === wire.start.componentId);
         const startX = startComp
-          ? startComp.x + 4
+          ? startComp.x + 6
           : startBoard
             ? startBoard.x
             : state.boardPosition.x;
@@ -2092,10 +2228,10 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
           ? { ...wire.start, x: startPos.x, y: startPos.y }
           : { ...wire.start, x: startX, y: startY };
 
-        // Resolve end — components have wrapper offset (4,6), boards do not
+        // Resolve end — same (6,6) wrapper offset as start above.
         const endComp = state.components.find((c) => c.id === wire.end.componentId);
         const endBoard = state.boards.find((b) => b.id === wire.end.componentId);
-        const endX = endComp ? endComp.x + 4 : endBoard ? endBoard.x : state.boardPosition.x;
+        const endX = endComp ? endComp.x + 6 : endBoard ? endBoard.x : state.boardPosition.x;
         const endY = endComp ? endComp.y + 6 : endBoard ? endBoard.y : state.boardPosition.y;
         const endRotation = endComp ? Number(endComp.properties?.rotation) || 0 : 0;
         const endPos = calculatePinPosition(

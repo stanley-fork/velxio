@@ -11,6 +11,7 @@ import { hundredDaysExamples } from './examples-100-days';
 import { picowWifiExamples } from './examples-picow-wifi';
 import { epaperExamples } from './examples-displays-epaper';
 import { retroIntelExamples } from './examples-retro-intel';
+import { robotDesktopExamples } from './examples-robot-desktop';
 
 /** Per-board setup for multi-board examples */
 export interface ExampleBoard {
@@ -7652,6 +7653,7 @@ export const exampleProjects: ExampleProject[] = [
   ...picowWifiExamples,
   ...epaperExamples,
   ...retroIntelExamples,
+  ...robotDesktopExamples,
 ];
 
 // Get examples by category

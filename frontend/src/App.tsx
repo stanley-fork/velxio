@@ -1,5 +1,5 @@
 import { useEffect, type ReactElement } from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { LandingPage } from './pages/LandingPage';
 import { EditorPage } from './pages/EditorPage';
 import { ExamplesPage } from './pages/ExamplesPage';
@@ -43,8 +43,17 @@ import './App.css';
  * Index entries (path === '') belong to the locale-prefixed parent's
  * `index` slot — they render at exactly `/<locale>/`.
  */
+// In Tauri desktop builds the marketing landing page is a disorienting
+// first screen — users opened the desktop app to land in the editor.
+// `/` redirects there. Web builds still see the LandingPage.
+const ROOT_ELEMENT: ReactElement = import.meta.env.VITE_DESKTOP ? (
+  <Navigate to="/editor" replace />
+) : (
+  <LandingPage />
+);
+
 const ROUTES: { path: string; element: ReactElement; index?: boolean }[] = [
-  { path: '/', element: <LandingPage />, index: true },
+  { path: '/', element: ROOT_ELEMENT, index: true },
   { path: 'editor', element: <EditorPage /> },
   { path: 'examples', element: <ExamplesPage /> },
   // /examples/<id> = SEO landing (preview, badges, "Open in Simulator" CTA).

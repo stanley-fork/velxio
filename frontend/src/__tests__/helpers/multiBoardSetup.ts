@@ -44,6 +44,11 @@ export function resetStore(useSimulatorStore: any): void {
  * current board list. Required between tests so that the same-state
  * short-circuit in PinManager.triggerPinChange doesn't suppress fresh
  * events.
+ *
+ * Uses hardResetPinStates (clear cache + classifications), not the
+ * stopBoard-flavored resetPinStates (classifications only) which
+ * leaves cached pin states intact so the display can resume after a
+ * pause.
  */
 export function clearAllPinManagerState(
   useSimulatorStore: any,
@@ -52,7 +57,11 @@ export function clearAllPinManagerState(
   const state = useSimulatorStore.getState();
   for (const b of state.boards ?? []) {
     const pm = getBoardPinManager(b.id);
-    pm?.resetPinStates?.();
+    if (pm?.hardResetPinStates) {
+      pm.hardResetPinStates();
+    } else {
+      pm?.resetPinStates?.();
+    }
   }
 }
 

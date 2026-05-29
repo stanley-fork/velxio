@@ -121,12 +121,12 @@ export class ComponentRegistry {
       });
       data.components.push({
         id: 'raspberry-pi-4',
-        tagName: 'velxio-raspberry-pi-3',   // reuse Pi 3 board art (40-pin layout identical)
+        tagName: 'velxio-raspberry-pi-4',
         name: 'Raspberry Pi 4',
         category: 'boards',
         description: 'Raspberry Pi 4 Model B with 40-pin GPIO. QEMU virt + Cortex-A72 backend.',
         thumbnail:
-          '<svg width="64" height="64" xmlns="http://www.w3.org/2000/svg"><rect width="64" height="64" fill="#83B81A" rx="4"/><text x="50%" y="50%" text-anchor="middle" dy=".3em" font-size="10" fill="#FFF">RPi4</text></svg>',
+          '<svg width="64" height="64" xmlns="http://www.w3.org/2000/svg"><rect width="64" height="64" fill="#006633" rx="4"/><text x="50%" y="50%" text-anchor="middle" dy=".3em" font-size="10" fill="#FFF">RPi4</text></svg>',
         properties: [],
         defaultValues: {},
         pinCount: 40,
@@ -134,12 +134,12 @@ export class ComponentRegistry {
       });
       data.components.push({
         id: 'raspberry-pi-5',
-        tagName: 'velxio-raspberry-pi-3',   // reuse art for now (Phase 3 polish: Pi 5 PCB SVG)
+        tagName: 'velxio-raspberry-pi-5',
         name: 'Raspberry Pi 5',
         category: 'boards',
-        description: 'Raspberry Pi 5 with 40-pin GPIO. QEMU virt + Cortex-A76 backend (no raspi5 machine in QEMU yet).',
+        description: 'Raspberry Pi 5 with 40-pin GPIO + RP1 southbridge. QEMU virt + Cortex-A76 backend.',
         thumbnail:
-          '<svg width="64" height="64" xmlns="http://www.w3.org/2000/svg"><rect width="64" height="64" fill="#76323F" rx="4"/><text x="50%" y="50%" text-anchor="middle" dy=".3em" font-size="10" fill="#FFF">RPi5</text></svg>',
+          '<svg width="64" height="64" xmlns="http://www.w3.org/2000/svg"><rect width="64" height="64" fill="#004d27" rx="4"/><text x="50%" y="50%" text-anchor="middle" dy=".3em" font-size="10" fill="#FFF">RPi5</text></svg>',
         properties: [],
         defaultValues: {},
         pinCount: 40,

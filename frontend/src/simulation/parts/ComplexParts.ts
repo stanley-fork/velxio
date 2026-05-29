@@ -217,9 +217,17 @@ PartSimulationRegistry.register('analog-joystick', {
     const pinSW = getArduinoPinHelper('SEL') ?? getArduinoPinHelper('SW');
     const el = element as any;
 
-    // RP2040 uses 3.3V reference; AVR uses 5V
-    const vcc = avrSimulator instanceof RP2040Simulator ? 3.3 : 5.0;
+    // wokwi-analog-joystick exposes xValue/yValue as DIRECTION (-1 / 0 / +1),
+    // not pot-style 0..1023.  See @wokwi/elements analog-joystick-element.js:
+    // arrow-zone clicks call mousedown(e, dx, dy) where dx,dy ∈ {-1, 0, +1};
+    // mouseup snaps back to 0.  Map that tri-state to an ADC voltage:
+    //   -1 → 0 V   |   0 → VCC/2 (center)   |   +1 → VCC
+    // AVR uses 5 V; everything else (RP2040, ESP32, ESP32-S3, …) runs at 3.3 V.
+    const isAvr = !(avrSimulator instanceof RP2040Simulator)
+      && typeof (avrSimulator as any).setAdcVoltage !== 'function';
+    const vcc = isAvr ? 5.0 : 3.3;
     const centerV = vcc / 2;
+    const dirToVolts = (d: number) => ((Math.max(-1, Math.min(1, d)) + 1) / 2) * vcc;
 
     // Initialize to center position and button not pressed
     if (pinX !== null) setAdcVoltage(avrSimulator, pinX, centerV);
@@ -227,14 +235,11 @@ PartSimulationRegistry.register('analog-joystick', {
     if (pinSW !== null) avrSimulator.setPinState(pinSW, true); // HIGH = not pressed
 
     const onMove = () => {
-      // xValue / yValue are 0-1023
       if (pinX !== null) {
-        const vx = ((el.xValue ?? 512) / 1023.0) * vcc;
-        setAdcVoltage(avrSimulator, pinX, vx);
+        setAdcVoltage(avrSimulator, pinX, dirToVolts(Number(el.xValue ?? 0)));
       }
       if (pinY !== null) {
-        const vy = ((el.yValue ?? 512) / 1023.0) * vcc;
-        setAdcVoltage(avrSimulator, pinY, vy);
+        setAdcVoltage(avrSimulator, pinY, dirToVolts(Number(el.yValue ?? 0)));
       }
     };
 

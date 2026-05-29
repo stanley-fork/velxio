@@ -205,6 +205,40 @@
     #root-seo { visibility: hidden; position: absolute; pointer-events: none; }
   </style>
   <body style="margin:0;background:#1e1e1e;">
+    <!--
+      Desktop-only splash. Sidecar boot + Monaco hydration take 3-8s
+      on a cold launch; without this the user stares at a black window.
+      Hidden by default and revealed by the inline script below only
+      when window.__TAURI__ is present (Tauri webview), so web users
+      never see it. Removed from the DOM when React's first render
+      lands (main.tsx).
+
+      Self-contained: inline SVG logo + CSS keyframes, no external
+      requests. Safe to keep in OSS since the gate is the Tauri
+      global, not VITE_DESKTOP.
+    -->
+    <div id="velxio-splash" aria-hidden="true" style="display:none;position:fixed;inset:0;z-index:2147483647;background:linear-gradient(160deg,#0d1117 0%,#161b22 50%,#0d1117 100%);color:#e6edf3;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;align-items:center;justify-content:center;flex-direction:column;gap:24px;">
+      <svg width="96" height="96" viewBox="0 0 24 24" fill="none" stroke="#58a6ff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="filter:drop-shadow(0 0 18px rgba(88,166,255,0.35));">
+        <rect x="5" y="5" width="14" height="14" rx="2"></rect>
+        <rect x="9" y="9" width="6" height="6"></rect>
+        <path d="M9 1v4M15 1v4M9 19v4M15 19v4M1 9h4M1 15h4M19 9h4M19 15h4"></path>
+      </svg>
+      <div style="font-size:32px;font-weight:600;letter-spacing:0.5px;">Velxio</div>
+      <div style="font-size:14px;color:#8b949e;max-width:340px;text-align:center;line-height:1.5;">Offline Arduino, RP2040 &amp; ESP32 simulator</div>
+      <div style="width:32px;height:32px;border:3px solid rgba(88,166,255,0.18);border-top-color:#58a6ff;border-radius:50%;animation:velxio-spin 0.9s linear infinite;margin-top:8px;"></div>
+      <div style="position:absolute;bottom:24px;left:0;right:0;text-align:center;font-size:11px;color:#484f58;">Starting local backend…</div>
+      <style>@keyframes velxio-spin{to{transform:rotate(360deg)}}</style>
+    </div>
+    <script>
+      // Reveal the splash ONLY inside Tauri. Detection is synchronous:
+      // `withGlobalTauri: true` in tauri.conf.json injects __TAURI__
+      // before page JS runs. Web users land here with __TAURI__
+      // undefined and the splash stays display:none.
+      if (typeof window !== 'undefined' && window.__TAURI__) {
+        var s = document.getElementById('velxio-splash');
+        if (s) s.style.display = 'flex';
+      }
+    </script>
     <div id="root"></div>
     <!--
       Static pre-rendered content for search engine crawlers.

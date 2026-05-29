@@ -41,6 +41,8 @@ const BOARD_DESCRIPTIONS: Record<BoardKind, string> = {
   'raspberry-pi-pico': 'RP2040 dual-core Cortex-M0+',
   'pi-pico-w': 'RP2040 + WiFi/BT, same emulator as Pico',
   'raspberry-pi-3': 'ARM64 Cortex-A53 quad-core, Linux/Python (QEMU)',
+  'raspberry-pi-4': 'ARM64 Cortex-A72 quad-core, Linux/Python (QEMU)',
+  'raspberry-pi-5': 'ARM64 Cortex-A76 quad-core + RP1 I/O, Linux/Python (QEMU)',
   esp32: 'Xtensa LX6 dual-core, WiFi+BT, 38 GPIO (QEMU)',
   'esp32-devkit-c-v4': 'ESP32 DevKit C V4, official Espressif (QEMU)',
   'esp32-cam': 'ESP32 + 2MP camera, microSD (QEMU)',
@@ -61,6 +63,8 @@ const ALL_BOARDS: BoardKind[] = [
   'raspberry-pi-pico',
   'pi-pico-w',
   'raspberry-pi-3',
+  'raspberry-pi-4',
+  'raspberry-pi-5',
   'esp32',
   'esp32-devkit-c-v4',
   'esp32-cam',
@@ -424,8 +428,21 @@ const BoardCard: React.FC<BoardCardProps> = ({ kind, onSelect }) => {
 
   React.useEffect(() => {
     if (!thumbnailRef.current) return;
-    // React-rendered boards and Pi3 handled in JSX below
+    // React-rendered boards and Pi family handled below: Pi 3 has a custom
+    // illustration SVG; Pi 4 / Pi 5 instantiate their own velxio-* custom
+    // element directly because they don't go through BOARD_TAG.
     if (kind === 'raspberry-pi-3' || kind === 'attiny85') return;
+    if (kind === 'raspberry-pi-4' || kind === 'raspberry-pi-5') {
+      const tagName = kind === 'raspberry-pi-4' ? 'velxio-raspberry-pi-4' : 'velxio-raspberry-pi-5';
+      const el = document.createElement(tagName) as HTMLElement;
+      el.style.transform = 'scale(0.35)';
+      el.style.transformOrigin = 'center center';
+      thumbnailRef.current.innerHTML = '';
+      thumbnailRef.current.appendChild(el);
+      return () => {
+        if (thumbnailRef.current) thumbnailRef.current.innerHTML = '';
+      };
+    }
 
     const tag = BOARD_TAG[kind];
     if (!tag) return;

@@ -10,6 +10,7 @@
       "editor": "编辑器",
       "about": "关于",
       "pricing": "价格",
+      "download": "下载",
       "blog": "博客",
       "github": "GitHub",
       "discord": "Discord"
@@ -30,10 +31,10 @@
     "hero": {
       "titleLine1": "Arduino、ESP32 和 Raspberry Pi。",
       "titleAccent": "就在你的浏览器中。",
-      "subtitle": "编写代码，连接元件，点击运行。19 种开发板、48 多个部件、真实的 CPU 仿真——无需硬件，无需安装，无需云。",
+      "subtitle": "编写代码、连接元件、运行。支持 19 块开发板，AI 智能助手为你搭建电路，真实 CPU 仿真，完整离线桌面应用，AGPLv3 开源。",
       "ctaPrimary": "免费在线试用模拟器 →",
       "ctaGithub": "在 GitHub 上查看",
-      "trustLine": "无需注册 · 100% 在浏览器中运行 · 免费且开源",
+      "trustLine": "内置 AI 助手 · 离线可用 · AGPLv3 开源 · 无需注册",
       "imageAlt": "Velxio 编辑器中的 Arduino Uno 交通灯电路"
     },
     "boards": {
@@ -399,6 +400,31 @@
         "usernameRules": "用户名必须为 3-30 个字符（a-z、0-9、_、-）",
         "passwordTooShort": "密码必须至少 8 个字符。",
         "failed": "注册失败。"
+      }
+    }
+  },
+  "quotaModal": {
+    "titleFree": "今日免费额度已用完",
+    "titlePaid": "已达到每日上限",
+    "bodyFree": "免费账户每天有 {{cap}} 条 AI 消息。Pro ($15/月) 可享 {{proCap}}/天 —— 是免费版的 {{multiplier}} 倍。或等待配额重置。",
+    "bodyPaid": "您的 {{plan}} 套餐每天允许 {{cap}} 条消息。升级到更高级别或等待重置。",
+    "today": "今日",
+    "thisMonth": "本月",
+    "resets": "重置时间",
+    "ctaUpgrade": "升级到 Pro — $15/月",
+    "ctaSeePlans": "查看套餐",
+    "ctaWait": "等待重置"
+  },
+  "editor": {
+    "share": {
+      "updateFailed": "无法更改可见性，请重试。",
+      "visibility": {
+        "publicLabel": "公开",
+        "publicHint": "任何人都可以在 velxio.dev 上找到此项目。",
+        "unlistedLabel": "不列出",
+        "unlistedHint": "从搜索和画廊中隐藏 —— 只能通过分享链接访问。",
+        "privateLabel": "私有",
+        "privateHint": "只有你能看到此项目。"
       }
     }
   }

@@ -10,6 +10,7 @@
       "editor": "Editor",
       "about": "Acerca de",
       "pricing": "Precios",
+      "download": "Descargar",
       "blog": "Blog",
       "github": "GitHub",
       "discord": "Discord"
@@ -30,10 +31,10 @@
     "hero": {
       "titleLine1": "Arduino, ESP32 y Raspberry Pi.",
       "titleAccent": "Directamente en tu navegador.",
-      "subtitle": "Escribe código, conecta componentes, pulsa ejecutar. 19 placas, más de 48 componentes, emulación real de CPU — sin hardware, sin instalación, sin nube.",
+      "subtitle": "Escribí código, conectá componentes, ejecutá. 19 placas, un agente de IA que arma circuitos por vos, emulación real de CPU, app de escritorio offline, código abierto AGPLv3.",
       "ctaPrimary": "Probar el simulador online gratis →",
       "ctaGithub": "Ver en GitHub",
-      "trustLine": "No requiere registro · Funciona 100% en tu navegador · Gratuito y de código abierto",
+      "trustLine": "Agente de IA incluido · Funciona offline · Código abierto AGPLv3 · Sin registro",
       "imageAlt": "Editor de Velxio con circuito de semáforo en Arduino Uno"
     },
     "boards": {
@@ -399,6 +400,31 @@
         "usernameRules": "El nombre de usuario debe tener entre 3 y 30 caracteres (a-z, 0-9, _, -)",
         "passwordTooShort": "La contraseña debe tener al menos 8 caracteres.",
         "failed": "Error al registrarse."
+      }
+    }
+  },
+  "quotaModal": {
+    "titleFree": "Llegaste al límite gratuito de hoy",
+    "titlePaid": "Alcanzaste tu límite diario",
+    "bodyFree": "Las cuentas Free reciben {{cap}} mensajes de IA por día. Pro ($15/mes) te da {{proCap}}/día — {{multiplier}}× el límite. O esperá hasta que se reinicie tu cuota.",
+    "bodyPaid": "Tu plan {{plan}} permite {{cap}} mensajes por día. Subí a un plan superior o esperá al reinicio.",
+    "today": "Hoy",
+    "thisMonth": "Este mes",
+    "resets": "Se reinicia",
+    "ctaUpgrade": "Pasar a Pro — $15/mes",
+    "ctaSeePlans": "Ver planes",
+    "ctaWait": "Esperar al reinicio"
+  },
+  "editor": {
+    "share": {
+      "updateFailed": "No se pudo cambiar la visibilidad — intentá de nuevo.",
+      "visibility": {
+        "publicLabel": "Público",
+        "publicHint": "Cualquiera puede encontrar este proyecto en velxio.dev.",
+        "unlistedLabel": "No listado",
+        "unlistedHint": "Oculto de búsqueda y galería — solo accesible con el link.",
+        "privateLabel": "Privado",
+        "privateHint": "Solo vos podés ver este proyecto."
       }
     }
   }

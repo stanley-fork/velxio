@@ -31,13 +31,21 @@ import {
 
 type Props = {
   onAuthorised: (result: ValidationResult) => void;
+  /**
+   * v0.3.0+: when set, the welcome screen renders the grandfather
+   * variant - a friendly "you have N days of free grace" with a
+   * "continue without signing in" escape hatch. `null` (the legacy
+   * default) keeps the original behaviour: no escape, sign-in or
+   * paste-key are the only options.
+   */
+  grandfatherDaysRemaining?: number | null;
 };
 
 type Mode = 'choose' | 'paste';
 
 const VELXIO_BASE = 'https://velxio.dev';
 
-export const DesktopWelcomePage = ({ onAuthorised }: Props) => {
+export const DesktopWelcomePage = ({ onAuthorised, grandfatherDaysRemaining = null }: Props) => {
   const [mode, setMode] = useState<Mode>('choose');
   const [pastedKey, setPastedKey] = useState('');
   const [busy, setBusy] = useState(false);
@@ -115,12 +123,18 @@ export const DesktopWelcomePage = ({ onAuthorised }: Props) => {
     }
   };
 
+  const isGrandfather = grandfatherDaysRemaining !== null && grandfatherDaysRemaining > 0;
+
   return (
     <div className="vlx-desktop-welcome">
       <div className="vlx-desktop-welcome-card">
         <div className="vlx-desktop-welcome-brand">
-          <h1>Velxio Desktop</h1>
-          <p>Offline Arduino, RP2040 and ESP32 simulator.</p>
+          <h1>{isGrandfather ? 'Welcome back to Velxio Desktop' : 'Velxio Desktop'}</h1>
+          <p>
+            {isGrandfather
+              ? `You have ${grandfatherDaysRemaining} days to keep using Velxio Desktop before a Velxio Pro subscription is required.`
+              : 'Offline Arduino, RP2040 and ESP32 simulator.'}
+          </p>
         </div>
 
         {err && <div className="vlx-desktop-welcome-error">{err}</div>}
@@ -133,7 +147,7 @@ export const DesktopWelcomePage = ({ onAuthorised }: Props) => {
               onClick={handleSignIn}
               disabled={busy || waiting}
             >
-              {waiting ? 'Waiting for browser…' : 'Sign in with Velxio'}
+              {waiting ? 'Waiting for browser...' : 'Sign in with Velxio'}
             </button>
             <button
               type="button"
@@ -143,6 +157,15 @@ export const DesktopWelcomePage = ({ onAuthorised }: Props) => {
             >
               I have a license key
             </button>
+            {isGrandfather && (
+              <button
+                type="button"
+                className="vlx-desktop-welcome-link"
+                onClick={() => onAuthorised({ valid: true, plan: 'grandfather' })}
+              >
+                Continue without signing in
+              </button>
+            )}
             <button
               type="button"
               className="vlx-desktop-welcome-link"
@@ -191,8 +214,9 @@ export const DesktopWelcomePage = ({ onAuthorised }: Props) => {
         )}
 
         <p className="vlx-desktop-welcome-trust">
-          30-day free trial included. After that, requires a Velxio Pro
-          subscription.
+          {isGrandfather
+            ? 'No charge during your grace period. Sign in any time to start your trial without losing this window.'
+            : '30-day free trial included. After that, requires a Velxio Pro subscription.'}
         </p>
       </div>
     </div>

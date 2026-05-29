@@ -8,6 +8,8 @@ import { ArduinoMega } from '../velxio-components/ArduinoMega';
 // re-wire it back in. If someone genuinely needs a Nano RP2040 Connect
 // board (D2..D13 labels), add a new boardKind 'arduino-nano-rp2040'.
 import { RaspberryPi3 } from '../velxio-components/RaspberryPi3';
+import { RaspberryPi4 } from '../velxio-components/RaspberryPi4';
+import { RaspberryPi5 } from '../velxio-components/RaspberryPi5';
 import { Esp32 } from '../velxio-components/Esp32';
 import { Attiny85 } from '../velxio-components/Attiny85';
 import { PiPicoW } from '../velxio-components/PiPicoW';
@@ -29,6 +31,8 @@ const BOARD_SIZE: Record<string, { w: number; h: number }> = {
   // the boardKind name.
   'raspberry-pi-pico': { w: 105, h: 264 },
   'raspberry-pi-3': { w: 250, h: 160 }, // RaspberryPi3Element: PI_WIDTH=250 PI_HEIGHT=160
+  'raspberry-pi-4': { w: 250, h: 160 }, // RaspberryPi4Element — same 40-pin footprint
+  'raspberry-pi-5': { w: 250, h: 160 }, // RaspberryPi5Element — same 40-pin footprint
   esp32: { w: 141, h: 265 }, // esp32-devkit-v1: 28.2 × 53 mm
   'esp32-s3': { w: 128, h: 350 }, // esp32-s3-devkitc-1: 25.5 × 70 mm
   'esp32-c3': { w: 127, h: 215 }, // esp32-c3-devkitm-1: 25.4 × 42.9 mm
@@ -97,6 +101,10 @@ export const BoardOnCanvas = ({
         return <PiPicoW id={id} x={x} y={y} />;
       case 'raspberry-pi-3':
         return <RaspberryPi3 id={id} x={x} y={y} />;
+      case 'raspberry-pi-4':
+        return <RaspberryPi4 id={id} x={x} y={y} />;
+      case 'raspberry-pi-5':
+        return <RaspberryPi5 id={id} x={x} y={y} />;
       case 'esp32':
       case 'esp32-devkit-c-v4':
       case 'esp32-cam':

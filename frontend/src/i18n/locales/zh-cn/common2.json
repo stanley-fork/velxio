@@ -21,7 +21,7 @@
         "title": "搜索并安装 Arduino 库",
         "label": "库"
       },
-      "import": "从 .zip 文件导入项目",
+      "import": "导入项目（.vlx Velxio 或 .zip Wokwi）",
       "export": "将当前项目导出为 .zip 文件",
       "uploadFirmware": "上传固件 (.hex, .bin, .elf, .ihex) 以跳过编译",
       "toggleConsole": "切换输出控制台",
@@ -29,7 +29,9 @@
         "message": "缺少库？从",
         "cta": "库管理器",
         "dismiss": "忽略"
-      }
+      },
+      "exportBom": "导出物料清单 (CSV — Pro)",
+      "exportScreenshot": "导出原理图为图片 (PNG — Pro)"
     },
     "fileExplorer": {
       "workspace": "工作区",

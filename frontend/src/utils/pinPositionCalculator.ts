@@ -96,18 +96,22 @@ export function calculatePinPosition(
   // change but before React commits the new transform is safe.
   //
   // Wrapper top-left ≈ inner-element top-left minus the wrapper padding
-  // + border. updateWirePositions / recalculateAllWirePositions add
-  // (+4, +6) to component.x / component.y to land on the inner-element
-  // top-left, so the wrapper top-left is (componentX - 4, componentY - 6).
-  // This convention is hardcoded in the store; we honour it here so the
-  // math stays consistent across the rotation boundary.
+  // + border. The DynamicComponent wrapper has padding:4px + border:2px
+  // on EVERY side → the inner element sits 6 px in from the wrapper on
+  // both axes. updateWirePositions / recalculateAllWirePositions add
+  // (+6, +6) to component.x / component.y to land on the inner-element
+  // top-left, so the wrapper top-left is (componentX - 6, componentY - 6).
+  // The earlier code used (+4, +6) — a 2 px X bias that was invisible
+  // unrotated (a wire endpoint two pixels off looks fine) but rotated
+  // with the component, surfacing as an obvious "wires disconnected
+  // from the pin" once the user pressed R.
   const angle = ((rotation % 360) + 360) % 360;
   if (angle !== 0) {
     const wrapper = element.closest('.dynamic-component-wrapper') as HTMLElement | null;
     if (wrapper) {
       const wrapperW = wrapper.offsetWidth;
       const wrapperH = wrapper.offsetHeight;
-      const wrapperLeft = componentX - 4;
+      const wrapperLeft = componentX - 6;
       const wrapperTop = componentY - 6;
       const pivotX = wrapperLeft + wrapperW / 2;
       const pivotY = wrapperTop + wrapperH / 2;

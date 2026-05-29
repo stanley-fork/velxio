@@ -22,8 +22,26 @@ if(DEFINED ENV{ARDUINO_ESP32_PATH})
         list(APPEND _cam_includes "${_cam_root}/conversions/include")
     endif()
 
+    # Glob every .cpp / .c that the espidf_compiler dropped into main/
+    # alongside main.cpp. Multi-file Arduino projects (robot-desktop-eyes,
+    # any wokwi.zip with helper .cpp files, etc.) define classes/free
+    # functions in their own translation units; if SRCS only names
+    # "main.cpp" the linker dies with "undefined reference to Foo::bar()"
+    # for every symbol that lives in a helper .cpp.
+    #
+    # No CONFIGURE_DEPENDS — ESP-IDF's component_get_requirements.cmake
+    # evaluates each component's CMakeLists in script mode where
+    # CONFIGURE_DEPENDS isn't supported, and the build aborts with
+    # "CONFIGURE_DEPENDS is invalid for script and find package modes".
+    # We don't need it anyway: espidf_compiler wipes + restores main/
+    # from the template on every compile (touching CMakeLists.txt's
+    # mtime), so cmake re-globs naturally on the next configure run.
+    file(GLOB _user_srcs
+        "${CMAKE_CURRENT_LIST_DIR}/*.cpp"
+        "${CMAKE_CURRENT_LIST_DIR}/*.c")
+
     idf_component_register(
-        SRCS "main.cpp"
+        SRCS ${_user_srcs}
         INCLUDE_DIRS "." ${_cam_includes}
         # `driver` brings in the i2c_master_* + i2c_cmd_link_* symbols
         # libesp32-camera.a's sccb.c references at link time. arduino-esp32
@@ -67,6 +85,23 @@ if(DEFINED ENV{ARDUINO_ESP32_PATH})
         target_compile_definitions(${COMPONENT_LIB} PRIVATE
             "LED_BUILTIN=2")
     endif()
+
+    # Relax `-Werror=` for user sketches. ESP-IDF defaults treat several
+    # warning categories as errors (-Werror=comment, -Werror=missing-field-
+    # initializers, etc.) which is great for IDF itself but ruthless for
+    # user Arduino code that often has nested /* */ comments,
+    # parenthesized macros, or other idioms that compile fine under
+    # arduino-cli's permissive defaults. Demoting these to plain warnings
+    # gives users the same "it just compiles" experience they expect from
+    # the Arduino IDE without disabling -Wall entirely.
+    target_compile_options(${COMPONENT_LIB} PRIVATE
+        -Wno-error=comment
+        -Wno-error=parentheses
+        -Wno-error=sign-compare
+        -Wno-error=narrowing
+        -Wno-error=write-strings
+        -Wno-error=missing-field-initializers
+        -Wno-error=reorder)
 else()
     # Pure ESP-IDF mode: main.c #includes sketch_translated.c
     idf_component_register(

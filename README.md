@@ -40,7 +40,9 @@ Your support helps cover server costs, library maintenance, and frees up time to
 To self-host with Docker (single command):
 
 ```bash
-docker run -d -p 3080:80 \
+docker run -d \
+  --name velxio \
+  -p 3080:80 \
   -v velxio-data:/app/data \
   -v velxio-arduino-libs:/root/.arduino15 \
   -v velxio-arduino-user-libs:/root/Arduino \
@@ -49,7 +51,8 @@ docker run -d -p 3080:80 \
   ghcr.io/davidmonterocrespo24/velxio:master
 ```
 
-Then open <http://localhost:3080>.
+Then open <http://localhost:3080>. Tail logs any time with
+`docker logs -f velxio`.
 
 The named volumes are what make compile times reasonable on subsequent
 runs — without them, every container restart wipes the ESP-IDF build

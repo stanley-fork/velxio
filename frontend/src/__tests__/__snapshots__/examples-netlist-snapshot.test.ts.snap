@@ -92,6 +92,13 @@ exports[`netlist snapshot — 100-days (49 examples) > 100d-esp32-ir-sensor-tele
 
 exports[`netlist snapshot — 100-days (49 examples) > 100d-esp32-oled-smart-ui-eyes-animation-time-and-weather-micropython 1`] = `
 "* Velxio circuit
+R_btn-next n4 n0 1000000000
+R_btn-sel n4 n1 1000000000
+R_autopull_n0 n0 0 100Meg
+R_autopull_n1 n1 0 100Meg
+R_autopull_n2 n2 0 100Meg
+R_autopull_n3 n3 0 100Meg
+R_autopull_n4 n4 0 100Meg
 .op
 .end"
 `;

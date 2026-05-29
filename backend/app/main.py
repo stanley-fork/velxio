@@ -13,7 +13,7 @@ if sys.platform == 'win32':
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import compile, compile_chip, compile_rom, libraries
+from app.api.routes import compile, compile_chip, compile_rom, flash, libraries
 from app.core.config import settings
 from app.core.hooks import run_lifespan_startup
 
@@ -62,13 +62,26 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
 )
 
-# CORS for local development
+# CORS — local Vite dev, the prod web origin, AND the Velxio Desktop
+# Tauri origins. The desktop bundle runs from a non-http scheme so
+# every fetch to velxio.dev is cross-origin and the browser blocks
+# preflight unless we explicitly allow the Tauri scheme(s).
+#
+# Tauri origin per OS:
+#   - macOS / Linux: `tauri://localhost`
+#   - Windows:       `http://tauri.localhost`
+#   - older Tauri:   `https://tauri.localhost`
+# All three are listed so the desktop bundle works regardless of
+# host OS or Tauri version.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",
         "http://localhost:5174",
         "http://localhost:5175",
+        "tauri://localhost",
+        "http://tauri.localhost",
+        "https://tauri.localhost",
         settings.FRONTEND_URL,
     ],
     allow_credentials=True,
@@ -81,6 +94,12 @@ app.include_router(compile.router, prefix="/api/compile", tags=["compilation"])
 app.include_router(compile_chip.router, prefix="/api/compile-chip", tags=["custom-chips"])
 app.include_router(compile_rom.router, prefix="/api/compile-rom", tags=["custom-chips"])
 app.include_router(libraries.router, prefix="/api/libraries", tags=["libraries"])
+# Hardware flash: subprocesses arduino-cli upload to write a compiled
+# sketch to a real USB-attached board. Desktop-only in practice (the
+# web build has no access to local serial ports without WebSerial),
+# but the route lives in OSS so self-hosters with a sidecar reach
+# get it too.
+app.include_router(flash.router, prefix="/api/flash", tags=["flash"])
 
 # Auth / projects / admin / metrics routers used to be wired up here, gated
 # on the auth/DB stack being importable. Phase 2 of the OSS split moved

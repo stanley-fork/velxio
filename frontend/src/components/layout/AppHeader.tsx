@@ -76,6 +76,18 @@ export const AppHeader: React.FC<AppHeaderProps> = ({ autoSave }) => {
     setMenuOpen(false);
   }, [location.pathname]);
 
+  // Tauri desktop: skip the header entirely. The marketing nav was
+  // already hidden, but the strip itself was still painting an empty
+  // black bar over the editor. Brand/auto-save/share/auth-slot all
+  // live elsewhere in desktop: title bar shows "Velxio Desktop", the
+  // native menubar has File/Edit/View/Help, auto-save is a Pro cloud
+  // feature (desktop saves to .vlx), share generates a velxio.dev URL
+  // that doesn't apply to a desktop session, and the license flow
+  // owns its own DesktopWelcomePage.
+  if (import.meta.env.VITE_DESKTOP) {
+    return null;
+  }
+
   const isActive = (path: string) =>
     location.pathname === localize(path) ? ' header-nav-link-active' : '';
 
@@ -104,7 +116,13 @@ export const AppHeader: React.FC<AppHeaderProps> = ({ autoSave }) => {
             </Link>
           </div>
 
-          {/* Main nav links (desktop) */}
+          {/* Main nav links (web only). The Tauri desktop build hides
+              this nav and surfaces the equivalent actions via the
+              native menubar (see pro/desktop/src-tauri/src/menu.rs in
+              velxio-prod). VITE_DESKTOP is the env flag the Tauri
+              build sets — main.tsx already uses it to gate the @pro
+              overlay, same pattern here. */}
+          {!import.meta.env.VITE_DESKTOP && (
           <nav className={'header-nav-links' + (menuOpen ? ' header-nav-open' : '')}>
             <Link to={localize('/')} className={'header-nav-link' + isActive('/')}>
               {t('header.nav.home')}
@@ -123,6 +141,12 @@ export const AppHeader: React.FC<AppHeaderProps> = ({ autoSave }) => {
             </Link>
             <Link to={localize('/pricing')} className={'header-nav-link' + isActive('/pricing')}>
               {t('header.nav.pricing')}
+            </Link>
+            <Link
+              to={localize('/account/desktop-install')}
+              className={'header-nav-link' + isActive('/account/desktop-install')}
+            >
+              {t('header.nav.download')}
             </Link>
             <a
               href={blogUrlFor(currentLocale)}
@@ -168,6 +192,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({ autoSave }) => {
               {t('header.nav.discord')}
             </a>
           </nav>
+          )}
         </div>
 
         {/* Right: language + share + auth + mobile hamburger */}
@@ -224,16 +249,19 @@ export const AppHeader: React.FC<AppHeaderProps> = ({ autoSave }) => {
               OSS image has no auth backend either. */}
           <div data-velxio-slot="header-auth" style={{ display: 'contents' }} />
 
-          {/* Mobile hamburger */}
-          <button
-            className="header-hamburger"
-            onClick={() => setMenuOpen((v) => !v)}
-            aria-label="Toggle menu"
-          >
-            <span />
-            <span />
-            <span />
-          </button>
+          {/* Mobile hamburger — useless in desktop where the nav it
+              would expand is itself hidden. */}
+          {!import.meta.env.VITE_DESKTOP && (
+            <button
+              className="header-hamburger"
+              onClick={() => setMenuOpen((v) => !v)}
+              aria-label="Toggle menu"
+            >
+              <span />
+              <span />
+              <span />
+            </button>
+          )}
         </div>
       </div>
 

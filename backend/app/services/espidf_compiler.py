@@ -581,9 +581,30 @@ class ESPIDFCompiler:
     # dynamically: user-installed libs → IDF component; arduino-esp32 bundled
     # libs → skip (already compiled in); not found → warning.
     _BUILTIN_HEADERS = frozenset({
-        # C/C++ standard library
+        # C standard library
         'math.h', 'stdint.h', 'stdio.h', 'stdlib.h', 'string.h', 'stdarg.h',
         'stddef.h', 'stdbool.h', 'float.h', 'limits.h', 'assert.h',
+        'ctype.h', 'errno.h', 'inttypes.h', 'locale.h', 'setjmp.h',
+        'signal.h', 'time.h', 'wchar.h', 'wctype.h',
+        # C++ standard library wrappers and STL.
+        # MUST be marked built-in — otherwise the user_libs bundler resolves
+        # them against /root/Arduino/libraries/ArduinoSTL (an AVR-only
+        # uClibc++ port) and drags in complex.cpp / vector.cpp / …, none of
+        # which compile against ESP-IDF's libstdc++.
+        'cstdint', 'cstddef', 'cstdio', 'cstdlib', 'cstring', 'cmath',
+        'cassert', 'cctype', 'cerrno', 'cfloat', 'climits', 'clocale',
+        'csetjmp', 'csignal', 'cstdarg', 'ctime', 'cwchar', 'cwctype',
+        'cinttypes',
+        'algorithm', 'array', 'atomic', 'bitset', 'chrono', 'codecvt',
+        'complex', 'condition_variable', 'deque', 'exception', 'fstream',
+        'functional', 'future', 'initializer_list', 'iomanip', 'ios',
+        'iosfwd', 'iostream', 'istream', 'iterator', 'limits', 'list',
+        'locale', 'map', 'memory', 'mutex', 'new', 'numeric', 'optional',
+        'ostream', 'queue', 'random', 'ratio', 'regex', 'set', 'sstream',
+        'stack', 'stdexcept', 'streambuf', 'string', 'string_view',
+        'system_error', 'thread', 'tuple', 'type_traits', 'typeindex',
+        'typeinfo', 'unordered_map', 'unordered_set', 'utility', 'valarray',
+        'variant', 'vector', 'any',
         # Arduino core types — part of arduino-esp32 source, not installable libraries
         'Arduino.h', 'HardwareSerial.h', 'Stream.h', 'Print.h', 'WString.h',
         'pgmspace.h', 'IPAddress.h',
@@ -1593,7 +1614,22 @@ class ESPIDFCompiler:
             # proper ESP-IDF component with its own CMakeLists.txt and
             # INCLUDE_DIRS. The root CMakeLists.txt (template) adds user_libs
             # to EXTRA_COMPONENT_DIRS so ESP-IDF discovers them automatically.
-            ext_headers = self._detect_external_includes(main_content)
+            #
+            # Scan the .ino AND every user-supplied .h/.hpp/.c/.cpp so
+            # transitive includes inside project headers (e.g. Common.h
+            # → <ESP32Servo.h>) are picked up. Previously only main_content
+            # was scanned, so libs only referenced from project headers
+            # never reached _resolve_library_components and the build
+            # died with "fatal error: ESP32Servo.h: No such file".
+            ext_headers_set: set[str] = set(
+                self._detect_external_includes(main_content)
+            )
+            for _f in files:
+                if _f.get('name', '').endswith(('.h', '.hpp', '.ino', '.c', '.cpp')):
+                    ext_headers_set.update(
+                        self._detect_external_includes(_f.get('content', ''))
+                    )
+            ext_headers = list(ext_headers_set)
             component_names: list[str] = []
             # arduino-esp32 component name (directory basename of ARDUINO_ESP32_PATH)
             arduino_comp_name = Path(self.arduino_path).name if self.arduino_path else 'arduino-esp32'

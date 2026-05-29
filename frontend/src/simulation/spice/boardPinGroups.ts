@@ -48,6 +48,8 @@ export const BOARD_PIN_GROUPS: Record<AllBoardKinds, BoardPinGroup> = {
     vcc_pins: ['3V3', 'VBUS', 'VSYS'],
   },
   'raspberry-pi-3': { vcc: 5, gnd: ['GND'], vcc_pins: ['5V', '3V3'] },
+  'raspberry-pi-4': { vcc: 5, gnd: ['GND'], vcc_pins: ['5V', '3V3'] },
+  'raspberry-pi-5': { vcc: 5, gnd: ['GND'], vcc_pins: ['5V', '3V3'] },
 
   esp32: { vcc: 3.3, gnd: ['GND', 'GND.1', 'GND.2'], vcc_pins: ['3V3', 'VIN', '5V'] },
   'esp32-devkit-c-v4': { vcc: 3.3, gnd: ['GND', 'GND.1', 'GND.2'], vcc_pins: ['3V3', 'VIN', '5V'] },

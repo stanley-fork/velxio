@@ -22,15 +22,19 @@ ENV WASI_SDK=/opt/wasi-sdk
 
 # Initialize arduino-cli and install cores.
 # - arduino:avr  → Uno / Nano / Mega / etc. (built-in core, always needed)
-# - ATTinyCore:avr → ATtiny85 (Spence Konde's third-party core, drazzy.com index)
-#   Without this the FQBN ATTinyCore:avr:attinyx5:chip=85,clock=internal16mhz
-#   fails with "Platform 'ATTinyCore:avr' not found: platform not installed".
+# - ATTinyCore:avr@1.4.1 → ATtiny85 (Spence Konde's third-party core,
+#   drazzy.com index). Pinned to 1.4.1 because >=1.5.0 depends on
+#   micronucleus hosted at azduino.com (frequently unreachable). 1.4.1's
+#   micronucleus tool comes from github.com/digistump and still supports
+#   the FQBN clock options we ship (clock=16pll, etc.). We never invoke
+#   micronucleus — it is only required for USB upload, not compilation —
+#   but arduino-cli will not install a core whose tool deps cannot fetch.
 RUN arduino-cli config init \
     && arduino-cli config add board_manager.additional_urls \
         http://drazzy.com/package_drazzy.com_index.json \
     && arduino-cli core update-index \
     && arduino-cli core install arduino:avr \
-    && arduino-cli core install ATTinyCore:avr
+    && arduino-cli core install ATTinyCore:avr@1.4.1
 
 WORKDIR /app
 

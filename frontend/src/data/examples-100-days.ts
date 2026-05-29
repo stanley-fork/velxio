@@ -1946,23 +1946,27 @@ while True:
     boardType: "esp32",
     languageMode: 'micropython',
     files: [
-      { name: "main.py", content: `from machine import Pin, SoftI2C
+      { name: "main.py", content: `from machine import Pin, I2C
 import ssd1306
 from time import sleep, localtime, time
 import network, ntptime
 import urequests as requests
-import urandom as random 
+import urandom as random
 
 # ================= CONFIG =================
 SSID = "ssid"
 PASSWORD = "pass"
 # IST Offset: 5 hours 30 mins = (5*3600 + 30*60) = 19800 seconds
-UTC_OFFSET = 19800  
+UTC_OFFSET = 19800
 OWM_API_KEY = "key"
 CITY = "city"
 
 # ================= HARDWARE =================
-i2c = SoftI2C(scl=Pin(22), sda=Pin(21))
+# Hardware I2C (peripheral 0) — SoftI2C bit-bangs GPIO and the Velxio
+# ESP32 QEMU bridge can't route GPIO toggles back to the wokwi-ssd1306
+# slave registered at 0x3C, so write_cmd fails with ENODEV. Hardware
+# I2C goes through the emulated I2C controller and reaches the slave.
+i2c = I2C(0, scl=Pin(22), sda=Pin(21))
 oled = ssd1306.SSD1306_I2C(128, 64, i2c)
 
 touch_next = Pin(14, Pin.IN) 
@@ -2281,8 +2285,25 @@ class SSD1306_SPI(SSD1306):
 ` },
     ],
     code: '',
-    components: [],
-    wires: [],
+    components: [
+      { type: 'wokwi-ssd1306', id: 'oled1', x: 420, y: 80, properties: {} },
+      { type: 'wokwi-pushbutton', id: 'btn-next', x: 420, y: 280, properties: { color: 'blue' } },
+      { type: 'wokwi-pushbutton', id: 'btn-sel',  x: 560, y: 280, properties: { color: 'green' } },
+    ],
+    wires: [
+      // OLED I2C — SDA = GPIO21, SCL = GPIO22 (matches SoftI2C in code)
+      { id: 'w-oled-vcc', start: { componentId: 'esp32', pinName: '3V3' },   end: { componentId: 'oled1', pinName: 'VIN' }, color: '#ff4444' },
+      { id: 'w-oled-gnd', start: { componentId: 'esp32', pinName: 'GND.1' }, end: { componentId: 'oled1', pinName: 'GND' }, color: '#000000' },
+      { id: 'w-oled-sda', start: { componentId: 'esp32', pinName: '21' },    end: { componentId: 'oled1', pinName: 'DATA' }, color: '#22aaff' },
+      { id: 'w-oled-scl', start: { componentId: 'esp32', pinName: '22' },    end: { componentId: 'oled1', pinName: 'CLK' }, color: '#ff8800' },
+      // Buttons — HIGH-when-pressed (one side to 3V3, other to GPIO). Code
+      // reads pin.value() == 1 on press, so they sit between 3.3V and the
+      // input pin. Add Pin.PULL_DOWN in MicroPython if the pin floats.
+      { id: 'w-btn-next-3v3', start: { componentId: 'esp32', pinName: '3V3' }, end: { componentId: 'btn-next', pinName: '1.l' }, color: '#ff4444' },
+      { id: 'w-btn-next-gpio', start: { componentId: 'btn-next', pinName: '2.l' }, end: { componentId: 'esp32', pinName: '14' }, color: '#aa66ff' },
+      { id: 'w-btn-sel-3v3',  start: { componentId: 'esp32', pinName: '3V3' }, end: { componentId: 'btn-sel', pinName: '1.l' }, color: '#ff4444' },
+      { id: 'w-btn-sel-gpio', start: { componentId: 'btn-sel', pinName: '2.l' }, end: { componentId: 'esp32', pinName: '27' }, color: '#22cc22' },
+    ],
     tags: ["100-days", "esp32", "i2c_oled", "micropython", "wifi"],
   },
   {

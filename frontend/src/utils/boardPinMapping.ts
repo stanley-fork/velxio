@@ -213,6 +213,8 @@ export const BOARD_COMPONENT_IDS = [
   'arduino-mega',
   'nano-rp2040',
   'raspberry-pi-3',
+  'raspberry-pi-4',
+  'raspberry-pi-5',
   'raspberry-pi-pico',
   'pi-pico-w',
   'esp32',
@@ -295,9 +297,21 @@ export function boardPinToNumber(boardId: string, pinName: string): number | nul
     return null;
   }
 
-  // Raspberry Pi 3B — pinName is the physical pin number ("1" … "40")
-  // We return the BCM GPIO number, or -1 for power/GND pins.
-  if (boardId === 'raspberry-pi-3' || boardId.startsWith('raspberry-pi-3')) {
+  // Raspberry Pi 3 / 4 / 5 (and any future 40-pin Pi) all share the same
+  // physical pin layout and BCM GPIO assignment, so the same lookup
+  // table works.  `pinName` may be either the physical pin number
+  // ("1" … "40") OR a BCM-style name ("GPIO14") emitted by the Pi
+  // element's pinInfo — power / GND pins return -1.
+  if (
+    boardId === 'raspberry-pi-3' || boardId.startsWith('raspberry-pi-3') ||
+    boardId === 'raspberry-pi-4' || boardId.startsWith('raspberry-pi-4') ||
+    boardId === 'raspberry-pi-5' || boardId.startsWith('raspberry-pi-5')
+  ) {
+    if (/^(GND|VCC|3V3|5V|ID_S[DC])/.test(pinName)) return -1;
+    if (pinName.startsWith('GPIO')) {
+      const n = parseInt(pinName.substring(4), 10);
+      if (!isNaN(n)) return n;
+    }
     const physical = parseInt(pinName, 10);
     if (!isNaN(physical)) return PI3_PHYSICAL_TO_BCM[physical] ?? null;
     return null;

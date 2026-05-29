@@ -21,7 +21,7 @@
         "title": "Buscar e instalar librerías de Arduino",
         "label": "Librerías"
       },
-      "import": "Importar un proyecto desde un archivo .zip",
+      "import": "Importar proyecto (.vlx de Velxio o .zip de Wokwi)",
       "export": "Exportar el proyecto actual como un archivo .zip",
       "uploadFirmware": "Subir firmware (.hex, .bin, .elf, .ihex) para omitir la compilación",
       "toggleConsole": "Alternar consola de salida",
@@ -29,7 +29,9 @@
         "message": "¿Falta una librería? Instálala desde el",
         "cta": "Gestor de librerías",
         "dismiss": "Descartar"
-      }
+      },
+      "exportBom": "Exportar lista de materiales (CSV — Pro)",
+      "exportScreenshot": "Exportar esquemático como imagen (PNG — Pro)"
     },
     "fileExplorer": {
       "workspace": "ESPACIO DE TRABAJO",

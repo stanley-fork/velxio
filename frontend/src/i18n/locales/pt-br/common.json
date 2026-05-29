@@ -10,6 +10,7 @@
       "editor": "Editor",
       "about": "Sobre",
       "pricing": "Preços",
+      "download": "Baixar",
       "blog": "Blog",
       "github": "GitHub",
       "discord": "Discord"
@@ -30,10 +31,10 @@
     "hero": {
       "titleLine1": "Arduino, ESP32 e Raspberry Pi.",
       "titleAccent": "Direto no seu navegador.",
-      "subtitle": "Escreva código, monte componentes, aperte o play. 19 placas, mais de 48 componentes, emulação real de CPU — sem hardware, sem instalação, sem nuvem.",
+      "subtitle": "Escreva código, conecte componentes, execute. 19 placas, um agente de IA que monta circuitos para você, emulação real de CPU, app desktop offline, código aberto AGPLv3.",
       "ctaPrimary": "Experimente o Simulador Grátis Online →",
       "ctaGithub": "Ver no GitHub",
-      "trustLine": "Sem cadastro · Roda 100% no navegador · Gratuito e de código aberto",
+      "trustLine": "Agente de IA incluído · Funciona offline · Código aberto AGPLv3 · Sem cadastro",
       "imageAlt": "Editor Velxio com circuito de semáforo Arduino Uno"
     },
     "boards": {
@@ -399,6 +400,31 @@
         "usernameRules": "O nome de usuário deve ter 3-30 caracteres (a-z, 0-9, _, -)",
         "passwordTooShort": "A senha deve ter pelo menos 8 caracteres.",
         "failed": "Falha no registro."
+      }
+    }
+  },
+  "quotaModal": {
+    "titleFree": "Você atingiu o limite gratuito de hoje",
+    "titlePaid": "Você atingiu seu limite diário",
+    "bodyFree": "Contas Free recebem {{cap}} mensagens de IA por dia. O Pro ($15/mês) te dá {{proCap}}/dia — {{multiplier}}× o limite. Ou espere até sua cota reiniciar.",
+    "bodyPaid": "Seu plano {{plan}} permite {{cap}} mensagens por dia. Faça upgrade ou aguarde o reinício.",
+    "today": "Hoje",
+    "thisMonth": "Este mês",
+    "resets": "Reinicia",
+    "ctaUpgrade": "Fazer upgrade para Pro — $15/mês",
+    "ctaSeePlans": "Ver planos",
+    "ctaWait": "Aguardar reinício"
+  },
+  "editor": {
+    "share": {
+      "updateFailed": "Não foi possível alterar a visibilidade — tente novamente.",
+      "visibility": {
+        "publicLabel": "Público",
+        "publicHint": "Qualquer pessoa pode encontrar este projeto em velxio.dev.",
+        "unlistedLabel": "Não listado",
+        "unlistedHint": "Oculto da busca e da galeria — acessível apenas pelo link.",
+        "privateLabel": "Privado",
+        "privateHint": "Apenas você pode ver este projeto."
       }
     }
   }

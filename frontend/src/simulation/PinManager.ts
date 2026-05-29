@@ -139,15 +139,38 @@ export class PinManager {
   }
 
   /**
-   * Clear cached pin states + output-pin classifications.  Called by
-   * stopBoard / resetBoard so the next Run starts without stale output
-   * classifications from a previous session forcing premature V-source
-   * emission.  Also keeps the test fixtures' fresh-triggerPinChange path
-   * (the original reason this helper exists) working.
+   * Drop only the MCU-output classification (SPICE side). Used by
+   * paths that need to forget which pins were driven this session
+   * without disturbing the cached pin states or notifying listeners.
+   * For the user-facing Stop / Reset / firmware-reload flows use
+   * `hardResetPinStates` — those are cold boots and the next Run
+   * must start from setup() with every visual cleared.
    */
   resetPinStates(): void {
+    this.outputPins.clear();
+  }
+
+  /**
+   * Hard reset for resetBoard / firmware reload: wipe every cached
+   * state AND notify listeners that previously-HIGH pins are now LOW,
+   * so stateful displays redraw cleanly to all-off. Reset implies the
+   * MCU is restarting from 0 — there's no "resume" race to worry
+   * about; the firmware will re-drive every pin from setup() once it
+   * boots.
+   */
+  hardResetPinStates(): void {
+    const wereHigh: number[] = [];
+    for (const [pin, state] of this.pinStates) {
+      if (state) wereHigh.push(pin);
+    }
     this.pinStates.clear();
     this.outputPins.clear();
+    for (const pin of wereHigh) {
+      const callbacks = this.listeners.get(pin);
+      if (callbacks) {
+        callbacks.forEach((cb) => cb(pin, false));
+      }
+    }
   }
 
   // ── PWM duty cycle API ───────────────────────────────────────────────────

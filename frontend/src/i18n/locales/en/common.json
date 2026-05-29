@@ -10,6 +10,7 @@
       "editor": "Editor",
       "about": "About",
       "pricing": "Pricing",
+      "download": "Download",
       "blog": "Blog",
       "github": "GitHub",
       "discord": "Discord"
@@ -30,10 +31,10 @@
     "hero": {
       "titleLine1": "Arduino, ESP32 & Raspberry Pi.",
       "titleAccent": "Right in your browser.",
-      "subtitle": "Write code, wire up components, hit run. 19 boards, 48+ parts, real CPU emulation — no hardware, no installation, no cloud.",
+      "subtitle": "Write code, wire up components, hit run. 19 boards, an AI agent that builds circuits for you, real CPU emulation, full offline desktop app, AGPLv3 open source.",
       "ctaPrimary": "Try Simulator Free Online →",
       "ctaGithub": "View on GitHub",
-      "trustLine": "No signup required · Runs 100% in your browser · Free & open-source",
+      "trustLine": "AI agent included · Works offline · Open source AGPLv3 · No signup needed",
       "imageAlt": "Velxio editor with Arduino Uno traffic-light circuit"
     },
     "boards": {
@@ -399,6 +400,31 @@
         "usernameRules": "Username must be 3-30 chars (a-z, 0-9, _, -)",
         "passwordTooShort": "Password must be at least 8 characters.",
         "failed": "Registration failed."
+      }
+    }
+  },
+  "quotaModal": {
+    "titleFree": "You've hit today's free limit",
+    "titlePaid": "You've reached your daily limit",
+    "bodyFree": "Free accounts get {{cap}} AI messages a day. Pro ($15/mo) gives you {{proCap}}/day — {{multiplier}}× the cap. Or wait until your quota resets.",
+    "bodyPaid": "Your {{plan}} plan allows {{cap}} messages per day. Upgrade to a higher tier or wait for the reset.",
+    "today": "Today",
+    "thisMonth": "This month",
+    "resets": "Resets",
+    "ctaUpgrade": "Upgrade to Pro — $15/mo",
+    "ctaSeePlans": "See plans",
+    "ctaWait": "Wait until reset"
+  },
+  "editor": {
+    "share": {
+      "updateFailed": "Could not update visibility — please try again.",
+      "visibility": {
+        "publicLabel": "Public",
+        "publicHint": "Anyone can find this project on velxio.dev.",
+        "unlistedLabel": "Unlisted",
+        "unlistedHint": "Hidden from search and the gallery — only accessible via the share link.",
+        "privateLabel": "Private",
+        "privateHint": "Only you can see this project."
       }
     }
   }
