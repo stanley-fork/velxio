@@ -1,85 +1,122 @@
 # Example Projects
 
-This folder contains the preview images for the 8 example projects in the gallery.
+Velxio ships with **380+ built-in example projects** across 7 collections. Open the editor, click **Examples** in the nav, filter by board / category / difficulty, and click **Load**.
 
-## Available Examples
+The examples are defined under `frontend/src/data/`:
 
-| ID | Title | Category | Difficulty | Components |
-|----|-------|----------|------------|------------|
-| `blink-led` | Blink LED | basics | beginner | Arduino Uno |
-| `traffic-light` | Traffic Light | basics | beginner | 3 LEDs (R/Y/G) |
-| `button-led` | Button Control | basics | beginner | Button + LED |
-| `fade-led` | Fade LED (PWM) | basics | beginner | 1 LED |
-| `serial-hello` | Serial Hello World | communication | beginner | Arduino Uno |
-| `rgb-led` | RGB LED Colors | basics | intermediate | RGB LED |
-| `simon-says` | Simon Says Game | games | advanced | 4 LEDs + 4 buttons |
-| `lcd-hello` | LCD 20x4 Display | displays | intermediate | LCD 2004 |
+| Collection | File | Count |
+|------------|------|------:|
+| Core gallery (basics, sensors, displays, comms, games, robotics, circuits) | `examples.ts` | ~40 |
+| Analog & mixed-signal circuits | `examples-circuits.ts` | ~190 |
+| 100 Days of Code series | `examples-100-days.ts` | ~57 |
+| Waveshare e-paper panels | `examples-displays-epaper.ts` | ~70 |
+| Retro Intel/Zilog CPUs | `examples-retro-intel.ts` | ~43 |
+| Pure-analog labelled | `examples-analog.ts` | ~15 |
+| Pure-digital labelled | `examples-digital.ts` | ~7 |
+| Pico W WiFi | `examples-picow-wifi.ts` | ~4 |
 
-Each example includes:
-- Complete Arduino sketch code
-- Component definitions with positions
-- Wire connections with pin names and colors
+> Totals are approximate — the lists grow regularly. The numbers above are the values at the last documentation refresh.
 
-The examples are defined in `frontend/src/data/examples.ts` and rendered in the `ExamplesGallery.tsx` gallery with category and difficulty filters.
+---
 
-## How to Create Screenshots
+## Highlights
 
-### Method 1: Manual Capture (Recommended)
+### Core basics (Arduino Uno)
 
-1. Load the example in the editor (http://localhost:5173/examples)
-2. Click the example to load it
-3. Adjust the canvas zoom if needed
-4. Use a screenshot tool to capture only the simulator area
-5. Save the image with the corresponding name
+| ID | Title | Category | Difficulty |
+|----|-------|----------|------------|
+| `blink-led` | Blink LED | basics | beginner |
+| `traffic-light` | Traffic Light | basics | beginner |
+| `button-led` | Button Control | basics | beginner |
+| `fade-led` | Fade LED (PWM) | basics | beginner |
+| `rgb-led` | RGB LED Colors | basics | intermediate |
+| `serial-hello` | Serial Hello World | communication | beginner |
+| `simon-says` | Simon Says Game | games | advanced |
+| `lcd-hello` | LCD 20x4 Display | displays | intermediate |
 
-### Method 2: Using DevTools
+### Multi-board
 
-1. Open the example in the browser
-2. Open DevTools (F12)
-3. Go to the console and run:
-```javascript
-const canvas = document.querySelector('.canvas-content');
-html2canvas(canvas).then(canvas => {
-  const link = document.createElement('a');
-  link.download = 'example-name.png';
-  link.href = canvas.toDataURL();
-  link.click();
-});
+Mix Pi 3 + Arduino over UART, ESP32 + Arduino over I2C, ESP32 driving an Arduino as a NeoPixel slave. The `boards: [...]` field in each example shells out per-board file groups.
+
+### Analog circuits
+
+Voltage dividers, RC filters, op-amp inverting/non-inverting amps, Schmitt triggers, transistor amplifiers, full-wave rectifiers. Wire-up loads instantly; flip the **electrical-sim** toggle to see steady-state voltages on every probe.
+
+### Mixed-signal
+
+Potentiometer -> op-amp follower -> ATmega ADC. NeoPixel ring driven by an ESP32 with the real RMT decoder. ILI9341 TFT graphics demo via SPI.
+
+### Retro CPUs (custom chips)
+
+Intel 4001/4002/4004/4040 (4-bit), 8080/8086 (8/16-bit), Z80 — wired to RAM/ROM, 7-segments, and shift registers. Each example loads a custom-chip implementation plus a working sketch.
+
+### E-paper
+
+Waveshare 1.54", 2.13", 2.9", 4.2", 7.5" panels with sample bitmap and text rendering.
+
+### Pico W WiFi
+
+HTTP server, HTTP client, NTP sync, BLE advertising — all running against the simulated CYW43439 + SLIRP NAT bridge.
+
+---
+
+## Adding a new example
+
+1. Pick the file under `frontend/src/data/` that matches your category (or create one and import from `examples.ts`).
+2. Add an `ExampleProject` entry:
+
+```typescript
+{
+  id: 'my-example',
+  title: 'My Example',
+  description: 'One-line description shown in the gallery card',
+  category: 'basics',         // 'basics' | 'sensors' | 'displays' | 'communication' | 'games' | 'robotics' | 'circuits'
+  difficulty: 'beginner',     // 'beginner' | 'intermediate' | 'advanced'
+  boardType: 'arduino-uno',   // omit for multi-board (use boards[])
+  tags: ['led', 'pwm'],
+  code: '/* full Arduino sketch */',
+  components: [
+    { type: 'wokwi-led',  id: 'led1', x: 200, y: 100, properties: { color: 'red' } },
+    // …
+  ],
+  wires: [
+    { id: 'w1', start: { componentId: 'led1', pinName: 'A' }, end: { componentId: 'arduino-uno', pinName: '13' }, color: 'green' },
+    // …
+  ],
+}
 ```
 
-## File Names
+3. (Optional) Save a screenshot as `docs/examples/{id}.png` for the gallery card.
+4. The example appears automatically in the gallery on next reload.
 
-Files must follow the example ID:
+### Multi-board examples
 
-- `blink-led.png` — Blink LED
-- `traffic-light.png` — Traffic Light
-- `button-led.png` — Button Control
-- `fade-led.png` — Fade LED
-- `serial-hello.png` — Serial Hello World
-- `rgb-led.png` — RGB LED Colors
-- `simon-says.png` — Simon Says Game
-- `lcd-hello.png` — LCD 20x4 Display
+For multi-board: set the `boards: [...]` field. Board instance IDs are deterministic — the first board of a kind uses `boardKind` as its ID:
 
-## Recommended Dimensions
+```typescript
+boards: [
+  { boardKind: 'arduino-uno',  x: 100, y: 100, code: '/* … */' },
+  { boardKind: 'raspberry-pi-3', x: 500, y: 100, vfsFiles: { 'main.py': '# …' } },
+],
+```
+
+Reference wires by these IDs directly — for example `componentId: 'arduino-uno'` or `componentId: 'raspberry-pi-3'`.
+
+### MicroPython examples
+
+Add `languageMode: 'micropython'` to the example. For multi-file payloads, use the `files: [{ name, content }, …]` field instead of `code`. The loader switches the active board into MicroPython mode before populating the file group.
+
+---
+
+## Screenshots
+
+Screenshots are optional but help the gallery. Save them in this folder with the example's `id` as the filename:
 
 - **Width**: 800px
 - **Height**: 500px
-- **Format**: PNG with dark background (#1e1e1e)
+- **Format**: PNG
+- **Background**: dark `#1e1e1e`
 
-## Current Placeholder
+Capture from the editor at `/examples` — load the example, zoom to fit, take a tool screenshot of just the canvas area.
 
-While no images are available, a placeholder is shown with:
-- Category icon (large emoji)
-- Number of components (cyan blue)
-- Number of wires (yellow)
-- Gradient background with dashed border
-
-## Adding a New Example
-
-1. Add the definition in `frontend/src/data/examples.ts` with:
-   - `id`, `title`, `description`, `category`, `difficulty`
-   - `code`: Complete Arduino sketch
-   - `components[]`: Type, position, properties
-   - `wires[]`: Connections with `startPinName`, `endPinName`, `color`
-2. (Optional) Capture a screenshot and save it here as `{id}.png`
-3. The example will automatically appear in the gallery with category and difficulty filtering
+While no image is available the gallery shows a placeholder with the category icon, the component count, and the wire count.

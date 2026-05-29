@@ -1,487 +1,419 @@
-# Project Architecture - Velxio Arduino Emulator
+# Project Architecture — Velxio
 
 ## Overview
 
-This project is a fully local Arduino emulator using official Wokwi repositories for maximum compatibility. It features real AVR8 CPU emulation, 48+ interactive electronic components, a comprehensive wire system, and a build-time component discovery pipeline.
+Velxio is a **fully local, multi-board emulator and electronics simulator** that runs in the browser and on the desktop. Five CPU backends, one analog (ngspice-WASM) engine, 150+ catalog components, a custom-chip SDK, and a Tauri desktop shell — all tied together by a Zustand state core and a thin FastAPI compile + bridge backend.
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        USER (Browser)                               │
-│                      http://localhost:5173                          │
-└──────────────────────────┬──────────────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                    FRONTEND (React 19 + Vite 7)                     │
-│                                                                     │
-│  ┌────────────────┐  ┌──────────────────┐  ┌───────────────────┐   │
-│  │ Monaco Editor  │  │  Zustand Stores  │  │  SimulatorCanvas  │   │
-│  │  (Code Edit)   │  │ (Editor+Sim)     │  │  (Components+     │   │
-│  │  C++ / Arduino │  │                  │  │   Wires+Pins)     │   │
-│  └────────┬───────┘  └────────┬─────────┘  └────────┬──────────┘   │
-│           │                   │                      │              │
-│           ▼                   ▼                      ▼              │
-│  ┌──────────────────────────────────────────────────────────────┐   │
-│  │              AVRSimulator (avr8js)                           │   │
-│  │  CPU 16MHz · Timer0/1/2 · USART · ADC · PORTB/C/D          │   │
-│  │  ~60fps · 267k cycles/frame · Speed 0.1x-10x               │   │
-│  └──────────────────────────────┬───────────────────────────────┘   │
-│                                 │                                   │
-│                                 ▼                                   │
-│  ┌──────────────────────────────────────────────────────────────┐   │
-│  │           PinManager + PartSimulationRegistry               │   │
-│  │  Digital/PWM/Analog listeners · 16 registered parts         │   │
-│  │  LED · RGB · Button · Pot · LCD · Servo · Buzzer · etc.     │   │
-│  └──────────────────────────────┬───────────────────────────────┘   │
-│                                 │                                   │
-│                                 ▼                                   │
-│  ┌──────────────────────────────────────────────────────────────┐   │
-│  │        48+ wokwi-elements (Lit Web Components)              │   │
-│  │  DynamicComponent renderer · ComponentRegistry (metadata)   │   │
-│  │  ComponentPickerModal · Property dialog · Pin selector      │   │
-│  └──────────────────────────────────────────────────────────────┘   │
-│                                                                     │
-│  ┌──────────────────────────────────────────────────────────────┐   │
-│  │               Wire System                                    │   │
-│  │  Orthogonal routing · Segment editing · 8 signal colors     │   │
-│  │  Overlap offset · Pin overlay · Grid snapping (20px)        │   │
-│  └──────────────────────────────────────────────────────────────┘   │
-└──────────────────────────┬──────────────────────────────────────────┘
-                           │ HTTP (Axios)
-                           ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                BACKEND (FastAPI + Python)                            │
-│                  http://localhost:8001                               │
-│                                                                     │
-│  ┌─────────────────────────────────────────────────────────────┐    │
-│  │  POST /api/compile/     → Compile Arduino code to .hex     │    │
-│  │  GET  /api/compile/boards → List available boards          │    │
-│  │  GET  /                 → API info                          │    │
-│  │  GET  /health           → Health check                      │    │
-│  └──────────────────────────────┬──────────────────────────────┘    │
-│                                 ▼                                   │
-│  ┌─────────────────────────────────────────────────────────────┐    │
-│  │         ArduinoCLIService                                   │    │
-│  │  Auto-installs arduino:avr core                             │    │
-│  │  Temp directory + subprocess.run via asyncio.to_thread      │    │
-│  └──────────────────────────────┬──────────────────────────────┘    │
-└─────────────────────────────────┼──────────────────────────────────┘
-                                  │
-                                  ▼
-                       ┌──────────────────────┐
-                       │    arduino-cli       │
-                       │   (Local system)     │
-                       └──────────────────────┘
+```text
++---------------------------------------------------------------------+
+|                          USER (Browser or Tauri)                    |
+|       Web: http://localhost:3080 (Docker) or velxio.dev             |
+|       Desktop: velxio-desktop (Tauri shell)                         |
++--------------------------------+------------------------------------+
+                                 |
+                                 v
++---------------------------------------------------------------------+
+|                FRONTEND (React 19 + Vite 7 + TypeScript)            |
+|                                                                     |
+|  +-----------------+  +------------------+  +-------------------+   |
+|  | Monaco Editor   |  |  Zustand Stores  |  |  SimulatorCanvas  |   |
+|  | Multi-file C++  |  |  Editor + Sim    |  |  Components+Wires |   |
+|  | / .py / .chip.c |  |  Electrical+VFS  |  |  Pin overlay      |   |
+|  +--------+--------+  +--------+---------+  +---------+---------+   |
+|           |                    |                      |             |
+|           v                    v                      v             |
+|  +---------------------------------------------------------------+  |
+|  | 5 CPU backends, one PinManager facade                         |  |
+|  |  - AVRSimulator (avr8js, browser)                             |  |
+|  |  - RP2040Simulator (rp2040js, browser, WFI fast-forward)      |  |
+|  |  - Esp32Bridge (WebSocket -> QEMU Xtensa/RISC-V worker)       |  |
+|  |  - RaspberryPi3Bridge (WebSocket -> QEMU raspi3b)             |  |
+|  |  - RiscVCore (TypeScript ISA, Vitest only)                    |  |
+|  +-------------------------------+-------------------------------+  |
+|                                  v                                  |
+|  +---------------------------------------------------------------+  |
+|  | PinManager + PartSimulationRegistry                           |  |
+|  | Digital/PWM/Analog listeners, 16+ registered output parts,    |  |
+|  | event-driven input parts (buttons, switches, encoders, ...)   |  |
+|  +---------------------------------------------------------------+  |
+|                                  v                                  |
+|  +---------------------------------------------------------------+  |
+|  | Electrical engine (lazy, ~39 MB ngspice WASM bundle)          |  |
+|  | NetlistBuilder (Union-Find on wires) -> SPICE cards           |  |
+|  | useElectricalStore + analog instruments (V/A/scope/funcgen)   |  |
+|  +---------------------------------------------------------------+  |
+|                                  v                                  |
+|  +---------------------------------------------------------------+  |
+|  | Component Layer                                                |  |
+|  | wokwi-elements (Lit) + Velxio-native Web Components            |  |
+|  | DynamicComponent renderer, ComponentRegistry (metadata.json)   |  |
+|  | ComponentPickerModal, property dialog, pin selector            |  |
+|  +---------------------------------------------------------------+  |
+|                                                                     |
+|  +---------------------------------------------------------------+  |
+|  | Wire System                                                    |  |
+|  | Orthogonal routing, segment edit, 8 signal colors,             |  |
+|  | overlap offset, pin overlay, 20px grid snap                    |  |
+|  +---------------------------------------------------------------+  |
+|                                                                     |
+|  Custom Chips runtime                                               |
+|  WASI shim, SPI/I2C bus bridges, ChipRuntime per instance           |
++--------------------------------+------------------------------------+
+                                 | HTTP (Axios) + WebSocket
+                                 v
++---------------------------------------------------------------------+
+|                  BACKEND (FastAPI + Python 3.12)                    |
+|                     http://localhost:8001                           |
+|                                                                     |
+|  +-------------------------------------------------------------+    |
+|  | /api/compile/      sync + async Arduino / RP2040 compile    |    |
+|  | /api/compile/chip/ Custom-chip WASM compile                 |    |
+|  | /api/libraries/    arduino-cli library search + install     |    |
+|  | /ws/sim/{id}       QEMU bridge (Xtensa, RISC-V, ARM Pi)     |    |
+|  | /api/iot/          HTTP proxy to simulated ESP32 servers    |    |
+|  | /api/mcp/, /sse/   MCP server (stdio + SSE)                 |    |
+|  +-------------------------------+----------------------------+    |
+|                                  v                                 |
+|  +-------------------------------------------------------------+    |
+|  | Services                                                    |    |
+|  | arduino_cli  espidf_compiler  qemu_manager  esp32_worker    |    |
+|  | wasm_chip_runtime  gpio_shim                                |    |
+|  +-------------------------------+----------------------------+    |
++--------------------------------+------------------------------------+
+                                 v
+       arduino-cli       ESP-IDF       libqemu-xtensa.so
+       (subprocess)      (subprocess)  libqemu-riscv32.so
+                                       qemu-system-aarch64 (Pi)
 ```
 
-## Data Flow
+The backend is **stateless** by design — no database, no auth, no per-user files. Compilation results are returned over HTTP and discarded; QEMU instances live only as long as the WebSocket session.
 
-### 1. Code Editing
+> **Production overlay (velxio-prod):** accounts, public profiles, persistent project URLs, the admin panel, analytics, and Pro features (custom-chip cloud build, premium components, AI assistant) live in a private repo and are layered onto the Docker image at deploy time. The OSS image you build from this repo is the same shell minus those routes. See [README.md](../README.md) §License.
+
+---
+
+## Data flow
+
+### 1. Code editing
+
+```text
+User writes code
+   v
+Monaco Editor (.ino / .cpp / .h / .py / .chip.c)
+   v
+useEditorStore.files[]  (per-board multi-file workspace)
+   v
+Active file -> editor; file group switches on board selection
 ```
-User writes Arduino code
-    ↓
-Monaco Editor (C++, dark theme, autocomplete)
-    ↓
-Zustand useEditorStore
-    ↓
-State: { code, theme, fontSize }
+
+`useEditorStore` holds:
+
+```typescript
+interface WorkspaceFile { id: string; name: string; content: string; modified: boolean; }
+files: WorkspaceFile[]
+activeFileId: string
+openFileIds: string[]
+fileGroups: Record<string, string[]>   // boardInstanceId -> file IDs
 ```
+
+Operations: `createFile`, `deleteFile`, `renameFile`, `setFileContent`, `markFileSaved`, `openFile`, `closeFile`, `setActiveFile`, `loadFiles` (for `.vlx` import).
 
 ### 2. Compilation
-```
+
+```text
 Click "Compile"
-    ↓
-EditorToolbar.tsx → compileCode()
-    ↓
-Axios POST → http://localhost:8001/api/compile/
-    ↓
-Backend: ArduinoCLIService.compile()
-    ↓
-arduino-cli compile --fqbn arduino:avr:uno --output-dir build/
-    ↓
-Reads build/sketch.ino.hex → returns hex_content
-    ↓
-Frontend: useSimulatorStore.setCompiledHex(hex)
-    ↓
-Auto-calls loadHex() → CPU + peripherals created
+   v
+EditorToolbar -> compileCode({ files, board_fqbn })
+   v
+Axios POST -> http://localhost:8001/api/compile/
+   v
+Backend dispatch (by FQBN prefix):
+   arduino:avr:*    -> ArduinoCLIService.compile()
+   rp2040:rp2040:*  -> same + earlephilhower core
+   esp32:esp32:*    -> ESP-IDF compile (full project, ccache + persistent build dir)
+   v
+First .ino promoted to sketch.ino (RP2040 Serial redirect applied to sketch.ino only)
+   v
+Returns hex_content / bin_payload + compile log
+   v
+useSimulatorStore.setCompiledProgram(boardId, payload)  -> auto-loadHex/loadBin
 ```
 
-### 3. Simulation (Real AVR8 Emulation)
-```
+### 3. Simulation
+
+#### Browser backends (AVR, RP2040)
+
+```text
 Click "Run"
-    ↓
-useSimulatorStore.startSimulation()
-    ↓
-AVRSimulator.start()
-    ↓
-requestAnimationFrame loop @ ~60fps
-    ↓
-Each frame: Math.floor(267000 × speed) cycles
-    ↓
-For each cycle:
-  ├── avrInstruction(cpu)   ← Execute AVR instruction
-  └── cpu.tick()            ← Update peripherals/timers
-    ↓
-Port writes → AVRIOPort listeners
-    ↓
+   v
+useSimulatorStore.startSimulation(boardId)
+   v
+Per-board simulator instance.start()
+   v
+requestAnimationFrame loop @ ~60 FPS
+   v
+Each frame: Math.floor(cyclesPerSecond / 60 * speed) cycles
+   v
+For each cycle: instruction() + cpu.tick()
+   v
+Port writes -> AVRIOPort / RP2040 IOReg listeners
+   v
 PinManager.updatePort(portName, newValue, oldValue)
-    ↓
-Per-pin callbacks fire for changed pins
-    ↓
-PartSimulationRegistry.onPinStateChange()
-    ↓
-wokwi web components update visually
-
-Additionally per frame:
-  pollPwmRegisters() → reads OCR0A/B, OCR1AL/BL, OCR2A/B
-    ↓
-  PinManager.updatePwm(pin, dutyCycle)
+   v
+Per-pin callbacks fire -> PartSimulationRegistry.onPinStateChange()
+   v
+Web Component property updates (LED color, LCD frame buffer, NeoPixel grid, ...)
 ```
 
-### 4. Input Components Flow
+#### QEMU backends (ESP32, ESP32-C3, Pi family)
+
+```text
+Click "Run"
+   v
+useSimulatorStore.startSimulation(boardId)
+   v
+WebSocket connect -> /ws/sim/{boardId}
+   v
+Backend spawns QEMU process (or attaches libqemu lib)
+   v
+QEMU loads firmware/OS image (qcow2 overlay for Pi)
+   v
+QEMU emits GPIO/UART/I2C/SPI events -> backend serializes -> WebSocket
+   v
+Frontend bridge dispatches into PinManager (same as browser backends)
 ```
-User presses a pushbutton on canvas
-    ↓
+
+### 4. Input components
+
+```text
+User presses pushbutton on canvas
+   v
 Web component fires 'button-press' event
-    ↓
-DynamicComponent catches event
-    ↓
-PartSimulationRegistry.attachEvents() handler
-    ↓
-AVRSimulator.setPinState(arduinoPin, LOW)
-    ↓
-AVRIOPort.setPin(bitIndex) injects external pin state
-    ↓
-CPU reads pin value in next instruction
+   v
+DynamicComponent forwards to PartSimulationRegistry.attachEvents handler
+   v
+Simulator.setPinState(arduinoPin, LOW)
+   v
+For browser backends: AVRIOPort.setPin(bitIndex) injects external state
+For QEMU backends:   pin-state command goes over WebSocket to QEMU
 ```
 
-### 5. Wire Creation Flow
-```
-Click pin on component A → startWireCreation(endpoint)
-    ↓
-Mouse move → updateWireInProgress(x, y)
-    ↓
+### 5. Wire creation
+
+```text
+Click pin on component A   -> startWireCreation(endpoint)
+   v
+Mouse move                 -> updateWireInProgress(x, y)
+   v
 WireInProgressRenderer shows dashed green L-shape preview
-    ↓
-Click pin on component B → finishWireCreation(endpoint)
-    ↓
-Wire created with midpoint control point
-    ↓
-WireLayer renders orthogonal SVG path
-    ↓
-Components subscribe to Arduino pins via wire lookup
+   v
+Click pin on component B   -> finishWireCreation(endpoint)
+   v
+Wire object stored in useSimulatorStore.wires[]
+   v
+WireLayer renders SVG orthogonal path (with overlap offset)
+   v
+Components subscribe to Arduino pin via wire lookup (DynamicComponent)
 ```
 
-## Key Components
+### 6. Electrical co-simulation (when toggled on)
 
-### Frontend
+```text
+Each frame (debounced):
+   v
+NetlistBuilder runs Union-Find on wires[] -> electrical nodes
+   v
+For each component, componentToSpice() emits SPICE cards
+   v
+MCU digital pins -> Thevenin sources (V = port driver, R_out = driver model)
+   v
+Lazy-loaded ngspice WASM (.op transient) computes node voltages
+   v
+Voltmeter / ammeter / oscilloscope read probes
+ADCs read their node voltage on the next analogRead()
+```
 
-#### 1. Stores (Zustand)
+---
 
-**useEditorStore** — Code editor state
-| Property | Type | Default |
-|----------|------|---------|
-| `code` | `string` | Blink example sketch |
-| `theme` | `'vs-dark' \| 'light'` | `'vs-dark'` |
-| `fontSize` | `number` | `14` |
+## State stores
 
-Methods: `setCode()`, `setTheme()`, `setFontSize()`
+| Store | File | Purpose |
+|-------|------|---------|
+| `useEditorStore` | `frontend/src/store/useEditorStore.ts` | Multi-file workspace, file groups per board |
+| `useSimulatorStore` | `frontend/src/store/useSimulatorStore.ts` | Boards, components, wires, simulators, running state |
+| `useProjectStore` | `frontend/src/store/useProjectStore.ts` | Current loaded project metadata (id, slug, name) for `.vlx` export |
+| `useElectricalStore` | `frontend/src/store/useElectricalStore.ts` | SPICE engine state, node voltages, probe readings |
+| `useVfsStore` | `frontend/src/store/useVfsStore.ts` | Virtual File System for Pi family (Python files mounted at boot) |
+| `useAuthStore` (overlay) | `pro/frontend/src/pro/store/useAuthStore.ts` | Lives only in velxio-prod overlay — OSS has no auth |
 
-**useSimulatorStore** — Simulation + components + wires state
-| Property | Type | Description |
-|----------|------|-------------|
-| `simulator` | `AVRSimulator \| null` | CPU emulator instance |
-| `pinManager` | `PinManager` | Pin-to-component mapping |
-| `running` | `boolean` | Simulation active |
-| `compiledHex` | `string \| null` | Compiled hex content |
-| `components` | `Component[]` | All electronic components |
-| `wires` | `Wire[]` | All wire connections |
-| `selectedWireId` | `string \| null` | Currently selected wire |
-| `wireInProgress` | `WireInProgress \| null` | Wire being created |
+---
 
-Methods (20+):
-- **Simulation**: `initSimulator()`, `loadHex()`, `startSimulation()`, `stopSimulation()`, `resetSimulation()`, `setCompiledHex()`, `setRunning()`
-- **Components**: `addComponent()`, `removeComponent()`, `updateComponent()`, `updateComponentState()`, `handleComponentEvent()`, `setComponents()`
-- **Wires**: `addWire()`, `removeWire()`, `updateWire()`, `setSelectedWire()`, `setWires()`
-- **Wire creation**: `startWireCreation()`, `updateWireInProgress()`, `finishWireCreation()`, `cancelWireCreation()`
-- **Wire positions**: `updateWirePositions(componentId)`, `recalculateAllWirePositions()`
+## Component plugin system
 
-Notable behaviors:
-- `removeComponent()` cascades: removes all connected wires
-- `updateComponent()` auto-recalculates wire positions when x/y changes
-- `setCompiledHex()` auto-calls `loadHex()`
+`PartSimulationRegistry` decouples simulation logic from rendering. A part registers two optional hooks:
 
-#### 2. Simulation Engine
-
-**AVRSimulator** — Real ATmega328p emulation
-- **CPU**: 16MHz clock, 32KB program memory (16K words)
-- **Timers**: Timer0 (`timer0Config`), Timer1 (`timer1Config`), Timer2 (`timer2Config`)
-- **Serial**: USART (`usart0Config`) at 16MHz
-- **ADC**: Analog-to-digital converter (`adcConfig`)
-- **GPIO**: PORTB (pins 8-13), PORTC (A0-A5), PORTD (pins 0-7)
-- **Simulation loop**: ~60fps via `requestAnimationFrame`, `267000 × speed` cycles/frame
-- **Speed control**: 0.1x – 10x multiplier
-- **PWM polling**: Reads OCR0A/B, OCR1AL/BL, OCR2A/B each frame
-- **API**: `loadHex()`, `start()`, `stop()`, `reset()`, `step()`, `setSpeed()`, `setPinState()`, `getADC()`
-
-**PinManager** — Pin state tracking and listener dispatch
-- **Digital**: `onPinChange(pin, callback)`, `updatePort(portName, newValue, oldValue)`, `getPinState(pin)`
-- **PWM**: `onPwmChange(pin, callback)`, `updatePwm(pin, dutyCycle)`, `getPwmValue(pin)`
-- **Analog**: `onAnalogChange(pin, callback)`, `setAnalogVoltage(pin, voltage)`
-- **Utility**: `getListenersCount()`, `clearAllListeners()`
-
-**PartSimulationRegistry** — Plugin system for component behaviors
-- Interface: `onPinStateChange(pinName, state, element)` for outputs, `attachEvents(element, simulator, pinHelper) → cleanup` for inputs
-- **16 registered parts**:
-
-| Part | Type | Key Behavior |
-|------|------|--------------|
-| `led` | Output | Pin A state → `element.value` |
-| `rgb-led` | Output | Digital + PWM on R/G/B → `ledRed/Green/Blue` |
-| `led-bar-graph` | Output | 10 LEDs (A1-A10) → `.values` array |
-| `7segment` | Output | 8 segments (A-G + DP) → `.values` array |
-| `pushbutton` | Input | Press/release → `setPinState(pin, LOW/HIGH)` |
-| `pushbutton-6mm` | Input | Same as pushbutton |
-| `slide-switch` | Input | Change event → pin state |
-| `dip-switch-8` | Input | 8 independent switches |
-| `potentiometer` | Input | Value (0-1023) → ADC voltage injection |
-| `slide-potentiometer` | Input | Same via SIG/OUT pins |
-| `photoresistor-sensor` | Input/Output | Default 2.5V on AO, monitors DO for LED |
-| `analog-joystick` | Input | VRX/VRY (ADC) + SW (digital) |
-| `servo` | Output | Polls OCR1A/ICR1 → angle 0-180° |
-| `buzzer` | Output | Web Audio API, reads Timer2 registers |
-| `lcd1602` | Output | Full HD44780 4-bit protocol (16×2) |
-| `lcd2004` | Output | Full HD44780 4-bit protocol (20×4) |
-
-#### 3. Component System
-
-**ComponentRegistry** — Singleton from `/components-metadata.json`
-- **48 components** across 8 categories
-- Auto-generated at build time by `scripts/generate-component-metadata.ts` (TypeScript AST parser)
-- Methods: `getAllComponents()`, `getByCategory()`, `getById()`, `search()`, `getCategories()`
-
-| Category | Count | Components |
-|----------|-------|------------|
-| Boards | 4 | Arduino Uno, Mega, Nano, etc. |
-| Sensors | 6 | DHT22, HC-SR04, PIR, photoresistor, etc. |
-| Displays | 3 | LCD 1602, LCD 2004, 7-segment |
-| Input | 5 | Buttons, switches, potentiometers, joystick |
-| Output | 5 | LEDs, RGB LED, LED bar graph, buzzer |
-| Motors | 2 | Servo, stepper |
-| Passive | 4 | Resistor, capacitor, etc. |
-| Other | 19 | Various components |
-
-**DynamicComponent** — Generic web component renderer
-- Creates DOM elements with `document.createElement(metadata.tagName)`
-- Syncs React properties to web component properties
-- Extracts `pinInfo` from web component DOM (100ms polling, 2s timeout)
-- Integrates with PartSimulationRegistry for simulation events
-- Resolves Arduino pin from wire connections
-- Handles visual state: selection border, rotation, cursor, labels
-
-**ComponentPickerModal** — Component search and selection UI
-- Search bar with real-time filtering
-- Category tabs from registry
-- Live wokwi-element thumbnails (actual web components at reduced scale)
-- Component count, pin count, description badges
-
-#### 4. UI Components
-
-**SimulatorCanvas** (~472 lines) — Main simulation canvas
-- Arduino Uno board at fixed position
-- Dynamic component rendering via DynamicComponent
-- Component drag-and-drop with viewport→canvas coordinate conversion
-- Click vs. drag detection (time <300ms, distance <5px threshold)
-- Single-click: opens ComponentPropertyDialog
-- Double-click: opens PinSelector
-- Wire creation via pin clicks (crosshair cursor during creation)
-- Wire auto-recalculation on component move (retries at 100/300/500ms)
-- PinOverlay on all components (hidden during simulation)
-- Keyboard shortcuts: Delete/Backspace (remove), Escape (cancel wire)
-- PinManager subscriptions for output component state updates
-- Status indicator: Running/Stopped + component count
-- "+ Add Component" button → opens ComponentPickerModal
-
-**WireRenderer** (~400 lines) — Interactive wire display and editing
-- Orthogonal SVG path rendering
-- 10px invisible hitbox for easy clicking
-- Segment-based editing: hover highlights, drag perpendicular to orientation
-- `requestAnimationFrame` smooth drag with local preview state
-- Grid snapping (20px) applied on mouseUp
-- Invalid wire styling (red dashed)
-- Endpoint markers at start/end
-
-**WireLayer** — SVG overlay with automatic offset calculation for overlapping wires
-
-**WireInProgressRenderer** — Dashed green preview during wire creation (L-shaped routing)
-
-**PinOverlay** — 12px cyan circles at each pin position; green on hover with scale animation
-
-**ComponentPropertyDialog** — Shows pin roles, Arduino pin assignment, Rotate and Delete buttons
-
-**PinSelector** — Modal for assigning D0-D13 and A0-A5 to component pins
-
-**CodeEditor** — Monaco Editor wrapper (C++, dark theme, minimap, word wrap)
-
-**EditorToolbar** — Compile/Run/Stop/Reset buttons with status messages
-
-**ExamplesGallery** — Filterable card grid (category + difficulty filters)
-
-#### 5. Wire Utilities
-
-| Utility | Purpose |
-|---------|---------|
-| `wirePathGenerator.ts` | L-shape and multi-segment orthogonal SVG path generation |
-| `wireSegments.ts` | Segment computation, hit testing (8px tolerance), drag updates |
-| `wireColors.ts` | 8 signal-type colors + `determineSignalType()` |
-| `wireOffsetCalculator.ts` | Parallel overlap detection (5px tolerance), symmetric offset (6px spacing) |
-| `pinPositionCalculator.ts` | Pin coordinate conversion (element → canvas space), closest pin snap (20px) |
-| `hexParser.ts` | Intel HEX parser with checksum verification |
-| `captureCanvasPreview.ts` | SVG foreignObject preview image generation |
-
-### Backend
-
-**FastAPI** app (port 8001) with CORS for ports 5173-5175
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/` | GET | API info |
-| `/health` | GET | Health check |
-| `/api/compile/` | POST | Compile Arduino code → hex content |
-| `/api/compile/boards` | GET | List available boards |
-
-**ArduinoCLIService**:
-- Auto-installs `arduino:avr` core if missing
-- Creates temp sketch directory, runs `arduino-cli compile` via `asyncio.to_thread(subprocess.run)`
-- Reads `build/sketch.ino.hex` output
-- Board listing via `arduino-cli board listall`
-
-### Pages & Routing
-
-| Route | Page | Layout |
-|-------|------|--------|
-| `/` | EditorPage | Header + split panels: Editor (left) + Simulator (right) |
-| `/examples` | ExamplesPage | Examples gallery with "Back to Editor" link |
-
-### Example Projects (8)
-
-| ID | Title | Category | Difficulty |
-|----|-------|----------|------------|
-| `blink-led` | Blink LED | basics | beginner |
-| `traffic-light` | Traffic Light | basics | beginner |
-| `button-led` | Button Control | basics | beginner |
-| `fade-led` | Fade LED | basics | beginner |
-| `serial-hello` | Serial Hello World | communication | beginner |
-| `rgb-led` | RGB LED Colors | basics | intermediate |
-| `simon-says` | Simon Says Game | games | advanced |
-| `lcd-hello` | LCD 20x4 Display | displays | intermediate |
-
-Each example includes full Arduino sketch, component definitions, and wire connections.
-
-### Wokwi Libraries (Local Clones)
-
-| Library | Location | Purpose |
-|---------|----------|---------|
-| wokwi-elements | `third-party/wokwi-elements/` | 48+ Lit Web Components |
-| avr8js | `third-party/avr8js/` | AVR8 ATmega328p emulator |
-| rp2040js | `third-party/rp2040js/` | RP2040 emulator (future) |
-| wokwi-features | `third-party/wokwi-features/` | Features documentation |
-
-## Vite Integration
-
-### Alias Configuration
 ```typescript
-// vite.config.ts
-resolve: {
-  alias: {
-    'avr8js': path.resolve(__dirname, '../third-party/avr8js/dist/esm'),
-    '@wokwi/elements': path.resolve(__dirname, '../third-party/wokwi-elements/dist/esm'),
-  },
-},
-optimizeDeps: {
-  include: ['avr8js', '@wokwi/elements'],
+interface PartSimulation {
+  onPinStateChange?(pinName: string, state: PinState, element: HTMLElement): void;
+  attachEvents?(element: HTMLElement, simulator: Simulator, pinHelper: PinHelper): () => void;
 }
 ```
 
-This allows:
-- Import from local repos as if they were npm packages
-- Easy updates with `git pull`
-- Modify source code if needed for debugging
+**Registered parts (16+):**
+
+| Part | Type | Key behavior |
+|------|------|--------------|
+| `led`, `wokwi-led` | Output | Pin -> `element.value` |
+| `rgb-led` | Output | Digital + PWM on R/G/B -> `ledRed/Green/Blue` |
+| `led-bar-graph` | Output | 10 LEDs (A1–A10) -> `.values` array |
+| `7segment` | Output | 8 segments (A–G + DP) -> `.values` array |
+| `pushbutton`, `pushbutton-6mm` | Input | Press/release -> `setPinState(pin, LOW/HIGH)` |
+| `slide-switch` | Input | Change event -> pin state |
+| `dip-switch-8` | Input | 8 independent switches |
+| `potentiometer`, `slide-potentiometer` | Input | Value (0–1023) -> ADC voltage injection; also a SPICE resistor in analog mode |
+| `analog-joystick` | Input | VRX/VRY (ADC) + SW (digital) |
+| `servo` | Output | Polls OCR1A/ICR1 -> angle 0–180° |
+| `buzzer` | Output | Web Audio API, reads Timer2 registers |
+| `lcd1602`, `lcd2004` | Output | Full HD44780 4-bit protocol |
+| `neopixel-*` | Output | RMT-decoded 24-bit GRB frame -> per-LED color |
+| `epaper-*` | Output | Waveshare driver, full-buffer refresh |
+| `oscilloscope`, `voltmeter`, `ammeter`, `function-gen` | Velxio-native | Read/write the ngspice node graph |
+
+Adding a new behavior: write the handler, register it in `PartSimulationRegistry`, ship. No edits to `SimulatorCanvas` needed.
+
+---
+
+## Custom chips runtime
+
+User-defined chips compile from C to WebAssembly via `backend/app/api/routes/compile_chip.py` and run inside `frontend/src/simulation/customChips/ChipRuntime.ts`. The runtime exposes:
+
+- **Digital GPIO** — pin watch, edge detection
+- **Analog out (DAC)** — sets a node voltage that ngspice picks up
+- **I2C slave, SPI slave, UART** — bus bridges that look like real peripherals to the MCU side
+- **Timers, framebuffer, log** — utility hooks
+- **WASI shim** — minimal subset for printf/clock
+
+30+ example chips ship in `frontend/src/components/customChips/examples/` (Intel 4004, 8080, 8086, Z80, 74HC595, 24LC256, MCP3008, PCF8574, DS3231, …). See [CUSTOM_CHIPS.md](./CUSTOM_CHIPS.md) and [Custom Chips ESP32 Runtime](./wiki/custom-chips-esp32-backend-runtime.md).
+
+---
+
+## Persistence
+
+OSS Velxio has **no server-side state**. Projects are saved as `.vlx` files — a single JSON snapshot of:
+
+- All boards (kind, position, board options, file groups)
+- All components (type, position, properties, rotation)
+- All wires (endpoints, color, signal type)
+- Code for every file group
+- VFS contents (Pi Python files)
+- Electrical-sim toggle state, instrument configurations
+
+`frontend/src/utils/vlxFile.ts` handles export and import. The format is versioned for forward compatibility.
+
+The Save button is registered through `frontend/src/lib/proSaveAction.ts` — OSS default is "download `.vlx`"; the velxio-prod overlay replaces it with a "Save to your account" modal.
+
+---
+
+## Routes
+
+| Route | Page | Purpose |
+|-------|------|---------|
+| `/` | `LandingPage` | Marketing landing page |
+| `/editor` | `EditorPage` | Main multi-board editor + canvas |
+| `/circuit` | `CircuitSimulatorPage` | Pure analog mode (no MCU) |
+| `/electronics` | `ElectronicsSimulatorPage` | Alt analog entry point |
+| `/arduino`, `/arduino-mega`, `/attiny85` | Board-specific simulator pages | Direct deep-link entry |
+| `/esp32`, `/esp32-c3`, `/esp32-s3` | Board-specific ESP32 pages | Same |
+| `/raspberry-pi-3` | Pi 3 simulator page | Same |
+| `/custom-chip` | `CustomChipSimulatorPage` | Custom-chip editor + sandbox |
+| `/examples` | `ExamplesPage` | Filterable gallery (380+ projects) |
+| `/examples/:id` | `ExampleDetailPage` | Single example with run-now |
+| `/docs` | `DocsPage` | In-app docs reader |
+
+The pro overlay injects `/account`, `/login`, `/:username`, `/project/:slug`, and `/admin` routes at runtime via `frontend/src/lib/proRoutes.ts`.
+
+---
+
+## Apps and integrations
+
+| Surface | Status | Doc |
+|---------|--------|-----|
+| **Web (OSS + Pro)** | Stable, deployed at velxio.dev | This repo |
+| **Desktop (Tauri)** | Pro — 30-day trial, license-gated | [desktop-app.md](./desktop-app.md) |
+| **MCP server** | OSS — stdio + SSE entry points | [MCP.md](./MCP.md) |
+| **IoT gateway** | OSS — HTTP proxy real browser <-> simulated ESP32 web server | `backend/app/api/routes/iot_gateway.py` |
+
+---
 
 ## Technology Stack
 
 ### Frontend
-| Technology | Version | Purpose |
-|------------|---------|---------|
-| React | 19.2 | UI framework |
-| Vite | 7.3 | Build tool & dev server |
-| TypeScript | 5.9 | Static typing |
-| Monaco Editor | 4.7 | Code editor (VS Code engine) |
-| Zustand | 5.0 | State management |
-| React Router | 7.13 | Client-side routing |
-| Axios | 1.13 | HTTP client |
-| wokwi-elements | local | 48+ electronic web components |
-| avr8js | local | AVR8 CPU emulator |
+
+| Layer | Tech |
+|-------|------|
+| Framework | React 19, Vite 7, TypeScript 5.9 |
+| Editor | Monaco Editor |
+| State | Zustand 5 |
+| Routing | React Router 7 |
+| Networking | Axios + native WebSocket |
+| UI components | wokwi-elements (Lit) + Velxio-native Web Components |
+| AVR sim | avr8js (npm) |
+| RP2040 sim | rp2040js (npm) |
+| ESP32 sim | WebSocket bridge to backend QEMU worker |
+| Pi sim | WebSocket bridge to backend QEMU process |
+| Electrical sim | eecircuit-engine (ngspice-WASM), lazy-loaded |
+| Custom-chip runtime | WASI shim + ChipRuntime in-browser |
 
 ### Backend
-| Technology | Version | Purpose |
-|------------|---------|---------|
-| Python | 3.12+ | Runtime |
-| FastAPI | 0.115 | Web framework |
-| Uvicorn | 0.32 | ASGI server |
 
-### External Tools
-| Tool | Purpose |
-|------|---------|
-| arduino-cli | Arduino compiler (subprocess) |
-| Git | Version control for Wokwi libs |
+| Layer | Tech |
+|-------|------|
+| Framework | FastAPI |
+| Runtime | Python 3.12, uvicorn |
+| Compile | `arduino-cli` (subprocess), ESP-IDF (subprocess), Emscripten (custom chips) |
+| QEMU | lcgamboa fork (libqemu-xtensa.so, libqemu-riscv32.so) + upstream QEMU 8.1.3 (qemu-system-aarch64 for Pi) |
+| Bridge | WebSockets (per-board) |
+| MCP | `backend/mcp_server.py` (stdio), `backend/mcp_sse_server.py` (SSE) |
+
+### Deploy
+
+- **Docker** — `Dockerfile.standalone` builds a multi-stage image. Published to GHCR + Docker Hub by GitHub Actions on push to `master`.
+- **Manual** — frontend + backend independently. ESP32 / Pi need QEMU `.so` libs.
+- **velxio.dev** — Pro overlay layered on the base image. Lives in [velxio/velxio-prod](https://github.com/velxio/velxio-prod) (private).
+
+---
 
 ## Architecture Advantages
 
-### Real Emulation
-- True AVR8 CPU execution, not simulation mockups
-- Same avr8js engine used by Wokwi.com
-- Accurate timing with configurable speed
+- **Real emulation everywhere.** No board has a hand-rolled state machine — every backend executes the real ISA.
+- **Co-simulated digital + analog.** ngspice runs in the same loop as the MCU. ADC reads return real solved voltages, not lookup-table approximations.
+- **Plugin-based component behaviors.** New parts register a handler; no `SimulatorCanvas` edits.
+- **Build-time component discovery.** TypeScript AST parser extracts metadata from wokwi-elements source. Override file for Velxio-native parts.
+- **Stateless backend.** Compile is HTTP; QEMU is per-WebSocket. No DB, no migrations, no user state in OSS.
+- **Open-core split.** OSS is fully self-hostable, anonymous, single-user. Pro features layer in via overlay without touching the OSS code path.
+- **Portable projects.** `.vlx` files round-trip every detail of a canvas. No server needed to share work.
 
-### Plugin-Based Component Behaviors
-- PartSimulationRegistry decouples simulation logic from rendering
-- Easy to add new component behaviors
-- Supports both input (event-driven) and output (pin-state-driven) components
+---
 
-### Automatic Component Discovery
-- Build-time TypeScript AST parser extracts metadata from wokwi-elements source
-- No manual component registration needed
-- New wokwi-elements components appear automatically after rebuild
+## Planned
 
-### Separation of Concerns
-- **Frontend**: UI, visualization, simulation engine
-- **Backend**: Compilation via arduino-cli
-- **Wokwi Libs**: Emulation and components (maintained by Wokwi community)
+- More boards (STM32, RP2350, AVR-DA family)
+- Wire validation (short detection, missing-GND warnings)
+- Undo/redo for canvas operations
+- Streaming compile (incremental ESP-IDF builds)
+- WebGPU acceleration for the canvas at >200 components
 
-### Wokwi Compatibility
-- Official repositories = same functionality as Wokwi.com
-- Automatic updates with `git pull`
-- New components available immediately after rebuild
+See [roadmap.md](./roadmap.md) for the full list.
 
-### Local Development
-- No internet required after initial setup
-- Local compilation with arduino-cli
-- All simulation runs in the browser
-
-## Planned Improvements
-
-- **Serial Monitor** — UI for USART output display
-- **Project Persistence** — SQLite database for save/load
-- **Undo/Redo** — Edit history for code and circuit changes
-- **Multi-board Support** — Runtime board switching (Mega, Nano, ESP32)
-- **Wire Validation** — Electrical validation and error highlighting
-- **Export/Import** — Share projects as files
+---
 
 ## References
 
-- [Wokwi Elements Repo](https://github.com/wokwi/wokwi-elements)
-- [AVR8js Repo](https://github.com/wokwi/avr8js)
-- [Wokwi Simulator](https://wokwi.com)
-- [Arduino CLI](https://arduino.github.io/arduino-cli/)
-- [FastAPI Docs](https://fastapi.tiangolo.com/)
-- [Vite Docs](https://vitejs.dev/)
+- [README](../README.md)
+- [Emulator Architecture](./emulator.md)
+- [Components Reference](./components.md)
+- [Custom Chips Guide](./CUSTOM_CHIPS.md)
+- [Electrical Simulation User Guide](./wiki/electrical-simulation-user-guide.md)
+- [MCP Server](./MCP.md)
+- [Desktop App](./desktop-app.md)
+- Upstream: [wokwi-elements](https://github.com/wokwi/wokwi-elements), [avr8js](https://github.com/wokwi/avr8js), [rp2040js](https://github.com/wokwi/rp2040js), [lcgamboa/qemu](https://github.com/lcgamboa/qemu)
