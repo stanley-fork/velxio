@@ -414,5 +414,18 @@
     "ctaUpgrade": "升级到 Pro — $15/月",
     "ctaSeePlans": "查看套餐",
     "ctaWait": "等待重置"
+  },
+  "editor": {
+    "share": {
+      "updateFailed": "无法更改可见性，请重试。",
+      "visibility": {
+        "publicLabel": "公开",
+        "publicHint": "任何人都可以在 velxio.dev 上找到此项目。",
+        "unlistedLabel": "不列出",
+        "unlistedHint": "从搜索和画廊中隐藏 —— 只能通过分享链接访问。",
+        "privateLabel": "私有",
+        "privateHint": "只有你能看到此项目。"
+      }
+    }
   }
 }

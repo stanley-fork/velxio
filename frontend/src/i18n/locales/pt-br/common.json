@@ -414,5 +414,18 @@
     "ctaUpgrade": "Fazer upgrade para Pro — $15/mês",
     "ctaSeePlans": "Ver planos",
     "ctaWait": "Aguardar reinício"
+  },
+  "editor": {
+    "share": {
+      "updateFailed": "Não foi possível alterar a visibilidade — tente novamente.",
+      "visibility": {
+        "publicLabel": "Público",
+        "publicHint": "Qualquer pessoa pode encontrar este projeto em velxio.dev.",
+        "unlistedLabel": "Não listado",
+        "unlistedHint": "Oculto da busca e da galeria — acessível apenas pelo link.",
+        "privateLabel": "Privado",
+        "privateHint": "Apenas você pode ver este projeto."
+      }
+    }
   }
 }
