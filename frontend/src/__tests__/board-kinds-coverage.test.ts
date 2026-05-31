@@ -75,6 +75,13 @@ const ACCEPTED_UNCOVERED: ReadonlySet<BoardKind> = new Set([
   // showcases its limited (5 GPIO) form factor.  Add one when
   // someone proposes a use case.
   'attiny85',
+
+  // STM32 (Blue Pill / Black Pill) — Pro feature emulated on the backend
+  // via the licensed libqemu-arm QEMU lib (no in-browser canvas engine,
+  // same as the Raspberry Pis above).  Gallery examples are intentionally
+  // not shipped to the free tier, so these are accepted as uncovered.
+  'stm32-bluepill',
+  'stm32-blackpill',
 ]);
 
 interface Coverage {
