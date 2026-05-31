@@ -82,6 +82,15 @@ const ACCEPTED_UNCOVERED: ReadonlySet<BoardKind> = new Set([
   // not shipped to the free tier, so these are accepted as uncovered.
   'stm32-bluepill',
   'stm32-blackpill',
+  // Additional STM32 variants (pin-compatible Pills + Discovery / Olimex /
+  // Netduino dev boards) — same libqemu-arm backend, no in-browser canvas
+  // example shipped.
+  'stm32-bluepill-f103cb',
+  'stm32-blackpill-f401',
+  'stm32-f4-discovery',
+  'stm32-olimex-h405',
+  'stm32-netduino-plus2',
+  'stm32-netduino2',
 ]);
 
 interface Coverage {
