@@ -9108,6 +9108,333 @@ void loop() {
       },
     ],
   },
+
+  // ── Raspberry Pi 3 / 4 / 5 — single-board GPIO examples ──────────────────
+  // These run a Python (gpiozero) script on the QEMU Linux board. gpiozero is
+  // board-agnostic (works on Pi 3/4/5). Only DIGITAL GPIO is wired — output
+  // (LEDs, RGB) and input (button, PIR) — since the Pi has no ADC and PWM is
+  // not simulated. To run: Start the Pi, click Upload in the File System
+  // panel, then `python3 /home/pi/script.py`.
+  {
+    id: 'pi3-blink-led',
+    title: '[Pi 3] Blink an LED',
+    description:
+      'Raspberry Pi 3 blinks a red LED on GPIO17 with gpiozero. Start the Pi, click Upload in the File System panel, then run: python3 /home/pi/script.py',
+    category: 'basics',
+    difficulty: 'beginner',
+    code: '',
+    boards: [
+      {
+        boardKind: 'raspberry-pi-3',
+        x: 80,
+        y: 80,
+        vfsFiles: {
+          'script.py': `#!/usr/bin/env python3
+# Raspberry Pi 3 - Blink an LED
+# Wiring: GPIO17 -> LED(+)  ;  LED(-) -> GND   (add a 220 ohm series
+# resistor on real hardware; the simulator's LED needs none).
+from gpiozero import LED
+from time import sleep
+
+led = LED(17)
+print("Blinking LED on GPIO17 - Ctrl-C to stop")
+try:
+    while True:
+        led.on()
+        print("LED ON")
+        sleep(1)
+        led.off()
+        print("LED OFF")
+        sleep(1)
+except KeyboardInterrupt:
+    led.off()
+    print("Stopped")
+`,
+        },
+      },
+    ],
+    components: [
+      { type: 'wokwi-led', id: 'pi3b-led', x: 540, y: 160, properties: { color: 'red' } },
+    ],
+    wires: [
+      { id: 'w-sig', start: { componentId: 'raspberry-pi-3', pinName: 'GPIO17' }, end: { componentId: 'pi3b-led', pinName: 'A' }, color: '#e74c3c' },
+      { id: 'w-gnd', start: { componentId: 'pi3b-led', pinName: 'C' }, end: { componentId: 'raspberry-pi-3', pinName: 'GND' }, color: '#000000' },
+    ],
+  },
+  {
+    id: 'pi3-running-lights',
+    title: '[Pi 3] Running Lights (5 LEDs)',
+    description:
+      'Raspberry Pi 3 sweeps a Knight-Rider pattern across 5 LEDs on GPIO17/27/22/5/6 with gpiozero. Start the Pi, Upload, then run: python3 /home/pi/script.py',
+    category: 'basics',
+    difficulty: 'intermediate',
+    code: '',
+    boards: [
+      {
+        boardKind: 'raspberry-pi-3',
+        x: 80,
+        y: 80,
+        vfsFiles: {
+          'script.py': `#!/usr/bin/env python3
+# Raspberry Pi 3 - Knight Rider / running lights across 5 LEDs
+from gpiozero import LED
+from time import sleep
+
+pins = [17, 27, 22, 5, 6]
+leds = [LED(p) for p in pins]
+print("Running lights on GPIO", pins, "- Ctrl-C to stop")
+try:
+    while True:
+        for i in range(len(leds)):
+            leds[i].on()
+            print("LED", pins[i], "ON")
+            sleep(0.12)
+            leds[i].off()
+        for i in range(len(leds) - 2, 0, -1):
+            leds[i].on()
+            print("LED", pins[i], "ON")
+            sleep(0.12)
+            leds[i].off()
+except KeyboardInterrupt:
+    for led in leds:
+        led.off()
+    print("Stopped")
+`,
+        },
+      },
+    ],
+    components: [
+      { type: 'wokwi-led', id: 'pi3r-led1', x: 540, y: 60, properties: { color: 'red' } },
+      { type: 'wokwi-led', id: 'pi3r-led2', x: 540, y: 140, properties: { color: 'orange' } },
+      { type: 'wokwi-led', id: 'pi3r-led3', x: 540, y: 220, properties: { color: 'yellow' } },
+      { type: 'wokwi-led', id: 'pi3r-led4', x: 540, y: 300, properties: { color: 'green' } },
+      { type: 'wokwi-led', id: 'pi3r-led5', x: 540, y: 380, properties: { color: 'blue' } },
+    ],
+    wires: [
+      { id: 'w1', start: { componentId: 'raspberry-pi-3', pinName: 'GPIO17' }, end: { componentId: 'pi3r-led1', pinName: 'A' }, color: '#e74c3c' },
+      { id: 'w2', start: { componentId: 'raspberry-pi-3', pinName: 'GPIO27' }, end: { componentId: 'pi3r-led2', pinName: 'A' }, color: '#e67e22' },
+      { id: 'w3', start: { componentId: 'raspberry-pi-3', pinName: 'GPIO22' }, end: { componentId: 'pi3r-led3', pinName: 'A' }, color: '#f1c40f' },
+      { id: 'w4', start: { componentId: 'raspberry-pi-3', pinName: 'GPIO5' }, end: { componentId: 'pi3r-led4', pinName: 'A' }, color: '#2ecc71' },
+      { id: 'w5', start: { componentId: 'raspberry-pi-3', pinName: 'GPIO6' }, end: { componentId: 'pi3r-led5', pinName: 'A' }, color: '#3498db' },
+      { id: 'g1', start: { componentId: 'pi3r-led1', pinName: 'C' }, end: { componentId: 'raspberry-pi-3', pinName: 'GND' }, color: '#000000' },
+      { id: 'g2', start: { componentId: 'pi3r-led2', pinName: 'C' }, end: { componentId: 'raspberry-pi-3', pinName: 'GND' }, color: '#000000' },
+      { id: 'g3', start: { componentId: 'pi3r-led3', pinName: 'C' }, end: { componentId: 'raspberry-pi-3', pinName: 'GND' }, color: '#000000' },
+      { id: 'g4', start: { componentId: 'pi3r-led4', pinName: 'C' }, end: { componentId: 'raspberry-pi-3', pinName: 'GND' }, color: '#000000' },
+      { id: 'g5', start: { componentId: 'pi3r-led5', pinName: 'C' }, end: { componentId: 'raspberry-pi-3', pinName: 'GND' }, color: '#000000' },
+    ],
+  },
+  {
+    id: 'pi4-button-led',
+    title: '[Pi 4] Button Toggles LED',
+    description:
+      'Raspberry Pi 4 reads a push button on GPIO2 and toggles an LED on GPIO17 with gpiozero. Start the Pi, Upload, run python3 /home/pi/script.py, then click the button.',
+    category: 'basics',
+    difficulty: 'beginner',
+    code: '',
+    boards: [
+      {
+        boardKind: 'raspberry-pi-4',
+        x: 80,
+        y: 80,
+        vfsFiles: {
+          'script.py': `#!/usr/bin/env python3
+# Raspberry Pi 4 - Button toggles an LED
+# Wiring: button GPIO2 <-> GND (internal pull-up; pressed reads LOW).
+#         LED on GPIO17 -> LED(+) ; LED(-) -> GND
+from gpiozero import Button, LED
+from time import sleep
+
+button = Button(2)   # pull_up=True by default
+led = LED(17)
+print("Press the button to toggle the LED - Ctrl-C to stop")
+state = False
+try:
+    while True:
+        button.wait_for_press()
+        state = not state
+        led.value = state
+        print("LED", "ON" if state else "OFF")
+        sleep(0.3)   # simple debounce
+except KeyboardInterrupt:
+    led.off()
+    print("Stopped")
+`,
+        },
+      },
+    ],
+    components: [
+      { type: 'wokwi-pushbutton', id: 'pi4-btn', x: 540, y: 120, properties: { color: 'green' } },
+      { type: 'wokwi-led', id: 'pi4-led', x: 540, y: 300, properties: { color: 'blue' } },
+    ],
+    wires: [
+      { id: 'w-btn', start: { componentId: 'raspberry-pi-4', pinName: 'GPIO2' }, end: { componentId: 'pi4-btn', pinName: '1.l' }, color: '#00aaff' },
+      { id: 'w-btn-gnd', start: { componentId: 'pi4-btn', pinName: '2.l' }, end: { componentId: 'raspberry-pi-4', pinName: 'GND' }, color: '#000000' },
+      { id: 'w-led', start: { componentId: 'raspberry-pi-4', pinName: 'GPIO17' }, end: { componentId: 'pi4-led', pinName: 'A' }, color: '#3498db' },
+      { id: 'w-led-gnd', start: { componentId: 'pi4-led', pinName: 'C' }, end: { componentId: 'raspberry-pi-4', pinName: 'GND' }, color: '#000000' },
+    ],
+  },
+  {
+    id: 'pi4-rgb-color-cycle',
+    title: '[Pi 4] RGB LED Color Cycle',
+    description:
+      'Raspberry Pi 4 cycles a common-cathode RGB LED through 7 colors using digital on/off on GPIO17/27/22 (gpiozero RGBLED, pwm=False). Start the Pi, Upload, run python3 /home/pi/script.py',
+    category: 'basics',
+    difficulty: 'intermediate',
+    code: '',
+    boards: [
+      {
+        boardKind: 'raspberry-pi-4',
+        x: 80,
+        y: 80,
+        vfsFiles: {
+          'script.py': `#!/usr/bin/env python3
+# Raspberry Pi 4 - RGB LED color cycle (digital, 7 colors)
+# Wiring: R->GPIO17, G->GPIO27, B->GPIO22, COM->GND (common cathode).
+# pwm=False -> each channel is plain on/off, so no PWM is needed.
+from gpiozero import RGBLED
+from time import sleep
+
+rgb = RGBLED(red=17, green=27, blue=22, pwm=False)
+colors = [
+    ("red",     (1, 0, 0)),
+    ("green",   (0, 1, 0)),
+    ("blue",    (0, 0, 1)),
+    ("yellow",  (1, 1, 0)),
+    ("cyan",    (0, 1, 1)),
+    ("magenta", (1, 0, 1)),
+    ("white",   (1, 1, 1)),
+]
+print("Cycling RGB colors - Ctrl-C to stop")
+try:
+    while True:
+        for name, value in colors:
+            rgb.color = value
+            print(name)
+            sleep(1)
+except KeyboardInterrupt:
+    rgb.off()
+    print("Stopped")
+`,
+        },
+      },
+    ],
+    components: [
+      { type: 'wokwi-rgb-led', id: 'pi4-rgb', x: 560, y: 160, properties: {} },
+    ],
+    wires: [
+      { id: 'w-r', start: { componentId: 'raspberry-pi-4', pinName: 'GPIO17' }, end: { componentId: 'pi4-rgb', pinName: 'R' }, color: '#e74c3c' },
+      { id: 'w-g', start: { componentId: 'raspberry-pi-4', pinName: 'GPIO27' }, end: { componentId: 'pi4-rgb', pinName: 'G' }, color: '#2ecc71' },
+      { id: 'w-b', start: { componentId: 'raspberry-pi-4', pinName: 'GPIO22' }, end: { componentId: 'pi4-rgb', pinName: 'B' }, color: '#3498db' },
+      { id: 'w-com', start: { componentId: 'pi4-rgb', pinName: 'COM' }, end: { componentId: 'raspberry-pi-4', pinName: 'GND' }, color: '#000000' },
+    ],
+  },
+  {
+    id: 'pi5-pir-motion-alarm',
+    title: '[Pi 5] PIR Motion Alarm',
+    description:
+      'Raspberry Pi 5 lights an LED on GPIO17 whenever a PIR motion sensor on GPIO4 detects movement (gpiozero MotionSensor). Start the Pi, Upload, run python3 /home/pi/script.py, then trigger the PIR.',
+    category: 'sensors',
+    difficulty: 'intermediate',
+    code: '',
+    boards: [
+      {
+        boardKind: 'raspberry-pi-5',
+        x: 80,
+        y: 80,
+        vfsFiles: {
+          'script.py': `#!/usr/bin/env python3
+# Raspberry Pi 5 - PIR motion alarm
+# Wiring: PIR VCC->5V, GND->GND, OUT->GPIO4 ; LED on GPIO17.
+from gpiozero import MotionSensor, LED
+from time import sleep
+
+pir = MotionSensor(4)
+led = LED(17)
+print("Motion alarm armed - trigger the PIR sensor (Ctrl-C to stop)")
+try:
+    while True:
+        if pir.motion_detected:
+            led.on()
+            print("Motion detected!")
+        else:
+            led.off()
+        sleep(0.2)
+except KeyboardInterrupt:
+    led.off()
+    print("Stopped")
+`,
+        },
+      },
+    ],
+    components: [
+      { type: 'wokwi-pir-motion-sensor', id: 'pi5-pir', x: 540, y: 120, properties: {} },
+      { type: 'wokwi-led', id: 'pi5-led', x: 560, y: 320, properties: { color: 'red' } },
+    ],
+    wires: [
+      { id: 'w-vcc', start: { componentId: 'raspberry-pi-5', pinName: '5V' }, end: { componentId: 'pi5-pir', pinName: 'VCC' }, color: '#e74c3c' },
+      { id: 'w-pir-gnd', start: { componentId: 'pi5-pir', pinName: 'GND' }, end: { componentId: 'raspberry-pi-5', pinName: 'GND' }, color: '#000000' },
+      { id: 'w-out', start: { componentId: 'pi5-pir', pinName: 'OUT' }, end: { componentId: 'raspberry-pi-5', pinName: 'GPIO4' }, color: '#f1c40f' },
+      { id: 'w-led', start: { componentId: 'raspberry-pi-5', pinName: 'GPIO17' }, end: { componentId: 'pi5-led', pinName: 'A' }, color: '#e74c3c' },
+      { id: 'w-led-gnd', start: { componentId: 'pi5-led', pinName: 'C' }, end: { componentId: 'raspberry-pi-5', pinName: 'GND' }, color: '#000000' },
+    ],
+  },
+  {
+    id: 'pi5-traffic-light',
+    title: '[Pi 5] Traffic Light',
+    description:
+      'Raspberry Pi 5 runs a red/yellow/green traffic-light state machine on GPIO17/27/22 with gpiozero. Start the Pi, Upload, then run: python3 /home/pi/script.py',
+    category: 'basics',
+    difficulty: 'intermediate',
+    code: '',
+    boards: [
+      {
+        boardKind: 'raspberry-pi-5',
+        x: 80,
+        y: 80,
+        vfsFiles: {
+          'script.py': `#!/usr/bin/env python3
+# Raspberry Pi 5 - Traffic light state machine
+# Wiring: red->GPIO17, yellow->GPIO27, green->GPIO22 (each LED- -> GND).
+from gpiozero import LED
+from time import sleep
+
+red = LED(17)
+yellow = LED(27)
+green = LED(22)
+print("Traffic light running - Ctrl-C to stop")
+try:
+    while True:
+        red.on(); yellow.off(); green.off()
+        print("RED")
+        sleep(3)
+        red.off(); green.on()
+        print("GREEN")
+        sleep(3)
+        green.off(); yellow.on()
+        print("YELLOW")
+        sleep(1)
+        yellow.off()
+except KeyboardInterrupt:
+    red.off(); yellow.off(); green.off()
+    print("Stopped")
+`,
+        },
+      },
+    ],
+    components: [
+      { type: 'wokwi-led', id: 'pi5-red', x: 540, y: 80, properties: { color: 'red' } },
+      { type: 'wokwi-led', id: 'pi5-yellow', x: 540, y: 200, properties: { color: 'yellow' } },
+      { type: 'wokwi-led', id: 'pi5-green', x: 540, y: 320, properties: { color: 'green' } },
+    ],
+    wires: [
+      { id: 'w-r', start: { componentId: 'raspberry-pi-5', pinName: 'GPIO17' }, end: { componentId: 'pi5-red', pinName: 'A' }, color: '#e74c3c' },
+      { id: 'w-y', start: { componentId: 'raspberry-pi-5', pinName: 'GPIO27' }, end: { componentId: 'pi5-yellow', pinName: 'A' }, color: '#f1c40f' },
+      { id: 'w-g', start: { componentId: 'raspberry-pi-5', pinName: 'GPIO22' }, end: { componentId: 'pi5-green', pinName: 'A' }, color: '#2ecc71' },
+      { id: 'g-r', start: { componentId: 'pi5-red', pinName: 'C' }, end: { componentId: 'raspberry-pi-5', pinName: 'GND' }, color: '#000000' },
+      { id: 'g-y', start: { componentId: 'pi5-yellow', pinName: 'C' }, end: { componentId: 'raspberry-pi-5', pinName: 'GND' }, color: '#000000' },
+      { id: 'g-g', start: { componentId: 'pi5-green', pinName: 'C' }, end: { componentId: 'raspberry-pi-5', pinName: 'GND' }, color: '#000000' },
+    ],
+  },
 ];
 
 // Merge legacy examples with circuit-focused examples (analog, digital gates,
