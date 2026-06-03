@@ -25,6 +25,7 @@ import {
   type PinResolver,
 } from '../simulation/PinResolver';
 import { BOARD_PIN_GROUPS } from '../simulation/spice/boardPinGroups';
+import { syntheticChipPin } from '../simulation/customChips/syntheticPins';
 import { getMixedModeScheduler } from '../simulation/spice/MixedModeScheduler';
 import { getBoardLogicFamily } from '../simulation/LogicFamilies';
 
@@ -99,10 +100,18 @@ for (const [preset, base] of Object.entries(PRESET_TO_BASE)) {
 
 type TraceState = ReturnType<typeof useSimulatorStore.getState>;
 
+// Custom-chip output pins get stable synthetic pin numbers from
+// simulation/customChips/syntheticPins so the chip is a first-class pin source.
+
 // Depth-limited BFS: trace from (fromId, fromPin) through wires, traversing
 // through passive components to reach a board pin.  Returns the arduino pin
 // plus a `crossedActiveDevice` flag so the resolver factory can decide
 // between digital fast-path and SPICE-resolved per-pin.
+//
+// A real board pin always wins (digital GPIO semantics are unchanged). Only
+// when NO board pin is reachable do we fall back to a custom-chip pin on the
+// net — either a neighbour chip pin, or (when the trace itself started at a
+// chip pin) the starting chip pin — resolving it to its synthetic number.
 //
 // Lifted to module scope (was inside getArduinoPin) so that getPinResolver
 // can call it too — the previous nested-scope version caused a runtime
@@ -122,6 +131,10 @@ function traceDetailed(
       (w.end.componentId === fromId && w.end.pinName === fromPin),
   );
 
+  // Remember a custom-chip neighbour on this net (if any) as a fallback —
+  // a real board pin found in any branch still takes priority over it.
+  let chipNeighbour: { id: string; pin: string } | null = null;
+
   for (const w of wires) {
     const selfEp =
       w.start.componentId === fromId && w.start.pinName === fromPin ? w.start : w.end;
@@ -135,6 +148,9 @@ function traceDetailed(
       if (pin !== null) return { arduinoPin: pin, crossedActiveDevice: activeSeen };
     } else {
       const comp = state.components.find((c) => c.id === otherEp.componentId);
+      if (!chipNeighbour && comp?.metadataId === 'custom-chip') {
+        chipNeighbour = { id: otherEp.componentId, pin: otherEp.pinName };
+      }
       const pair = comp && PASSIVE_PIN_PAIRS[comp.metadataId];
       if (pair) {
         const [p1, p2] = pair;
@@ -151,6 +167,18 @@ function traceDetailed(
         if (result.arduinoPin !== null) return result;
       }
     }
+  }
+
+  // No board pin reachable. Fall back to a custom-chip pin on this net so the
+  // chip can still drive / read it through the synthetic-pin PinManager key.
+  if (chipNeighbour) {
+    return {
+      arduinoPin: syntheticChipPin(chipNeighbour.id, chipNeighbour.pin),
+      crossedActiveDevice: activeSeen,
+    };
+  }
+  if (depth === 0 && state.components.find((c) => c.id === fromId)?.metadataId === 'custom-chip') {
+    return { arduinoPin: syntheticChipPin(fromId, fromPin), crossedActiveDevice: activeSeen };
   }
   return { arduinoPin: null, crossedActiveDevice: activeSeen };
 }

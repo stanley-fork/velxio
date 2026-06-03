@@ -15,6 +15,7 @@
 import type { ComponentForSpice } from './types';
 import { parseValueWithUnits } from './valueParser';
 import { LM358_SUBCKT } from './models/lm358Subckt';
+import { getChipDrivenPins } from '../customChips/chipPinDrives';
 
 export interface SpiceEmission {
   /** One or more netlist lines (without trailing newline). */
@@ -102,6 +103,27 @@ function ntcResistance(Tc: number, R0 = 10_000, T0 = 298.15, beta = 3950): numbe
 // ── Mappers (one per metadataId) ───────────────────────────────────────────
 
 const MAPPERS: Record<string, Mapper> = {
+  // Custom chip — emit a DC voltage source for every pin the chip's WASM is
+  // currently driving as an output (recorded in customChips/chipPinDrives).
+  // This makes the chip a first-class SPICE source on its nets, so LEDs,
+  // resistors and analog parts wired straight to a chip output pin are driven
+  // by the engine — exactly like a board GPIO. Chip pins wired to a real board
+  // pin resolve to that board's source instead and aren't recorded here.
+  'custom-chip': (comp, netLookup) => {
+    const driven = getChipDrivenPins(comp.id);
+    if (driven.length === 0) return null;
+    const cid = String(comp.id).replace(/[^A-Za-z0-9_]/g, '_');
+    const cards: string[] = [];
+    for (const { pin, voltage } of driven) {
+      const net = netLookup(pin);
+      if (!net || net === '0' || net === 'vcc_rail') continue;
+      const pid = String(pin).replace(/[^A-Za-z0-9_]/g, '_');
+      cards.push(`V_${cid}_${pid} ${net} 0 DC ${voltage}`);
+    }
+    if (cards.length === 0) return null;
+    return { cards, modelsUsed: new Set() };
+  },
+
   // Passive — Velxio existing parts
   resistor: (comp, netLookup) => {
     const pins = twoPin(comp, netLookup, '1', '2');

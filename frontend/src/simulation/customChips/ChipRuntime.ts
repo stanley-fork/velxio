@@ -10,6 +10,9 @@ import type { PinManager } from '../PinManager';
 import type { I2CBusManager } from '../I2CBusManager';
 import { SPIBus, SPIDevice } from './SPIBus';
 import { WasiShim, type SimNanosFn, type WriteStdoutFn } from './WasiShim';
+import { setChipPinDrive } from './chipPinDrives';
+import { isSyntheticChipPin } from './syntheticPins';
+import { requestElectricalResolve } from '../spice/electricalResolveHook';
 
 function readCString(memory: WebAssembly.Memory, ptr: number): string {
   const u8 = new Uint8Array(memory.buffer);
@@ -133,7 +136,13 @@ export interface ChipInstanceOptions {
    *  Used by CPU-emulator chips that load their program from a project file
    *  instead of hard-coding it as a C byte array. */
   romBytes?: Uint8Array | null;
+  /** Canvas component id of this chip. Used to key its SPICE pin sources so
+   *  the analog engine drives the nets wired to the chip's output pins. */
+  componentId?: string;
 }
+
+/** Logic-high voltage a chip output pin asserts on its SPICE net. */
+const CHIP_OUTPUT_VCC = 5;
 
 export class ChipInstance {
   static MODE_OUTPUT_LOW = 16;
@@ -146,6 +155,7 @@ export class ChipInstance {
   private wires: Map<string, number>;
   private attrs: Map<string, number>;
   private display: { width: number; height: number } | null;
+  private componentId: string;
 
   memory: WebAssembly.Memory | null = null;
   instance: WebAssembly.Instance | null = null;
@@ -187,6 +197,7 @@ export class ChipInstance {
     this.attrs = opts.attrs ?? new Map();
     this.display = opts.display ?? null;
     this._romBytes = opts.romBytes ?? new Uint8Array(0);
+    this.componentId = opts.componentId ?? '';
 
     this.wasi = new WasiShim(
       opts.simNanos ?? (() => 0n),
@@ -342,15 +353,40 @@ export class ChipInstance {
 
   // ── Pin implementations ──────────────────────────────────────────────────
 
+  /**
+   * Mirror an output pin's logic level into the SPICE chip-source registry and
+   * request a re-solve when it changes — so LEDs / analog parts wired to a chip
+   * output light up through ngspice, not just the digital PinManager path.
+   * Only synthetic chip pins (chip wired directly to components, no board GPIO
+   * on the net) are emitted as chip sources; a chip pin wired to a real board
+   * pin is already driven by that board's voltage source.
+   */
+  private _syncSpiceDrive(p: PinEntry): void {
+    if (!this.componentId || !p.name) return;
+    if (p.arduinoPin == null || !isSyntheticChipPin(p.arduinoPin)) return;
+    const isOutput =
+      p.mode === ChipInstance.MODE_OUTPUT_LOW || p.mode === ChipInstance.MODE_OUTPUT_HIGH;
+    const changed = isOutput
+      ? setChipPinDrive(
+          this.componentId,
+          p.name,
+          this.pinManager.getPinState(p.arduinoPin) ? CHIP_OUTPUT_VCC : 0,
+        )
+      : setChipPinDrive(this.componentId, p.name, null);
+    if (changed) requestElectricalResolve();
+  }
+
   private _pin_register(namePtr: number, mode: number): number {
     const name = readCString(this.memory!, namePtr);
     const handle = this.pins.length;
     const arduinoPin = this.wires.has(name) ? this.wires.get(name)! : null;
-    this.pins.push({ name, mode, arduinoPin });
+    const p: PinEntry = { name, mode, arduinoPin };
+    this.pins.push(p);
     if (arduinoPin != null) {
       if (mode === ChipInstance.MODE_OUTPUT_LOW)  this.pinManager.triggerPinChange(arduinoPin, false);
       if (mode === ChipInstance.MODE_OUTPUT_HIGH) this.pinManager.triggerPinChange(arduinoPin, true);
     }
+    this._syncSpiceDrive(p);
     return handle;
   }
 
@@ -364,6 +400,7 @@ export class ChipInstance {
     const p = this.pins[handle];
     if (!p || p.arduinoPin == null) return;
     this.pinManager.triggerPinChange(p.arduinoPin, value !== 0);
+    this._syncSpiceDrive(p);
   }
 
   private _pin_read_analog(handle: number): number {
@@ -386,6 +423,7 @@ export class ChipInstance {
       if (mode === ChipInstance.MODE_OUTPUT_LOW)  this.pinManager.triggerPinChange(p.arduinoPin, false);
       if (mode === ChipInstance.MODE_OUTPUT_HIGH) this.pinManager.triggerPinChange(p.arduinoPin, true);
     }
+    this._syncSpiceDrive(p);
   }
 
   private _pin_watch(handle: number, edge: number, cbIdx: number, userData: number): void {

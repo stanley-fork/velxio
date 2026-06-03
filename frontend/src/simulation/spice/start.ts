@@ -31,6 +31,7 @@ import {
 } from './CircuitSimulationService';
 import { connectAnalogInputsToMcu } from './connectAnalogInputsToMcu';
 import { connectMcuEdgesToService } from './connectMcuEdgesToService';
+import { setElectricalResolveHook } from './electricalResolveHook';
 import { collectPinStates } from './collectPinStates';
 
 /** Adapt useElectricalStore to the ElectricalStorePort. */
@@ -82,6 +83,14 @@ export function startSimulation(): () => void {
   const unsubAdc = connectAnalogInputsToMcu();
   const unsubEdges = connectMcuEdgesToService(service);
 
+  // Let custom chips request a re-solve when they toggle an output pin, so
+  // their SPICE voltage sources (emitted by the custom-chip mapper) are
+  // refreshed and LEDs / analog parts on the chip's nets update. The service
+  // coalesces overlapping ticks, so frequent chip toggles are cheap.
+  setElectricalResolveHook(() => {
+    void service.tick();
+  });
+
   // Phase 1d #16 — debug helper. Call `__spiceDebug()` from DevTools
   // to get a snapshot of the simulation state (analysis mode, voltage
   // count, pin map, last solve time, etc.).  Useful for diagnosing
@@ -124,6 +133,7 @@ export function startSimulation(): () => void {
   };
 
   return () => {
+    setElectricalResolveHook(null);
     unsubService();
     unsubAdc();
     unsubEdges();

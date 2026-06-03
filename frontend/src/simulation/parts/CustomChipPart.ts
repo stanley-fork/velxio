@@ -19,6 +19,8 @@ import {
   detectSimulatorKind,
 } from '../customChips';
 import { useSimulatorStore } from '../../store/useSimulatorStore';
+import { clearChipDrives } from '../customChips/chipPinDrives';
+import { requestElectricalResolve } from '../spice/electricalResolveHook';
 
 PartSimulationRegistry.register('custom-chip', {
   attachEvents: (_element, simulator, getArduinoPin, componentId) => {
@@ -156,6 +158,7 @@ PartSimulationRegistry.register('custom-chip', {
         const wasm = decodeWasmBase64(wasmBase64);
         const inst = await ChipInstance.create({
           wasm,
+          componentId,
           pinManager: sim.pinManager,
           // Polymorphic I2C: AVR returns the I2CBusManager directly, RP2040
           // returns a thin adapter, ESP32 returns null (chip won't get I2C).
@@ -219,6 +222,10 @@ PartSimulationRegistry.register('custom-chip', {
       if (uartListener) bridges.uartListeners.delete(uartListener);
       if (instance) instance.dispose();
       instance = null;
+      // Drop this chip's SPICE voltage sources so a stopped chip stops
+      // driving its nets, and re-solve so the LEDs fall dark.
+      clearChipDrives(componentId);
+      requestElectricalResolve();
     };
   },
 });
