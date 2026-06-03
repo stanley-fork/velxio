@@ -208,7 +208,10 @@ export class ChipInstance {
   }
 
   private async _instantiate(): Promise<void> {
-    this.memory = new WebAssembly.Memory({ initial: 2, maximum: 16 });
+    // 4 pages (256 KB) initial: CPU-emulator chips like z80-cpu keep a 32 KB
+    // ROM + 32 KB RAM buffer as static data, which alone needs >2 pages once
+    // the WASM stack is added. Grows up to 16 pages on demand.
+    this.memory = new WebAssembly.Memory({ initial: 4, maximum: 16 });
     this.wasi.setMemory(this.memory);
 
     const importObject: WebAssembly.Imports = {

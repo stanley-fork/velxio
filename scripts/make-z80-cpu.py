@@ -145,7 +145,13 @@ helpers = '''
 /* ─── External ROM + internal RAM + MMIO state ───────────────────────── */
 #define ROM_MAX         0x8000
 #define RAM_BASE        0x8000
-#define RAM_SIZE        0x4000
+/* RAM spans 0x8000-0xFFFF (32 KB) so SDCC's default crt0 — which sets SP to
+   0x0000 and makes its first push at 0xFFFF — lands in real RAM. Without this
+   a plain C program crashes in crt0 (before main) on this chip. The MMIO
+   window below is carved out of the RAM range and checked first. */
+#define RAM_SIZE        0x8000
+#define MMIO_BASE       0xC000
+#define MMIO_END        0xC0FF
 #define MMIO_LED_OUT    0xC000
 #define MMIO_UART_DATA  0xC001
 #define MMIO_UART_STAT  0xC002
@@ -193,24 +199,31 @@ static void drive_leds(uint8_t v) {
 
 static uint8_t bus_mem_read(uint16_t addr) {
     if (addr < ROMSZ) return ROMBUF[addr];
-    if (addr >= RAM_BASE && addr < RAM_BASE + RAM_SIZE) return RAMBUF[addr - RAM_BASE];
-    switch (addr) {
-        case MMIO_UART_DATA: return rx_has() ? rx_pop() : 0;
-        case MMIO_UART_STAT: { uint8_t s = 0x01; if (rx_has()) s |= 0x02; return s; }
-        case MMIO_BTN_IN:    return read_btn_bitmap();
-        case MMIO_EDGE_FLAGS: { uint8_t v = edge_latch; edge_latch = 0; return v; }
-        default: return 0xFF;
+    /* MMIO window has priority over RAM (it is carved out of the RAM range). */
+    if (addr >= MMIO_BASE && addr <= MMIO_END) {
+        switch (addr) {
+            case MMIO_UART_DATA: return rx_has() ? rx_pop() : 0;
+            case MMIO_UART_STAT: { uint8_t s = 0x01; if (rx_has()) s |= 0x02; return s; }
+            case MMIO_BTN_IN:    return read_btn_bitmap();
+            case MMIO_EDGE_FLAGS: { uint8_t v = edge_latch; edge_latch = 0; return v; }
+            default: return 0xFF;
+        }
     }
+    if (addr >= RAM_BASE) return RAMBUF[addr - RAM_BASE];  /* 0x8000-0xFFFF */
+    return 0xFF;
 }
 
 static void bus_mem_write(uint16_t addr, uint8_t v) {
-    if (addr >= RAM_BASE && addr < RAM_BASE + RAM_SIZE) {
-        RAMBUF[addr - RAM_BASE] = v; return;
+    /* MMIO window has priority over RAM (it is carved out of the RAM range). */
+    if (addr >= MMIO_BASE && addr <= MMIO_END) {
+        switch (addr) {
+            case MMIO_LED_OUT:   drive_leds(v); return;
+            case MMIO_UART_DATA: vx_uart_write(g_uart, &v, 1); return;
+            default: return;
+        }
     }
-    switch (addr) {
-        case MMIO_LED_OUT:   drive_leds(v); return;
-        case MMIO_UART_DATA: vx_uart_write(g_uart, &v, 1); return;
-        default: return;
+    if (addr >= RAM_BASE) {  /* 0x8000-0xFFFF */
+        RAMBUF[addr - RAM_BASE] = v; return;
     }
 }
 
