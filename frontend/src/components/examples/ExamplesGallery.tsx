@@ -25,6 +25,7 @@ interface BoardTab {
 
 const BOARD_TABS: BoardTab[] = [
   { id: 'all', label: 'All', color: '#ffffff', bg: '#444444' },
+  { id: 'retro', label: 'Retro', color: '#1a1a1a', bg: '#e0a82e' },
   { id: 'arduino-uno', label: 'Arduino Uno', color: '#ffffff', bg: '#007acc' },
   { id: 'arduino-nano', label: 'Arduino Nano', color: '#ffffff', bg: '#0055aa' },
   { id: 'arduino-mega', label: 'Arduino Mega', color: '#ffffff', bg: '#003388' },
@@ -40,6 +41,13 @@ const BOARD_TABS: BoardTab[] = [
   { id: 'analog', label: 'Analog', color: '#ffffff', bg: '#0ea5a5' },
   { id: 'digital', label: 'Digital', color: '#ffffff', bg: '#6366f1' },
 ];
+
+/** The "Retro" tab is tag-based (not board-kind based) so it can collect the
+ *  Z80 / Intel / vintage-CPU examples regardless of their board filter. They
+ *  also still appear under their board tab (Digital), so this is additive. */
+function isRetro(example: ExampleProject): boolean {
+  return (example.tags ?? []).includes('retro');
+}
 
 function getBoardFilter(example: ExampleProject): string {
   // An explicit boardFilter is the author's intent and wins — even for
@@ -95,7 +103,9 @@ export const ExamplesGallery: React.FC<ExamplesGalleryProps> = ({ onLoadExample 
       .toLowerCase();
 
   const filteredExamples = exampleProjects.filter((example) => {
-    const boardMatch = selectedBoard === 'all' || getBoardFilter(example) === selectedBoard;
+    const boardMatch =
+      selectedBoard === 'all' ||
+      (selectedBoard === 'retro' ? isRetro(example) : getBoardFilter(example) === selectedBoard);
     const catMatch = selectedCategory === 'all' || example.category === selectedCategory;
     const diffMatch = selectedDifficulty === 'all' || example.difficulty === selectedDifficulty;
     if (!boardMatch || !catMatch || !diffMatch) return false;
@@ -113,7 +123,10 @@ export const ExamplesGallery: React.FC<ExamplesGalleryProps> = ({ onLoadExample 
     });
 
   // Count per board for tab badges
-  const boardCounts: Record<string, number> = { all: exampleProjects.length };
+  const boardCounts: Record<string, number> = {
+    all: exampleProjects.length,
+    retro: exampleProjects.filter(isRetro).length,
+  };
   exampleProjects.forEach((ex) => {
     const b = getBoardFilter(ex);
     boardCounts[b] = (boardCounts[b] ?? 0) + 1;
