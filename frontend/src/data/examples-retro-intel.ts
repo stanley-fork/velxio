@@ -392,13 +392,13 @@ export const retroIntelExamples: ExampleProject[] = [
       },
       {
         id: 'wire-btn-inc-pwr',
-        start: { componentId: 'btn-inc', pinName: '2.r' },
+        start: { componentId: 'btn-inc', pinName: '2.l' },
         end: { componentId: 'psu', pinName: 'SIG' },
         color: '#e74c3c',
       },
       {
         id: 'wire-btn-rst-pwr',
-        start: { componentId: 'btn-rst', pinName: '2.r' },
+        start: { componentId: 'btn-rst', pinName: '2.l' },
         end: { componentId: 'psu', pinName: 'SIG' },
         color: '#e74c3c',
       },
@@ -536,7 +536,7 @@ export const retroIntelExamples: ExampleProject[] = [
       })),
       ...[0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({
         id: `wire-btn-${i}-pwr`,
-        start: { componentId: `btn-${i}`, pinName: '2.r' },
+        start: { componentId: `btn-${i}`, pinName: '2.l' },
         end: { componentId: 'psu', pinName: 'SIG' },
         color: '#e74c3c',
       })),
