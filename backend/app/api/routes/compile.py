@@ -160,6 +160,12 @@ class CompileResponse(BaseModel):
     stderr: str
     error: str | None = None
     core_install_log: str | None = None
+    # P2 — set when a manifest-scoped compile only succeeded after the
+    # scan-all fallback (i.e. the manifest is missing a dependency). The
+    # suggested map is {header: [candidate library names]} so the manifest
+    # can be auto-completed (P2.4) or the user prompted to add the lib.
+    manifest_incomplete: bool = False
+    manifest_suggested_libraries: dict | None = None
 
 
 def _classify_compile_error(stderr: str, error: str | None) -> str:
@@ -225,6 +231,8 @@ async def _run_compile(
             stdout=result.get("stdout", ""),
             stderr=result.get("stderr", ""),
             error=result.get("error"),
+            manifest_incomplete=result.get("manifest_incomplete", False),
+            manifest_suggested_libraries=result.get("manifest_suggested_libraries"),
         )
 
     # AVR, RP2040, and ESP32 fallback: use arduino-cli

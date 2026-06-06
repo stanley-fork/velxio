@@ -737,6 +737,48 @@ class ESPIDFCompiler:
                     return src_root
         return None
 
+    @staticmethod
+    def _missing_library_headers(result: dict) -> list[str]:
+        """Extract the header filenames a failed compile reported as missing
+        (`fatal error: X.h: No such file or directory`). De-duped, basename
+        only. Used to decide whether a manifest-scoped failure is a missing-
+        dependency case worth retrying with scan-all."""
+        text = '\n'.join(
+            str(result.get(k) or '') for k in ('error', 'stderr', 'stdout')
+        )
+        headers: list[str] = []
+        for m in re.finditer(
+            r'fatal error:\s*([A-Za-z0-9_./+-]+\.h(?:pp)?)\s*:\s*No such file',
+            text,
+        ):
+            h = m.group(1).split('/')[-1]
+            if h not in headers:
+                headers.append(h)
+        return headers
+
+    def _suggest_libraries_for_headers(self, headers: list[str]) -> dict:
+        """For each missing header, the installed libraries that provide it
+        (by Library Manager display name, else folder name). Returns
+        {header: [candidate names]} so a manifest can be completed."""
+        arduino_libs = self._find_arduino_libraries_dir()
+        out: dict[str, list[str]] = {}
+        if not arduino_libs or not arduino_libs.is_dir():
+            return out
+        for h in headers:
+            cands: list[str] = []
+            for lib_dir in sorted(arduino_libs.iterdir()):
+                if not lib_dir.is_dir():
+                    continue
+                for src_root in (lib_dir, lib_dir / 'src'):
+                    if (src_root / h).exists():
+                        name = self._parse_library_properties(lib_dir).get('name') or lib_dir.name
+                        if name not in cands:
+                            cands.append(name)
+                        break
+            if cands:
+                out[h] = cands
+        return out
+
     def _resolve_library_components(
         self,
         ext_headers: list[str],
@@ -1700,24 +1742,50 @@ class ESPIDFCompiler:
             json.dumps(normalized_opts, sort_keys=True).encode()
         ).hexdigest()[:12]
 
-        if _USE_PERSISTENT_DIR:
-            project_dir = _prepare_persistent_project_dir(idf_target, options_hash)
-            logger.info(f'[espidf] Using persistent build dir: {project_dir}')
-            return await self._compile_in_dir(
-                project_dir, files, idf_target, is_c3,
-                progress_callback, normalized_opts, spiffs_files,
-                allowed_libraries=allowed_libraries,
-            )
+        async def _attempt(allowed: set[str] | None) -> dict:
+            if _USE_PERSISTENT_DIR:
+                project_dir = _prepare_persistent_project_dir(idf_target, options_hash)
+                logger.info(f'[espidf] Using persistent build dir: {project_dir}')
+                return await self._compile_in_dir(
+                    project_dir, files, idf_target, is_c3,
+                    progress_callback, normalized_opts, spiffs_files,
+                    allowed_libraries=allowed,
+                )
+            with tempfile.TemporaryDirectory(prefix='espidf_') as temp_dir:
+                project_dir = Path(temp_dir) / 'project'
+                shutil.copytree(_TEMPLATE_DIR, project_dir)
+                logger.info(f'[espidf] Using ephemeral build dir: {project_dir}')
+                return await self._compile_in_dir(
+                    project_dir, files, idf_target, is_c3,
+                    progress_callback, normalized_opts, spiffs_files,
+                    allowed_libraries=allowed,
+                )
 
-        with tempfile.TemporaryDirectory(prefix='espidf_') as temp_dir:
-            project_dir = Path(temp_dir) / 'project'
-            shutil.copytree(_TEMPLATE_DIR, project_dir)
-            logger.info(f'[espidf] Using ephemeral build dir: {project_dir}')
-            return await self._compile_in_dir(
-                project_dir, files, idf_target, is_c3,
-                progress_callback, normalized_opts, spiffs_files,
-                allowed_libraries=allowed_libraries,
-            )
+        result = await _attempt(allowed_libraries)
+
+        # Graceful fallback (P2). A manifest-scoped compile that fails because a
+        # header isn't in the manifest (an undeclared / transitive dependency)
+        # retries once with scan-all, so a project with an incomplete manifest
+        # still compiles instead of regressing — and we report the gap so the
+        # manifest can be auto-completed (P2.4) or the user prompted to add the
+        # missing library. The caller holds the per-target lock for this whole
+        # method, so the retry safely reuses the same build dir.
+        if allowed_libraries is not None and not result.get('success'):
+            missing = self._missing_library_headers(result)
+            if missing:
+                logger.warning(
+                    f'[espidf] scoped compile missing {missing} (not in manifest) — '
+                    f'retrying scan-all'
+                )
+                retry = await _attempt(None)
+                if retry.get('success'):
+                    retry['manifest_incomplete'] = True
+                    retry['manifest_suggested_libraries'] = (
+                        self._suggest_libraries_for_headers(missing)
+                    )
+                    return retry
+                # Both failed: the scoped error is the more informative one.
+        return result
 
     async def _compile_in_dir(
         self,
