@@ -202,6 +202,41 @@ async def get_project_owner(project_id: Optional[str]) -> Optional[str]:
         return None
 
 
+# ── warm_library ──────────────────────────────────────────────────────────────
+# "Install" an index library by WARMING the shared content-addressed cache
+# (install into a throwaway sketchbook -> publish to the cache) instead of
+# mutating the single shared global libraries volume — so the global dir stops
+# growing and can be retired. `requester_id` enforces the anon policy (an
+# anonymous user may only use libraries already referenced by an example/project,
+# i.e. already cached; warming a fresh uncached lib requires sign-in). Returns a
+# result dict ({success, error?, ...}) or None when no overlay is loaded -> the
+# OSS route falls back to its legacy arduino-cli global install (self-host parity).
+
+WarmLibraryHook = Callable[..., Awaitable[Optional[dict]]]
+
+_warm_library_hook: Optional[WarmLibraryHook] = None
+
+
+def register_warm_library(hook: WarmLibraryHook) -> None:
+    """Install the cache-warm library installer. Called by overlays in register_pro."""
+    global _warm_library_hook
+    _warm_library_hook = hook
+
+
+async def warm_library(
+    name: str, version: Optional[str] = None, requester_id: Optional[str] = None
+) -> Optional[dict]:
+    """Warm an index library into the shared cache. None -> no overlay (the OSS
+    route does its legacy global install). Never raises."""
+    if _warm_library_hook is None:
+        return None
+    try:
+        return await _warm_library_hook(name=name, version=version, requester_id=requester_id)
+    except Exception:
+        logger.exception("warm_library hook failed")
+        return {"success": False, "error": "Library install failed."}
+
+
 # ── lifespan startup ──────────────────────────────────────────────────────────
 # Overlays that need to run async setup during FastAPI lifespan (DB init,
 # table creation, legacy column migrations, etc.) register a coroutine here.
