@@ -562,8 +562,19 @@ class ESPIDFCompiler:
         return '\n'.join(lines) + '\n'
 
     def _find_arduino_libraries_dir(self) -> Path | None:
-        """Find the Arduino global user-libraries directory (installed via arduino-cli)."""
-        candidates = [
+        """Find the Arduino global user-libraries directory (installed via arduino-cli).
+
+        P2.1h: when the pro overlay sets VELXIO_FALLBACK_LIBRARIES_DIR (the
+        content-addressed cache root, itself a valid libraries dir whose children
+        are library folders), prefer it — so the no-manifest scan + the scan-all
+        retry resolve from the cache instead of the shared global volume, letting
+        the global volume be retired. Unset (OSS self-host) -> legacy global.
+        """
+        candidates: list[Path] = []
+        _fb = os.environ.get('VELXIO_FALLBACK_LIBRARIES_DIR')
+        if _fb:
+            candidates.append(Path(_fb))
+        candidates += [
             Path.home() / 'Arduino' / 'libraries',
             Path.home() / 'Documents' / 'Arduino' / 'libraries',
             Path('/root/Arduino/libraries'),              # Docker / CI as root

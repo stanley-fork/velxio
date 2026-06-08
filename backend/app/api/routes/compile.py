@@ -216,6 +216,13 @@ def _resolve_files(request: CompileRequest) -> list[dict[str, str]]:
     )
 
 
+def _bare_lib_names(names) -> set[str] | None:
+    """Strip a trailing @version (or @wokwi:hash) from each manifest name and
+    drop empties. None if nothing remains. See _resolve_compile_scope (P2.1h)."""
+    out = {n.split("@", 1)[0].strip() for n in names if n and n.split("@", 1)[0].strip()}
+    return out or None
+
+
 async def _resolve_compile_scope(
     request: CompileRequest, requester_id: str | None
 ) -> tuple[set[str] | None, str | None]:
@@ -248,13 +255,19 @@ async def _resolve_compile_scope(
     # owner-bytes gate; P2.2-sec).
     gated_owner = await resolve_compile_owner(request.project_id, requester_id)
 
+    # P2.1h: strip a trailing @version from each manifest name. norm_name fuses
+    # the version digits into the name otherwise ("ArduinoJson@6.21.5" ->
+    # "arduinojson6215"), which misses the cache entry ("arduinojson") and forces
+    # a global-dir scan-all. The per-board manifest (boards_json[].libraries,
+    # which the client sends in request.libraries) is the path that still carries
+    # @version. We don't version-pin today, so the bare name is what resolves.
     allowed_libraries: set[str] | None = None
     if request.libraries:
-        allowed_libraries = set(request.libraries)
+        allowed_libraries = _bare_lib_names(request.libraries)
     elif gated_owner is not None:
         project_libs = await get_project_libraries(request.project_id)
         if project_libs:
-            allowed_libraries = set(project_libs)
+            allowed_libraries = _bare_lib_names(project_libs)
 
     owner_id = gated_owner if gated_owner is not None else requester_id
     return allowed_libraries, owner_id

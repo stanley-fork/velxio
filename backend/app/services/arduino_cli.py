@@ -359,6 +359,17 @@ class ArduinoCLIService:
                 compile_env = dict(os.environ)
                 if scope_dir is not None:
                     compile_env["ARDUINO_DIRECTORIES_USER"] = str(scope_dir.parent)
+                else:
+                    # P2.1h: NO manifest -> point the default sketchbook at the
+                    # content-addressed cache (VELXIO_FALLBACK_SKETCHBOOK, whose
+                    # libraries/ is the cache root) instead of the shared global
+                    # volume, so a from-scratch / no-manifest compile (and the
+                    # scan-all retry, which re-enters here unscoped) resolves user
+                    # libraries from the cache. Unset (OSS self-host) -> arduino-
+                    # cli's default sketchbook (legacy global volume).
+                    _fb = os.environ.get("VELXIO_FALLBACK_SKETCHBOOK")
+                    if _fb:
+                        compile_env["ARDUINO_DIRECTORIES_USER"] = _fb
 
                 # Run compilation using subprocess.run in a thread (Windows compatible)
                 # ESP32 lcgamboa emulator requires DIO flash mode and
