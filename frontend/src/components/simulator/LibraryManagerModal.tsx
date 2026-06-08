@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   searchLibraries,
@@ -19,24 +19,56 @@ interface LibraryManagerModalProps {
   onClose: () => void;
 }
 
-type Tab = 'project' | 'search' | 'installed';
+/** Case/separator-insensitive name match, matching the backend's _norm_lib_name
+ *  so the UI's "in project" state agrees with what the compiler scopes. */
+const normLib = (s: string): string => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
-/** Case/separator-insensitive name match, matching the backend's
- *  _norm_lib_name (lowercased, alphanumerics only) so the UI's "in project"
- *  state agrees with what the compiler scopes. */
-const normLib = (s: string): string =>
-  (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+/** One row of the single unified list. A search result and an installed/custom
+ *  library both normalise to this so they render identically. */
+interface LibRow {
+  name: string;
+  version: string;
+  author: string;
+  desc: string;
+  installed: boolean;
+  custom: boolean;
+  releases?: Record<string, unknown>;
+}
 
+/**
+ * Library Manager — ONE list, no tabs. Each row is state-aware:
+ *   + Add to project   (installs if needed, then declares it on this board)
+ *   In project ✓       (click to remove from this board's libraries.json)
+ *   Uninstall / Remove (free the cache / remove your custom upload)
+ *
+ * The per-board manifest (board.libraries) IS the compile scope and is what the
+ * read-only `libraries.json` file in the explorer shows. This modal is the only
+ * place that edits it.
+ */
 export const LibraryManagerModal: React.FC<LibraryManagerModalProps> = ({ isOpen, onClose }) => {
   const { t } = useTranslation();
-  const [activeTab, setActiveTab] = useState<Tab>('search');
-  // P2.4 — manifests are PER-BOARD: the velxio.json edited here belongs to the
-  // ACTIVE board, so two boards in one project can scope to different libraries.
+
+  // Per-board manifest: the libraries.json edited here belongs to the ACTIVE
+  // board, so two boards in one project can scope to different libraries.
   const boards = useSimulatorStore((s) => s.boards);
   const activeBoardId = useSimulatorStore((s) => s.activeBoardId);
   const updateBoard = useSimulatorStore((s) => s.updateBoard);
   const activeBoard = boards.find((b) => b.id === activeBoardId) ?? boards[0];
   const manifestLibs = activeBoard?.libraries ?? null;
+  const declared = manifestLibs ?? [];
+
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<ArduinoLibrary[]>([]);
+  const [installedLibraries, setInstalledLibraries] = useState<InstalledLibrary[]>([]);
+  const [loadingSearch, setLoadingSearch] = useState(false);
+  const [loadingInstalled, setLoadingInstalled] = useState(false);
+  const [busyLib, setBusyLib] = useState<string | null>(null); // install/uninstall in flight
+  const [selectedVersions, setSelectedVersions] = useState<Record<string, string>>({});
+  const [statusMsg, setStatusMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(
+    null,
+  );
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const setLibraries = useCallback(
     (libs: string[] | null) => {
       if (!activeBoard) return;
@@ -44,165 +76,11 @@ export const LibraryManagerModal: React.FC<LibraryManagerModalProps> = ({ isOpen
     },
     [activeBoard, updateBoard],
   );
-  // Raw velxio.json editor draft + parse error (the Wokwi-style view).
-  const [jsonDraft, setJsonDraft] = useState('');
-  const [jsonError, setJsonError] = useState<string | null>(null);
-  const [newLibName, setNewLibName] = useState('');
-  // Autocomplete suggestions for the "add library" field (index search).
-  const [addSuggestions, setAddSuggestions] = useState<string[]>([]);
-  const addDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<ArduinoLibrary[]>([]);
-  const [installedLibraries, setInstalledLibraries] = useState<InstalledLibrary[]>([]);
-  const [loadingSearch, setLoadingSearch] = useState(false);
-  const [loadingInstalled, setLoadingInstalled] = useState(false);
-  const [installingLib, setInstallingLib] = useState<string | null>(null);
-  const [uninstallingLib, setUninstallingLib] = useState<string | null>(null);
-  /** Track user-selected version per library name */
-  const [selectedVersions, setSelectedVersions] = useState<Record<string, string>>({});
-  const [statusMsg, setStatusMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(
-    null,
-  );
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const fetchInstalled = useCallback(async () => {
-    setLoadingInstalled(true);
-    try {
-      // P2.2c — the shared global list (index libs) PLUS the user's per-user
-      // custom uploads (which live in their per-user store, not the global
-      // list). Custom first so they're easy to find; de-duped by name.
-      const [libs, custom] = await Promise.all([getInstalledLibraries(), getCustomLibraries()]);
-      const customNames = new Set(custom.map((c) => (c.name || '').toLowerCase()));
-      const merged = [
-        ...custom,
-        ...libs.filter((l) => !customNames.has((l.library?.name || l.name || '').toLowerCase())),
-      ];
-      setInstalledLibraries(merged);
-    } catch (e: unknown) {
-      setStatusMsg({
-        type: 'error',
-        text: e instanceof Error ? e.message : 'Failed to load installed libraries',
-      });
-    } finally {
-      setLoadingInstalled(false);
-    }
-  }, []);
-
-  // Reset state when modal closes
-  useEffect(() => {
-    if (!isOpen) {
-      setSearchQuery('');
-      setSearchResults([]);
-      setStatusMsg(null);
-    }
-  }, [isOpen]);
-
-  // Fetch installed list when modal opens or switching to installed tab
-  useEffect(() => {
-    if (isOpen && activeTab === 'installed') fetchInstalled();
-  }, [isOpen, activeTab, fetchInstalled]);
-
-  useEffect(() => {
-    if (isOpen) fetchInstalled();
-  }, [isOpen, fetchInstalled]);
-
-  // Search: immediate on open (empty query), debounced when typing
-  useEffect(() => {
-    if (!isOpen) return;
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    const delay = searchQuery ? 400 : 0;
-    debounceRef.current = setTimeout(async () => {
-      setLoadingSearch(true);
-      setStatusMsg(null);
-      try {
-        const results = await searchLibraries(searchQuery);
-        setSearchResults(results);
-      } catch (e: unknown) {
-        setStatusMsg({ type: 'error', text: e instanceof Error ? e.message : 'Search failed' });
-        setSearchResults([]);
-      } finally {
-        setLoadingSearch(false);
-      }
-    }, delay);
-
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, [searchQuery, isOpen]);
-
-  const handleInstall = async (libName: string) => {
-    setInstallingLib(libName);
-    setStatusMsg(null);
-    try {
-      const version = selectedVersions[libName];
-      const result = await installLibrary(libName, version);
-      if (result.success) {
-        trackInstallLibrary(libName);
-        // P2.4 — installing a library declares it for THIS project (adds it to
-        // velxio.json), so the compile is scoped to it and it never clashes
-        // with another project's libs. The user can remove it in the Project tab.
-        addToManifest(libName);
-        if (result.fallback) {
-          setStatusMsg({ type: 'success', text: `"${libName}" installed and added to this project (latest — requested @${result.requested_version} was not available)` });
-        } else {
-          setStatusMsg({ type: 'success', text: `"${libName}${version ? ' @' + version : ''}" installed and added to this project!` });
-        }
-        fetchInstalled();
-      } else {
-        setStatusMsg({ type: 'error', text: result.error || `Failed to install "${libName}"` });
-      }
-    } catch (e: unknown) {
-      setStatusMsg({ type: 'error', text: e instanceof Error ? e.message : 'Installation failed' });
-    } finally {
-      setInstallingLib(null);
-    }
-  };
-
-  const handleUninstall = async (libName: string) => {
-    setUninstallingLib(libName);
-    setStatusMsg(null);
-    try {
-      const result = await uninstallLibrary(libName);
-      if (result.success) {
-        setStatusMsg({ type: 'success', text: `"${libName}" uninstalled successfully!` });
-        fetchInstalled();
-      } else {
-        setStatusMsg({ type: 'error', text: result.error || `Failed to uninstall "${libName}"` });
-      }
-    } catch (e: unknown) {
-      setStatusMsg({ type: 'error', text: e instanceof Error ? e.message : 'Uninstall failed' });
-    } finally {
-      setUninstallingLib(null);
-    }
-  };
-
-  // P2.2c — a CUSTOM lib lives in the user's per-user store, not the shared
-  // arduino-cli dir, so removing it hits the per-user delete endpoint.
-  const handleRemoveCustom = async (libName: string) => {
-    setUninstallingLib(libName);
-    setStatusMsg(null);
-    try {
-      const result = await deleteCustomLibrary(libName);
-      if (result.success) {
-        setStatusMsg({ type: 'success', text: `Removed your custom "${libName}".` });
-        removeFromManifest(libName);
-        fetchInstalled();
-      } else {
-        setStatusMsg({ type: 'error', text: result.error || `Failed to remove "${libName}"` });
-      }
-    } finally {
-      setUninstallingLib(null);
-    }
-  };
-
-  // ── Project manifest (velxio.json) editing ──────────────────────────────
-  const declared = manifestLibs ?? [];
 
   const inManifest = useCallback(
     (name: string): boolean => declared.some((l) => normLib(l) === normLib(name)),
     [declared],
   );
-
   const addToManifest = useCallback(
     (name: string) => {
       const clean = name.trim();
@@ -213,7 +91,6 @@ export const LibraryManagerModal: React.FC<LibraryManagerModalProps> = ({ isOpen
     },
     [manifestLibs, setLibraries],
   );
-
   const removeFromManifest = useCallback(
     (name: string) => {
       const cur = manifestLibs ?? [];
@@ -223,119 +100,197 @@ export const LibraryManagerModal: React.FC<LibraryManagerModalProps> = ({ isOpen
     [manifestLibs, setLibraries],
   );
 
-  // Autocomplete: debounced index search for the "add library" field. Combined
-  // with instant matches from the installed list in `addOptions` below.
-  useEffect(() => {
-    if (addDebounceRef.current) clearTimeout(addDebounceRef.current);
-    const q = newLibName.trim();
-    if (q.length < 2) {
-      setAddSuggestions([]);
-      return;
-    }
-    addDebounceRef.current = setTimeout(async () => {
-      try {
-        const results = await searchLibraries(q);
-        setAddSuggestions(results.map((r) => r.name).filter(Boolean));
-      } catch {
-        setAddSuggestions([]);
-      }
-    }, 300);
-    return () => {
-      if (addDebounceRef.current) clearTimeout(addDebounceRef.current);
-    };
-  }, [newLibName]);
+  const isInstalled = useCallback(
+    (name: string): boolean =>
+      installedLibraries.some((il) => normLib(il.library?.name || il.name || '') === normLib(name)),
+    [installedLibraries],
+  );
 
-  // Merged, de-duped suggestions: installed libs first (instant), then index
-  // results, excluding what's already declared. Capped for a tidy dropdown.
-  const addOptions = (() => {
-    const q = normLib(newLibName);
-    if (!q) return [];
-    const installedNames = installedLibraries
-      .map((il) => il.library?.name || il.name || '')
-      .filter(Boolean);
-    const merged: string[] = [];
-    for (const n of [...installedNames, ...addSuggestions]) {
-      if (!normLib(n).includes(q)) continue;
-      if (declared.some((d) => normLib(d) === normLib(n))) continue;
-      if (merged.some((m) => normLib(m) === normLib(n))) continue;
-      merged.push(n);
-    }
-    return merged.slice(0, 8);
-  })();
-
-  const applyJsonDraft = useCallback(() => {
+  const fetchInstalled = useCallback(async () => {
+    setLoadingInstalled(true);
     try {
-      const parsed = JSON.parse(jsonDraft || '{}');
-      const libs = Array.isArray(parsed) ? parsed : parsed.libraries;
-      if (!Array.isArray(libs) || !libs.every((x) => typeof x === 'string')) {
-        setJsonError('Expected {"libraries": ["Name", ...]}');
-        return;
-      }
-      setJsonError(null);
-      setLibraries(libs.length ? (libs as string[]) : null);
-    } catch (e) {
-      setJsonError(e instanceof Error ? e.message : 'Invalid JSON');
+      // The shared index libs PLUS the user's per-user custom uploads (which
+      // live in their per-user store). Custom first; de-duped by name.
+      const [libs, custom] = await Promise.all([getInstalledLibraries(), getCustomLibraries()]);
+      const customNames = new Set(custom.map((c) => (c.name || '').toLowerCase()));
+      setInstalledLibraries([
+        ...custom,
+        ...libs.filter((l) => !customNames.has((l.library?.name || l.name || '').toLowerCase())),
+      ]);
+    } catch (e: unknown) {
+      setStatusMsg({
+        type: 'error',
+        text: e instanceof Error ? e.message : 'Failed to load installed libraries',
+      });
+    } finally {
+      setLoadingInstalled(false);
     }
-  }, [jsonDraft, setLibraries]);
-
-  // Open the Project (velxio.json) tab when launched from the explorer entry.
-  useEffect(() => {
-    const toProject = () => setActiveTab('project');
-    window.addEventListener('velxio-open-library-manager', toProject);
-    return () => window.removeEventListener('velxio-open-library-manager', toProject);
   }, []);
 
-  // P2.2 — a custom .zip upload lands in the user's PER-USER store (not the
-  // shared dir), so auto-declare it on the active board (velxio.json) and show
-  // the Project tab; the compile then resolves it via the owner per-user path.
+  // Reset transient state when the modal closes.
+  useEffect(() => {
+    if (!isOpen) {
+      setSearchQuery('');
+      setSearchResults([]);
+      setStatusMsg(null);
+    }
+  }, [isOpen]);
+
+  // Load the installed/custom list whenever the modal opens.
+  useEffect(() => {
+    if (isOpen) fetchInstalled();
+  }, [isOpen, fetchInstalled]);
+
+  // Search the index (debounced). With an empty query we BROWSE the installed
+  // list instead, so don't fire a search.
+  useEffect(() => {
+    if (!isOpen) return;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (!searchQuery.trim()) {
+      setSearchResults([]);
+      setLoadingSearch(false);
+      return;
+    }
+    debounceRef.current = setTimeout(async () => {
+      setLoadingSearch(true);
+      setStatusMsg(null);
+      try {
+        setSearchResults(await searchLibraries(searchQuery));
+      } catch (e: unknown) {
+        setStatusMsg({ type: 'error', text: e instanceof Error ? e.message : 'Search failed' });
+        setSearchResults([]);
+      } finally {
+        setLoadingSearch(false);
+      }
+    }, 400);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [searchQuery, isOpen]);
+
+  // A custom .zip upload (pro) lands in the user's per-user store; auto-declare
+  // it on the active board and refresh the list. The upload BUTTON is injected
+  // into .lib-modal-header by the pro overlay (libraryUploadInjector).
   useEffect(() => {
     const onUploaded = (e: Event) => {
       const name = (e as CustomEvent).detail?.library;
-      if (name) {
-        addToManifest(name);
-        setActiveTab('project');
-      }
+      if (name) addToManifest(name);
       fetchInstalled();
     };
     window.addEventListener('velxio-custom-library-installed', onUploaded);
     return () => window.removeEventListener('velxio-custom-library-installed', onUploaded);
   }, [addToManifest, fetchInstalled]);
 
-  // Keep the raw velxio.json draft in sync with the manifest while not editing.
-  useEffect(() => {
-    setJsonDraft(JSON.stringify({ libraries: manifestLibs ?? [] }, null, 2));
-    setJsonError(null);
-  }, [manifestLibs, isOpen]);
+  // ── actions ────────────────────────────────────────────────────────────────
+  const install = useCallback(
+    async (name: string): Promise<boolean> => {
+      setBusyLib(name);
+      setStatusMsg(null);
+      try {
+        const result = await installLibrary(name, selectedVersions[name]);
+        if (result.success) {
+          trackInstallLibrary(name);
+          fetchInstalled();
+          return true;
+        }
+        setStatusMsg({ type: 'error', text: result.error || `Failed to install "${name}"` });
+        return false;
+      } catch (e: unknown) {
+        setStatusMsg({ type: 'error', text: e instanceof Error ? e.message : 'Installation failed' });
+        return false;
+      } finally {
+        setBusyLib(null);
+      }
+    },
+    [selectedVersions, fetchInstalled],
+  );
 
-  const handleClose = () => {
-    onClose();
-  };
+  // Primary action: install if needed, then declare on THIS board.
+  const addToProject = useCallback(
+    async (row: LibRow) => {
+      if (!row.installed) {
+        const ok = await install(row.name);
+        if (!ok) return;
+      }
+      addToManifest(row.name);
+      setStatusMsg({ type: 'success', text: `"${row.name}" added to ${activeBoard ? boardDisplayName(activeBoard) : 'this board'}.` });
+    },
+    [install, addToManifest, activeBoard],
+  );
+
+  const uninstall = useCallback(
+    async (name: string) => {
+      setBusyLib(name);
+      setStatusMsg(null);
+      try {
+        const result = await uninstallLibrary(name);
+        if (result.success) {
+          setStatusMsg({ type: 'success', text: `"${name}" uninstalled.` });
+          fetchInstalled();
+        } else {
+          setStatusMsg({ type: 'error', text: result.error || `Failed to uninstall "${name}"` });
+        }
+      } catch (e: unknown) {
+        setStatusMsg({ type: 'error', text: e instanceof Error ? e.message : 'Uninstall failed' });
+      } finally {
+        setBusyLib(null);
+      }
+    },
+    [fetchInstalled],
+  );
+
+  // A CUSTOM lib lives in the user's per-user store, so removing it hits the
+  // per-user delete endpoint and also drops it from the manifest.
+  const removeCustom = useCallback(
+    async (name: string) => {
+      setBusyLib(name);
+      setStatusMsg(null);
+      try {
+        const result = await deleteCustomLibrary(name);
+        if (result.success) {
+          setStatusMsg({ type: 'success', text: `Removed your custom "${name}".` });
+          removeFromManifest(name);
+          fetchInstalled();
+        } else {
+          setStatusMsg({ type: 'error', text: result.error || `Failed to remove "${name}"` });
+        }
+      } finally {
+        setBusyLib(null);
+      }
+    },
+    [removeFromManifest, fetchInstalled],
+  );
+
+  // ── unified rows: search results when typing, else the installed/custom list ─
+  const rows: LibRow[] = useMemo(() => {
+    if (searchQuery.trim()) {
+      return searchResults.map((lib) => ({
+        name: lib.name || 'Unknown',
+        version: lib.latest?.version || lib.version || '',
+        author: lib.latest?.author || lib.author || '',
+        desc: lib.latest?.sentence || lib.sentence || '',
+        installed: isInstalled(lib.name || ''),
+        custom: false,
+        releases: lib.releases,
+      }));
+    }
+    return installedLibraries.map((lib) => ({
+      name: lib.library?.name || lib.name || 'Unknown',
+      version: lib.library?.version || lib.version || '',
+      author: lib.library?.author || lib.author || '',
+      desc: lib.library?.sentence || lib.sentence || '',
+      installed: true,
+      custom: !!lib.custom,
+    }));
+  }, [searchQuery, searchResults, installedLibraries, isInstalled]);
 
   if (!isOpen) return null;
-
-  const isInstalled = (libName: string): boolean =>
-    installedLibraries.some(
-      (il) => (il.library?.name || il.name || '').toLowerCase() === libName.toLowerCase(),
-    );
-
-  const getLibName = (lib: ArduinoLibrary): string => lib.name || 'Unknown';
-  const getLibVersion = (lib: ArduinoLibrary): string => lib.latest?.version || lib.version || '';
-  const getLibAuthor = (lib: ArduinoLibrary): string => lib.latest?.author || lib.author || '';
-  const getLibDesc = (lib: ArduinoLibrary): string => lib.latest?.sentence || lib.sentence || '';
-
-  const getInstalledName = (lib: InstalledLibrary): string =>
-    lib.library?.name || lib.name || 'Unknown';
-  const getInstalledVersion = (lib: InstalledLibrary): string =>
-    lib.library?.version || lib.version || '';
-  const getInstalledAuthor = (lib: InstalledLibrary): string =>
-    lib.library?.author || lib.author || '';
-  const getInstalledDesc = (lib: InstalledLibrary): string =>
-    lib.library?.sentence || lib.sentence || '';
+  const browsing = !searchQuery.trim();
 
   return (
-    <div className="lib-modal-overlay" onClick={handleClose}>
+    <div className="lib-modal-overlay" onClick={onClose}>
       <div className="lib-modal" onClick={(e) => e.stopPropagation()}>
-        {/* Header */}
+        {/* Header — the pro custom-upload button injects into .lib-modal-header */}
         <div className="lib-modal-header">
           <div className="lib-modal-title">
             <svg
@@ -352,451 +307,161 @@ export const LibraryManagerModal: React.FC<LibraryManagerModalProps> = ({ isOpen
               <path d="M12 22V12" />
             </svg>
             <span>{t('editor.libraryManager.title')}</span>
+            {activeBoard && (
+              <span
+                title="Libraries apply to this board (its libraries.json = compile scope)"
+                style={{
+                  marginLeft: 8,
+                  fontSize: 11,
+                  color: '#a5d6a7',
+                  background: '#1b3a1e',
+                  border: '1px solid #2e7d32',
+                  borderRadius: 10,
+                  padding: '1px 8px',
+                }}
+              >
+                {boardDisplayName(activeBoard)} · {declared.length}
+              </span>
+            )}
           </div>
-          <button className="lib-close-btn" onClick={handleClose}>
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-            >
+          <button className="lib-close-btn" onClick={onClose}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
               <line x1="18" y1="6" x2="6" y2="18" />
               <line x1="6" y1="6" x2="18" y2="18" />
             </svg>
           </button>
         </div>
 
-        {/* Tabs */}
-        <div className="lib-tabs">
-          <button
-            className={`lib-tab ${activeTab === 'project' ? 'active' : ''}`}
-            onClick={() => setActiveTab('project')}
+        {/* Search */}
+        <div className="lib-search-bar">
+          <svg
+            className="lib-search-icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
           >
-            In project ({declared.length})
-          </button>
-          <button
-            className={`lib-tab ${activeTab === 'search' ? 'active' : ''}`}
-            onClick={() => setActiveTab('search')}
-          >
-            {t('editor.libraryManager.searchTab')}
-          </button>
-          <button
-            className={`lib-tab ${activeTab === 'installed' ? 'active' : ''}`}
-            onClick={() => setActiveTab('installed')}
-          >
-            {t('editor.libraryManager.installedTab')}
-          </button>
+            <circle cx="11" cy="11" r="8" />
+            <path d="m21 21-4.3-4.3" />
+          </svg>
+          <input
+            type="text"
+            placeholder={t('editor.libraryManager.filterPlaceholder')}
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            autoFocus
+          />
+          {loadingSearch && (
+            <svg className="lib-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+            </svg>
+          )}
         </div>
 
-        {/* Status bar */}
-        {statusMsg && (
-          <div className={`lib-status ${statusMsg.type}`}>
-            {statusMsg.type === 'success' ? (
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                style={{ flexShrink: 0 }}
-              >
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
-            ) : (
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                style={{ flexShrink: 0 }}
-              >
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            )}
-            {statusMsg.text}
-          </div>
-        )}
+        {/* Status */}
+        {statusMsg && <div className={`lib-status ${statusMsg.type}`}>{statusMsg.text}</div>}
 
-        {/* Project Tab — velxio.json: the libraries THIS project declares.
-            These (plus the arduino-esp32 core) are the ESP32 compile scope, so
-            the project never picks up another project's or user's libraries. */}
-        {activeTab === 'project' && (
-          <div className="lib-content">
-            <div style={{ padding: '10px 14px', color: '#9d9d9d', fontSize: 12, lineHeight: 1.5 }}>
-              Libraries used by{' '}
-              <strong style={{ color: '#a5d6a7' }}>
-                {activeBoard ? boardDisplayName(activeBoard) : 'this board'}
-              </strong>{' '}
-              (its <strong style={{ color: '#ffd60a' }}>velxio.json</strong>). Each
-              board has its own list, so two boards can use different libraries
-              without clashing. Installing a library adds it here automatically;
-              start typing below to add more.
-            </div>
-
-            {/* Declared libraries as removable rows */}
-            <div className="lib-list" style={{ maxHeight: 220 }}>
-              {declared.length === 0 && (
-                <div className="lib-empty">
-                  <p>No libraries declared.</p>
-                  <p className="lib-empty-sub">
-                    Core libraries (WiFi, Wire, SPI, WebServer…) are always
-                    available. Add external libraries from the Search tab or below.
-                  </p>
-                </div>
-              )}
-              {declared.map((name, i) => (
-                <div key={i} className="lib-item">
-                  <div className="lib-item-info">
-                    <div className="lib-item-header">
-                      <span className="lib-item-name">{name}</span>
-                    </div>
-                  </div>
-                  <div className="lib-item-actions">
-                    <button
-                      className="lib-uninstall-btn"
-                      onClick={() => removeFromManifest(name)}
-                      title="Remove from this project (velxio.json)"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Add a library — autocomplete (installed + index search) so the
-                user picks from a list instead of typing the exact name. */}
-            <div style={{ position: 'relative', marginTop: 8 }}>
-              <div className="lib-search-bar" style={{ margin: 0 }}>
-                <input
-                  type="text"
-                  placeholder="Add a library — start typing to search…"
-                  value={newLibName}
-                  onChange={(e) => setNewLibName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      const pick = addOptions[0] ?? newLibName;
-                      if (pick.trim()) {
-                        addToManifest(pick);
-                        setNewLibName('');
-                        setAddSuggestions([]);
-                      }
-                    } else if (e.key === 'Escape') {
-                      setNewLibName('');
-                      setAddSuggestions([]);
-                    }
-                  }}
-                />
+        {/* Single unified list */}
+        <div className="lib-content">
+          <div className="lib-list">
+            {browsing && loadingInstalled && (
+              <div className="lib-empty">
+                <p>{t('editor.libraryManager.loadingInstalled')}</p>
               </div>
-              {addOptions.length > 0 && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    left: 0,
-                    right: 0,
-                    zIndex: 5,
-                    background: '#252526',
-                    border: '1px solid #3c3c3c',
-                    borderRadius: 4,
-                    marginTop: 2,
-                    maxHeight: 200,
-                    overflowY: 'auto',
-                    boxShadow: '0 6px 16px rgba(0,0,0,0.4)',
-                  }}
-                >
-                  {addOptions.map((opt) => (
-                    <button
-                      key={opt}
-                      onClick={() => {
-                        addToManifest(opt);
-                        setNewLibName('');
-                        setAddSuggestions([]);
-                      }}
-                      style={{
-                        display: 'block',
-                        width: '100%',
-                        textAlign: 'left',
-                        padding: '7px 12px',
-                        background: 'transparent',
-                        border: 'none',
-                        color: '#d4d4d4',
-                        fontSize: 13,
-                        cursor: 'pointer',
-                      }}
-                      onMouseEnter={(e) => (e.currentTarget.style.background = '#094771')}
-                      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                    >
-                      {opt}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Raw velxio.json editor (Wokwi-style) for power users */}
-            <details style={{ padding: '6px 14px 14px', color: '#9d9d9d', fontSize: 12 }}>
-              <summary style={{ cursor: 'pointer', userSelect: 'none' }}>
-                Edit velxio.json directly
-              </summary>
-              <textarea
-                value={jsonDraft}
-                onChange={(e) => setJsonDraft(e.target.value)}
-                spellCheck={false}
-                style={{
-                  width: '100%',
-                  minHeight: 110,
-                  marginTop: 8,
-                  background: '#1e1e1e',
-                  color: '#d4d4d4',
-                  border: '1px solid #2d2d2d',
-                  borderRadius: 4,
-                  fontFamily: 'monospace',
-                  fontSize: 12,
-                  padding: 8,
-                  boxSizing: 'border-box',
-                }}
-              />
-              {jsonError && (
-                <div className="lib-status error" style={{ marginTop: 6 }}>
-                  {jsonError}
-                </div>
-              )}
-              <button className="lib-install-btn" style={{ marginTop: 8 }} onClick={applyJsonDraft}>
-                Apply velxio.json
-              </button>
-            </details>
-          </div>
-        )}
-
-        {/* Search Tab */}
-        {activeTab === 'search' && (
-          <div className="lib-content">
-            <div className="lib-search-bar">
-              <svg
-                className="lib-search-icon"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <circle cx="11" cy="11" r="8" />
-                <path d="m21 21-4.3-4.3" />
-              </svg>
-              <input
-                type="text"
-                placeholder={t('editor.libraryManager.filterPlaceholder')}
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                autoFocus
-              />
-              {loadingSearch && (
-                <svg
-                  className="lib-spinner"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                >
-                  <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                </svg>
-              )}
-            </div>
-
-            <div className="lib-list">
-              {loadingSearch && (
-                <div className="lib-empty">
-                  <svg
-                    className="lib-spinner lib-spinner-center"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.5"
-                    strokeLinecap="round"
-                  >
-                    <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                  </svg>
-                  <p className="lib-empty-sub">
-                    {searchQuery
-                      ? t('editor.libraryManager.searchingFor', { query: searchQuery })
-                      : t('editor.libraryManager.loadingLibraries')}
-                  </p>
-                </div>
-              )}
-              {!loadingSearch && searchResults.length === 0 && (
-                <div className="lib-empty">
-                  <p>
-                    {searchQuery
+            )}
+            {!loadingSearch && rows.length === 0 && !(browsing && loadingInstalled) && (
+              <div className="lib-empty">
+                <p>
+                  {browsing
+                    ? t('editor.libraryManager.noneInstalled')
+                    : searchQuery
                       ? t('editor.libraryManager.noResultsFor', { query: searchQuery })
                       : t('editor.libraryManager.noResults')}
-                  </p>
-                </div>
-              )}
-              {!loadingSearch &&
-                searchResults.map((lib, i) => (
-                  <div key={i} className="lib-item">
-                    <div className="lib-item-info">
-                      <div className="lib-item-header">
-                        <span className="lib-item-name">{getLibName(lib)}</span>
-                        {getLibAuthor(lib) && (
-                          <span className="lib-item-author">
-                            {t('editor.libraryManager.byAuthor', { author: getLibAuthor(lib) })}
-                          </span>
-                        )}
-                      </div>
-                      {getLibDesc(lib) && <p className="lib-item-desc">{getLibDesc(lib)}</p>}
-                    </div>
-                    <div className="lib-item-actions">
-                      {isInstalled(getLibName(lib)) ? (
-                        <>
-                          <span className="lib-item-version lib-installed-badge">
-                            {selectedVersions[lib.name] ?? lib.latest?.version ?? ''}
-                            <svg style={{ display: 'inline', marginLeft: '4px', verticalAlign: 'middle' }} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
-                          </span>
-                          <button
-                            className="lib-uninstall-btn"
-                            onClick={() => handleUninstall(getLibName(lib))}
-                            disabled={uninstallingLib !== null}
-                          >
-                            {uninstallingLib === getLibName(lib)
-                              ? t('editor.libraryManager.uninstalling')
-                              : t('editor.libraryManager.uninstall')}
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          {lib.releases && Object.keys(lib.releases).length > 1 && (
-                            <select
-                              className="lib-version-select"
-                              value={selectedVersions[lib.name] ?? lib.latest?.version ?? ''}
-                              onChange={(e) => setSelectedVersions((prev) => ({ ...prev, [lib.name]: e.target.value }))}
-                            >
-                              {Object.entries(lib.releases).map(([ver]) => (
-                                <option key={ver} value={ver}>{ver}</option>
-                              ))}
-                            </select>
-                          )}
-                          <button
-                            className="lib-install-btn"
-                            onClick={() => handleInstall(getLibName(lib))}
-                            disabled={installingLib !== null}
-                          >
-                            {installingLib === getLibName(lib) ? (
-                              <span className="lib-installing">{t('editor.libraryManager.installing')}</span>
-                            ) : (
-                              t('editor.libraryManager.install')
-                            )}
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                ))}
-            </div>
-          </div>
-        )}
-
-        {/* Installed Tab */}
-        {activeTab === 'installed' && (
-          <div className="lib-content">
-            <div className="lib-list">
-              {loadingInstalled && (
-                <div className="lib-empty">
-                  <p>{t('editor.libraryManager.loadingInstalled')}</p>
-                </div>
-              )}
-              {!loadingInstalled && installedLibraries.length === 0 && (
-                <div className="lib-empty">
-                  <p>{t('editor.libraryManager.noneInstalled')}</p>
-                  <p className="lib-empty-sub">{t('editor.libraryManager.useSearchTab')}</p>
-                </div>
-              )}
-              {installedLibraries.map((lib, i) => (
-                <div key={i} className="lib-item">
+                </p>
+                {browsing && <p className="lib-empty-sub">Search above to find and add a library.</p>}
+              </div>
+            )}
+            {rows.map((row, i) => {
+              const inProj = inManifest(row.name);
+              const busy = busyLib === row.name;
+              return (
+                <div key={`${row.name}-${i}`} className="lib-item">
                   <div className="lib-item-info">
                     <div className="lib-item-header">
-                      <span className="lib-item-name">{getInstalledName(lib)}</span>
-                      {getInstalledAuthor(lib) && (
+                      <span className="lib-item-name">{row.name}</span>
+                      {row.custom && (
+                        <span
+                          style={{
+                            fontSize: 10,
+                            color: '#ffd60a',
+                            background: '#3a330f',
+                            borderRadius: 6,
+                            padding: '0 6px',
+                          }}
+                        >
+                          custom
+                        </span>
+                      )}
+                      {row.author && (
                         <span className="lib-item-author">
-                          {t('editor.libraryManager.byAuthor', { author: getInstalledAuthor(lib) })}
+                          {t('editor.libraryManager.byAuthor', { author: row.custom ? 'you' : row.author })}
                         </span>
                       )}
                     </div>
-                    {getInstalledDesc(lib) && (
-                      <p className="lib-item-desc">{getInstalledDesc(lib)}</p>
-                    )}
+                    {row.desc && <p className="lib-item-desc">{row.desc}</p>}
                   </div>
                   <div className="lib-item-actions">
-                    {getInstalledVersion(lib) && (
-                      <span className="lib-item-version lib-installed-badge">
-                        {getInstalledVersion(lib)}
-                        <svg
-                          style={{ display: 'inline', marginLeft: '4px', verticalAlign: 'middle' }}
-                          width="12"
-                          height="12"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="3"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <polyline points="20 6 9 17 4 12" />
-                        </svg>
-                      </span>
+                    {row.version && <span className="lib-item-version">{row.version}</span>}
+                    {!row.installed && row.releases && Object.keys(row.releases).length > 1 && (
+                      <select
+                        className="lib-version-select"
+                        value={selectedVersions[row.name] ?? row.version}
+                        onChange={(e) => setSelectedVersions((p) => ({ ...p, [row.name]: e.target.value }))}
+                      >
+                        {Object.keys(row.releases).map((ver) => (
+                          <option key={ver} value={ver}>
+                            {ver}
+                          </option>
+                        ))}
+                      </select>
                     )}
-                    {inManifest(getInstalledName(lib)) ? (
+                    {inProj ? (
                       <button
                         className="lib-uninstall-btn"
-                        onClick={() => removeFromManifest(getInstalledName(lib))}
-                        title="Remove from this project (velxio.json)"
+                        style={{ color: '#a5d6a7', borderColor: '#2e7d32' }}
+                        onClick={() => removeFromManifest(row.name)}
+                        title="Remove from this board (libraries.json)"
                       >
                         In project ✓
                       </button>
                     ) : (
                       <button
                         className="lib-install-btn"
-                        onClick={() => addToManifest(getInstalledName(lib))}
-                        title="Add to this project (velxio.json)"
+                        onClick={() => addToProject(row)}
+                        disabled={busy}
+                        title="Install if needed and add to this board"
                       >
-                        Add to project
+                        {busy ? '…' : '+ Add to project'}
                       </button>
                     )}
-                    <button
-                      className="lib-uninstall-btn"
-                      onClick={() =>
-                        lib.custom
-                          ? handleRemoveCustom(getInstalledName(lib))
-                          : handleUninstall(getInstalledName(lib))
-                      }
-                      disabled={uninstallingLib !== null}
-                      title={lib.custom ? 'Remove your custom upload' : 'Uninstall library'}
-                    >
-                      {uninstallingLib === getInstalledName(lib)
-                        ? 'Removing...'
-                        : lib.custom
-                          ? 'Remove'
-                          : 'UNINSTALL'}
-                    </button>
+                    {row.installed && (
+                      <button
+                        className="lib-uninstall-btn"
+                        onClick={() => (row.custom ? removeCustom(row.name) : uninstall(row.name))}
+                        disabled={busy}
+                        title={row.custom ? 'Remove your custom upload' : 'Uninstall (free the cache)'}
+                      >
+                        {busy ? '…' : row.custom ? 'Remove' : 'Uninstall'}
+                      </button>
+                    )}
                   </div>
                 </div>
-              ))}
-            </div>
+              );
+            })}
           </div>
-        )}
+        </div>
       </div>
     </div>
   );
