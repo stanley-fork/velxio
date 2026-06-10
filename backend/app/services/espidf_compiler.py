@@ -1920,9 +1920,21 @@ class ESPIDFCompiler:
         # template tree. Doing this BEFORE cmake configure means the new
         # CONFIG_* lines reach kconfig on its first read.
         rendered_sdkconfig = self._render_sdkconfig(board_options, _TEMPLATE_DIR)
-        (project_dir / 'sdkconfig.defaults').write_text(
-            rendered_sdkconfig, encoding='utf-8',
+        defaults_path = project_dir / 'sdkconfig.defaults'
+        prev_defaults = (
+            defaults_path.read_text(encoding='utf-8') if defaults_path.exists() else None
         )
+        defaults_path.write_text(rendered_sdkconfig, encoding='utf-8')
+
+        # ESP-IDF only SEEDS sdkconfig from sdkconfig.defaults when sdkconfig is
+        # ABSENT. Persistent build dirs live in the build volume and keep a
+        # stale sdkconfig across image rebuilds, so a defaults change (a new
+        # CONFIG_* shipped in the template, or different board options) would
+        # otherwise never reach kconfig. Drop the generated sdkconfig when the
+        # rendered defaults change so kconfig re-seeds from them on configure.
+        if prev_defaults is not None and prev_defaults != rendered_sdkconfig:
+            (project_dir / 'sdkconfig').unlink(missing_ok=True)
+            (project_dir / 'sdkconfig.old').unlink(missing_ok=True)
 
         # Generate partitions.csv per the selected scheme.
         partition_csv = self._render_partition_csv(board_options['partitionScheme'])
