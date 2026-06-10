@@ -37,7 +37,110 @@ import {
 const F_CPU = 125_000_000; // 125 MHz
 const CYCLE_NANOS = 1e9 / F_CPU; // nanoseconds per cycle (~8 ns)
 const FPS = 60;
-const CYCLES_PER_FRAME = Math.floor(F_CPU / FPS); // ~2 083 333
+const CYCLES_PER_MS = F_CPU / 1000; // 125 000 cycles per simulated millisecond
+
+/** Minimal structural view of the rp2040js clock we drive. */
+interface SimClock {
+  readonly nanosToNextAlarm: number;
+  tick(nanos: number): void;
+}
+
+// Real-time scheduler.  The RP2040 core is ~8x heavier to emulate than the
+// AVR (125 MHz vs 16 MHz), so a host that cannot execute 125 M instructions
+// per second of wall-clock would otherwise run the simulation in slow motion:
+// a `delay(1000)` blink renders every 4-5 s.  Two mechanisms keep sim-time
+// locked to wall-time:
+//   1. The frame budget is derived from the MEASURED wall-clock delta (like
+//      AVRSimulator), not a fixed 1/60 s, so the sim never silently falls
+//      behind the assumed 60 fps.
+//   2. A `delay()` busy-wait spins reading the timer without putting the core
+//      to sleep (no WFI), so the WFI fast-path never triggers and the emulator
+//      grinds every idle cycle.  IdleSpinDetector recognises such a
+//      side-effect-free spin and we advance the clock over it instead of
+//      executing it — exactly what the WFI path already does for sleep().
+const MAX_DELTA_MS = 50; // clamp the wall-clock delta (paused/backgrounded tab)
+// When an idle spin is elided with no timer alarm to anchor the jump, advance
+// at most this many cycles before letting the firmware re-check its deadline.
+// Bounds the delay overshoot to ~1 ms; with an alarm pending we stop exactly
+// at the alarm (no overshoot).
+const IDLE_SLICE_CYCLES = CYCLES_PER_MS; // 1 ms
+
+/**
+ * Detects a side-effect-free busy-wait spin (e.g. arduino-pico `delay()`,
+ * which polls the timer in a tight loop instead of sleeping).  Fed the PC
+ * about to execute on every instruction; reads the GPIO snapshot lazily, only
+ * when a backward branch closes a loop iteration, so the hot path stays cheap.
+ *
+ * Reports a spin only once the SAME loop has iterated `threshold` times with
+ * NO GPIO change (input or output) — so a bit-bang loop (toggles a pin every
+ * iteration) and an input-poll that just saw its pin move are never elided,
+ * and neither is a loop that calls out (long forward jump resets the count).
+ * A false positive is bounded-harmless: we only ever advance time up to the
+ * wall-clock budget, never past the next timer alarm or scheduled pin change.
+ */
+export class IdleSpinDetector {
+  private prevPc = -1;
+  private loopTarget = -1;
+  private iters = 0;
+  private gpioAtLastIter = -1;
+
+  constructor(
+    private readonly threshold = 32,
+    private readonly maxStride = 256,
+  ) {}
+
+  /**
+   * @param pc   program counter about to execute
+   * @param gpio thunk returning the current GPIO snapshot (called only on a
+   *             backward branch, so the 30-pin scan stays off the hot path)
+   * @returns true when a stable, side-effect-free spin is detected
+   */
+  observe(pc: number, gpio: () => number): boolean {
+    const prev = this.prevPc;
+    this.prevPc = pc;
+    if (prev === -1) return false;
+
+    if (pc < prev) {
+      // Backward branch — one loop iteration just closed.
+      const g = gpio();
+      if (this.loopTarget !== pc) {
+        // First time we land on this loop top (or the loop moved): start over.
+        this.loopTarget = pc;
+        this.gpioAtLastIter = g;
+        this.iters = 1;
+        return false;
+      }
+      if (g !== this.gpioAtLastIter) {
+        // A pin changed during the iteration — real work (bit-bang) or an
+        // input arrived.  Not idle; restart the count from this iteration.
+        this.gpioAtLastIter = g;
+        this.iters = 1;
+        return false;
+      }
+      this.iters++;
+      return this.iters >= this.threshold;
+    }
+
+    if (pc > prev + this.maxStride) {
+      // Long forward jump (call / loop exit) — left the tight spin.
+      this.reset();
+    }
+    return false;
+  }
+
+  /** Call right after eliding a slice so the firmware re-checks its deadline
+   *  (executes the loop body again) before the next jump. */
+  noteElided(): void {
+    this.iters = 0;
+  }
+
+  reset(): void {
+    this.prevPc = -1;
+    this.loopTarget = -1;
+    this.iters = 0;
+    this.gpioAtLastIter = -1;
+  }
+}
 
 /**
  * Backward-compatible alias for the unified `I2CDevice` shape used by
@@ -60,6 +163,9 @@ export class RP2040Simulator {
   private pioStepAccum = 0;
   private usbCDC: USBCDC | null = null;
   private micropythonMode = false;
+  // Real-time scheduler state (see IdleSpinDetector + runFrameForTime).
+  private lastTimestamp = 0;
+  private readonly idleDetector = new IdleSpinDetector();
 
   // ── Pico W WiFi (CYW43439) — only attached when boardKind === 'pi-pico-w'.
   private cyw43: Cyw43Emulator | null = null;
@@ -626,67 +732,22 @@ export class RP2040Simulator {
     }
 
     this.running = true;
+    this.lastTimestamp = 0;
+    this.idleDetector.reset();
     console.log('[RP2040] Starting simulation at 125 MHz...');
 
-    const execute = () => {
+    const execute = (timestamp: number) => {
       if (!this.running || !this.rp2040) return;
 
-      const cyclesTarget = Math.floor(CYCLES_PER_FRAME * this.speed);
-      const { core } = this.rp2040;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const clock = (this.rp2040 as any).clock;
+      // Derive this frame's cycle budget from the MEASURED wall-clock delta
+      // (mirrors AVRSimulator) so the sim cannot silently run in slow motion
+      // by assuming a perfect 60 fps. First frame falls back to one frame; the
+      // upper clamp (paused/backgrounded tab) is applied in runFrameForTime.
+      const deltaMs = this.lastTimestamp === 0 ? 1000 / FPS : timestamp - this.lastTimestamp;
+      this.lastTimestamp = timestamp;
 
       try {
-        let cyclesDone = 0;
-        const pioDiv = this.getPIOClockDiv();
-        while (cyclesDone < cyclesTarget) {
-          if (core.waiting) {
-            if (clock) {
-              const jump: number = clock.nanosToNextAlarm;
-              if (jump <= 0) {
-                // No clock alarms — step PIO so it can unblock the CPU
-                // (e.g. PIO consuming FIFO data may generate an interrupt)
-                this.stepPIO();
-                break;
-              }
-              const jumped = Math.ceil(jump / CYCLE_NANOS);
-              const pioSteps = Math.floor(jumped / pioDiv);
-              // Advance clock incrementally per PIO step so GPIO transitions
-              // get accurate timestamps (not all lumped at the end of the jump).
-              const nanoPerPioStep = pioDiv * CYCLE_NANOS;
-              const maxSteps = Math.min(pioSteps, 50000);
-              let nanosStepped = 0;
-              for (let i = 0; i < maxSteps; i++) {
-                clock.tick(nanoPerPioStep);
-                nanosStepped += nanoPerPioStep;
-                this.totalCycles += pioDiv;
-                this.stepPIO();
-              }
-              // Tick any remaining nanoseconds not covered by PIO steps
-              const remaining = jump - nanosStepped;
-              if (remaining > 0) {
-                clock.tick(remaining);
-                this.totalCycles += Math.ceil(remaining / CYCLE_NANOS);
-              }
-              cyclesDone += jumped;
-              this.flushScheduledPinChanges();
-            } else {
-              break;
-            }
-          } else {
-            const cycles: number = core.executeInstruction();
-            if (clock) clock.tick(cycles * CYCLE_NANOS);
-            cyclesDone += cycles;
-            this.totalCycles += cycles;
-            // Step PIO synchronously at the PIO clock rate
-            this.pioStepAccum += cycles;
-            while (this.pioStepAccum >= pioDiv) {
-              this.pioStepAccum -= pioDiv;
-              this.stepPIO();
-            }
-            this.flushScheduledPinChanges();
-          }
-        }
+        this.runFrameForTime(deltaMs);
       } catch (error) {
         console.error('[RP2040] Simulation error:', error);
         this.stop();
@@ -697,6 +758,117 @@ export class RP2040Simulator {
     };
 
     this.animationFrame = requestAnimationFrame(execute);
+  }
+
+  /**
+   * Run one frame's worth of simulation for `deltaMs` of wall-clock time.
+   * Returns counters for tests. Keeps simulated time locked to wall-clock:
+   * idle spins (busy-wait `delay()`) and WFI sleeps advance the clock instead
+   * of executing every idle cycle, so timing stays correct even when the host
+   * cannot emulate 125 MHz in real time. Exposed (not private) so the
+   * real-time scheduler can be driven deterministically in tests without rAF.
+   */
+  runFrameForTime(deltaMs: number): { cyclesAdvanced: number; instructionsExecuted: number } {
+    if (!this.rp2040) return { cyclesAdvanced: 0, instructionsExecuted: 0 };
+    // Guard against NaN/negative deltas and clamp the upper bound so a single
+    // frame never simulates more than MAX_DELTA_MS of CPU time (a paused or
+    // backgrounded tab must not trigger a multi-second catch-up burst).
+    let dt = deltaMs > 0 ? deltaMs : 1000 / FPS;
+    if (dt > MAX_DELTA_MS) dt = MAX_DELTA_MS;
+    const cyclesTarget = Math.max(1, Math.floor(CYCLES_PER_MS * dt * this.speed));
+    const { core } = this.rp2040;
+    const clock = (this.rp2040 as unknown as { clock?: SimClock }).clock ?? null;
+    const pioDiv = this.getPIOClockDiv();
+    const gpioSnapshot = () => this.rp2040!.gpioValues;
+
+    let cyclesDone = 0;
+    let instructionsExecuted = 0;
+    while (cyclesDone < cyclesTarget) {
+      if (core.waiting) {
+        // CPU asleep (WFI/WFE): jump to the next timer alarm, but never past
+        // this frame's wall-clock budget, so a long sleep advances at real
+        // time across frames rather than leaping ahead.
+        if (!clock || clock.nanosToNextAlarm <= 0) {
+          this.stepPIO(); // nothing scheduled to wake it this frame
+          break;
+        }
+        const jumped = this.advanceClock(cyclesTarget - cyclesDone, pioDiv, clock);
+        if (jumped <= 0) break;
+        cyclesDone += jumped;
+      } else if (this.idleDetector.observe(core.PC, gpioSnapshot)) {
+        // Detected a side-effect-free busy-wait spin (e.g. delay()): advance
+        // the clock over it instead of grinding every cycle. Capped at the
+        // next alarm/scheduled pin change inside advanceClock, and to a small
+        // slice so the firmware re-checks its deadline (bounds overshoot).
+        const budget = Math.min(cyclesTarget - cyclesDone, IDLE_SLICE_CYCLES);
+        const jumped = this.advanceClock(budget, pioDiv, clock);
+        if (jumped <= 0) {
+          cyclesDone += this.execOne(core, clock, pioDiv);
+          instructionsExecuted++;
+        } else {
+          cyclesDone += jumped;
+          this.idleDetector.noteElided();
+        }
+      } else {
+        cyclesDone += this.execOne(core, clock, pioDiv);
+        instructionsExecuted++;
+      }
+    }
+    return { cyclesAdvanced: cyclesDone, instructionsExecuted };
+  }
+
+  /** Execute one ARM instruction in the production loop, advancing the clock
+   *  and stepping PIO. Returns the cycles it took. */
+  private execOne(
+    core: { executeInstruction(): number },
+    clock: SimClock | null,
+    pioDiv: number,
+  ): number {
+    const cycles: number = core.executeInstruction();
+    if (clock) clock.tick(cycles * CYCLE_NANOS);
+    this.totalCycles += cycles;
+    this.pioStepAccum += cycles;
+    while (this.pioStepAccum >= pioDiv) {
+      this.pioStepAccum -= pioDiv;
+      this.stepPIO();
+    }
+    this.flushScheduledPinChanges();
+    return cycles;
+  }
+
+  /**
+   * Advance the simulated clock by up to `budgetCycles` WITHOUT executing
+   * instructions, stepping PIO at the PIO clock rate so GPIO timestamps stay
+   * accurate. Never advances past the next timer alarm or the next scheduled
+   * pin change (so those still fire at their exact simulated time). Returns
+   * the number of cycles actually advanced.
+   */
+  private advanceClock(budgetCycles: number, pioDiv: number, clock: SimClock | null): number {
+    if (budgetCycles <= 0 || !clock) return 0;
+    const alarmNanos: number = clock.nanosToNextAlarm ?? 0;
+    const alarmCycles = alarmNanos > 0 ? Math.ceil(alarmNanos / CYCLE_NANOS) : Infinity;
+    const nextPin =
+      this.scheduledPinChanges.length > 0
+        ? this.scheduledPinChanges[0].cycle - this.totalCycles
+        : Infinity;
+    let jumped = Math.min(budgetCycles, alarmCycles, nextPin > 0 ? nextPin : Infinity);
+    if (!Number.isFinite(jumped) || jumped <= 0) return 0;
+    jumped = Math.ceil(jumped);
+
+    const totalNanos = jumped * CYCLE_NANOS;
+    const nanoPerPioStep = pioDiv * CYCLE_NANOS;
+    const pioSteps = Math.min(Math.floor(jumped / pioDiv), 50000);
+    let nanosStepped = 0;
+    for (let i = 0; i < pioSteps; i++) {
+      clock.tick(nanoPerPioStep);
+      nanosStepped += nanoPerPioStep;
+      this.stepPIO();
+    }
+    const remaining = totalNanos - nanosStepped;
+    if (remaining > 0) clock.tick(remaining);
+    this.totalCycles += jumped;
+    this.flushScheduledPinChanges();
+    return jumped;
   }
 
   stop(): void {
@@ -710,6 +882,8 @@ export class RP2040Simulator {
     // typically cleared on stop/start, so the previous run's "seeded"
     // flag would suppress the baseline sample for the next session.
     this.uartTxSeeded = [false, false];
+    this.lastTimestamp = 0;
+    this.idleDetector.reset();
     console.log('[RP2040] Simulation stopped');
   }
 
@@ -717,6 +891,7 @@ export class RP2040Simulator {
     this.stop();
     this.totalCycles = 0;
     this.scheduledPinChanges = [];
+    this.idleDetector.reset();
     if (this.rp2040 && this.flashCopy) {
       if (this.micropythonMode) {
         // In MicroPython mode, restore the full flash snapshot (UF2 + LittleFS)
