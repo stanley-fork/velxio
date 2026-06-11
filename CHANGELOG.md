@@ -3,6 +3,22 @@
 All notable changes to Velxio will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [3.0.0] - 2026-06-11
+
+### Added
+- **Digital Gate Engine**: Event-driven logic gate evaluation for board‑less digital circuits (AND, OR, NOT, XOR, NAND, NOR, XNOR, multi‑input gates). Supports sequential logic: D, T, JK flip‑flops, 4‑bit ripple counter, and mixed digital/analog boundary handoff.
+- **Chip‑to‑Chip Bus**: Custom chips can now share address/data buses via a 4‑valued logic kernel with drive‑strength tri‑state nets. Ships a complete Galaksija Z80 home computer example (keyboard, display, ROM, RAM) that boots in the browser.
+- **Retro CPU Custom Chips**: Programmable Z80 and Intel 8080 CPU emulator chips with external ROM loaded from project files (assembly or C via SDCC). Includes i8080 Kill‑the‑Bit demo and Z80 Larson scanner examples.
+- **MicroSD Card Storage**: SD‑over‑SPI card emulation for AVR, RP2040, and ESP32 boards. FAT16 image built from workspace files with an upload panel for extra files (gated by pro overlay).
+- **Signal Router**: First‑class GPIO Matrix routing for ESP32 – per‑signal routing via `SignalRouter` class, replacing the previous ad‑hoc `ledc_gpio_map`. Multi‑servo control now works correctly.
+- **Library Manager**: Single unified tab with state‑aware row actions (Add to project, In project toggle, Uninstall/Remove). Per‑board library manifests (`velxio.json`) autocomplete and persistence.
+- **Oscilloscope Trigger Modes**: Auto, Normal, and Single‑shot trigger with configurable source, edge, and position. ARMED/TRIGGERED/CAPTURED status badges.
+- **Undo/Redo**: Command‑pattern undo/redo for canvas mutations (add/remove/move/rotate components, add/remove wires). Keyboard shortcuts (Ctrl+Z, Ctrl+Y) and toolbar buttons.
+- **i18n – Multilingual Support**: Full internationalisation for the editor, landing page, examples gallery, and auth pages. 9 locales (en, es, pt‑br, it, fr, zh‑cn, de, ja, ru) with react‑i18next foundation.
+- **ESP32‑CAM Emulation**: End‑to‑end emulation of the AI‑Thinker ESP32‑CAM with real webcam frame bridge. `esp_camera_fb_get()` returns JPEG frames from user’s camera. Gallery example with ILI9341 live preview.
+- **ePaper Display Support**: SSD168x (mono/tri‑colour) and UC8159c (ACeP 7‑colour) decoder with SPI slave and canvas rendering. Works on AVR, RP2040, and ESP32.
+- **STM32 Board Emulation**: Blue Pill, Black Pill, F4 Discovery, Olimex H405, Netduino 2/+2 – all via QEMU arm backend
+
 ## [2.0.1] - 2026-04-22
 
 ### Added
@@ -75,3 +91,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed ESP32 compilation by adding missing dependencies (cmake, ninja-build, git, packaging, libusb)
 
 [2.0.1]: https://github.com/davidmonterocrespo24/velxio/releases/tag/v2.0.1
+
+[3.0.0]: https://github.com/davidmonterocrespo24/velxio/releases/tag/v3.0.0
