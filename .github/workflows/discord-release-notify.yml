@@ -290,6 +290,25 @@ jobs:
             console.log('='.repeat(70));
             console.log(`Release v${version} announced on Discord`);
 
+            // Create the GitHub Release + tag so the /releases/tag/v${version}
+            // link in the announcement actually resolves (otherwise it 404s).
+            // Tag the released commit; tolerate an already-existing tag.
+            try {
+              await github.rest.repos.createRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag_name: `v${version}`,
+                target_commitish: headSha,
+                name: `v${version}`,
+                body: changelogEntry,
+                draft: false,
+                prerelease: false,
+              });
+              console.log(`GitHub Release v${version} created (tag at ${headSha.slice(0,7)})`);
+            } catch (e) {
+              console.log(`GitHub Release create skipped/failed (non-fatal): ${e.message}`);
+            }
+
             // ──────────────────────────────────────────────────────────────────
             // PHASE 4 — Only NOW persist: write CHANGELOG + bump the version.
             // A failed announce above returns early, so it never advances the
