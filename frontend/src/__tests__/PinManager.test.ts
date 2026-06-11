@@ -124,7 +124,7 @@ describe('PinManager — PWM duty cycle', () => {
     const cb = vi.fn();
     pm.onPwmChange(9, cb);
     pm.updatePwm(9, 0.5);
-    expect(cb).toHaveBeenCalledWith(9, 0.5);
+    expect(cb).toHaveBeenCalledWith(9, 0.5, undefined); // 3rd arg = optional timeMs (not passed here)
   });
 
   it('stores the latest PWM value', () => {
@@ -150,7 +150,7 @@ describe('PinManager — PWM duty cycle', () => {
     pwmPins.forEach((pin, i) => {
       const dc = (i + 1) / 6;
       pm.updatePwm(pin, dc);
-      expect(callbacks[i]).toHaveBeenCalledWith(pin, dc);
+      expect(callbacks[i]).toHaveBeenCalledWith(pin, dc, undefined); // optional timeMs not passed
     });
   });
 });
