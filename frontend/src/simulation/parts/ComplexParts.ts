@@ -591,10 +591,47 @@ PartSimulationRegistry.register('buzzer', {
       return when;
     }
 
+    // Ramp the note currently sounding down to silence ending at audio time
+    // `off` and schedule its stop. Shared by stopTone (note-off) and the
+    // monophonic guard in startTone (a pitch change with no note-off). Keeps the
+    // envelope valid: never release before this note's own attack has finished,
+    // nor in the past.
+    //
+    // Bounded-overlap note (guard path): on a normal metronome/melody — onsets
+    // tens-to-hundreds of ms apart — the old note ends ~RELEASE before the next
+    // onset. On a degenerate sub-4 ms onset (a >250-note/s trill, or two tone()
+    // calls at the same simulated timestamp — neither of which a passive buzzer
+    // produces) the `onWhen + ATTACK` floor pushes `off` past the next onset, so
+    // two oscillators overlap for at most ~ATTACK+RELEASE (≈5 ms). That is
+    // inaudible and still leak-free (one stop per note). We deliberately keep the
+    // attack-finished envelope rather than clamp `off` down to the onset, which
+    // would start the down-ramp from a gain that never reached its peak.
+    function releaseActive(off: number) {
+      const ctx = audioCtx;
+      if (!ctx || !activeOsc || !activeGain) return;
+      if (onWhen !== null && off < onWhen + ATTACK + 0.002) off = onWhen + ATTACK + 0.002;
+      if (off < ctx.currentTime + 0.003) off = ctx.currentTime + 0.003;
+      try {
+        activeGain.gain.setValueAtTime(0.1, off);
+        activeGain.gain.linearRampToValueAtTime(0, off + RELEASE);
+        activeOsc.stop(off + RELEASE + 0.001);
+      } catch {
+        /* already scheduled */
+      }
+      activeOsc = null;
+      activeGain = null;
+    }
+
     function startTone(freq: number, timeMs?: number) {
       ensureCtx();
       const ctx = audioCtx!;
       const when = whenFor(timeMs); // the scheduler tracks ONSETS only (clean rhythm)
+      // Monophonic guard: a pitch change with no intervening note-off (a melody —
+      // consecutive tone() calls) must REPLACE the current note, not stack a new
+      // oscillator on top. Release the live note so it ends as the new one begins
+      // (seamless legato) instead of orphaning it to play forever. Reads the
+      // PREVIOUS note's onWhen, so it must run before onWhen is reassigned below.
+      if (activeOsc && activeGain) releaseActive(when);
       onWhen = when;
       onSimMs = timeMs ?? null;
       const osc = ctx.createOscillator();
@@ -626,21 +663,11 @@ PartSimulationRegistry.register('buzzer', {
         // Note-off relative to its own onset, preserving the exact click length
         // from the simulation (not via the onset scheduler, which would smear
         // the short on→off and long off→on gaps together).
-        let off =
+        const off =
           onWhen !== null && onSimMs !== null && timeMs !== undefined
             ? onWhen + Math.max(0.004, (timeMs - onSimMs) / 1000)
             : ctx.currentTime + 0.02;
-        if (onWhen !== null && off < onWhen + ATTACK + 0.002) off = onWhen + ATTACK + 0.002;
-        if (off < ctx.currentTime + 0.003) off = ctx.currentTime + 0.003;
-        try {
-          activeGain.gain.setValueAtTime(0.1, off);
-          activeGain.gain.linearRampToValueAtTime(0, off + RELEASE);
-          activeOsc.stop(off + RELEASE + 0.001);
-        } catch {
-          /* already scheduled */
-        }
-        activeOsc = null;
-        activeGain = null;
+        releaseActive(off);
       }
       isSounding = false;
       if (el.playing !== undefined) el.playing = false;

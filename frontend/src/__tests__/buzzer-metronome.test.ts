@@ -196,4 +196,101 @@ describe('Buzzer — metronome quality', () => {
     const lastGap = (ns[ns.length - 1].on - ns[ns.length - 2].on) * 1000;
     expect(Math.abs(lastGap - 250)).toBeLessThan(10);
   });
+
+  // Regression guard for the maintainer's review (PR #220, comment 4671821612):
+  // a melody / continuous tone is consecutive tone(pin, freqN) calls with NO
+  // noTone() between pitches — back-to-back nonzero OCR writes, each firing the
+  // PWM handler with duty>0 and no intervening note-off. The old code overwrote
+  // activeOsc on every pitch change without stopping the previous node, so
+  // oscillators were "started but never stopped" — they stacked and played
+  // forever. The monophonic guard must REPLACE the live note instead.
+  it('replaces rather than stacks oscillators on a melody / continuous tone', () => {
+    const { sim } = setupBuzzer();
+    const pwm = sim.pinManager.onPwmChange.mock.calls[0][1] as (
+      p: number,
+      dc: number,
+      t?: number,
+    ) => void;
+
+    // A little tune: pitch changes with no note-off between them (legato).
+    const melody = [523, 587, 659, 698, 784, 659]; // C5 D5 E5 F5 G5 E5
+    const step = 200; // ms per note
+    melody.forEach((freq, i) => {
+      sim.cpu.data[OCR2A] = ocrFor(freq);
+      sim.cpu.data[TCCR2B] = 0x04; // CS22 -> prescaler 64
+      clock = (i * step) / 1000;
+      pwm(11, 0.5, i * step); // square-wave duty>0, pitch change, NO dc=0
+    });
+    // End the tune with a noTone — releases the final note.
+    clock = (melody.length * step) / 1000;
+    pwm(11, 0, melody.length * step);
+
+    const starts = sched.filter((e) => e.kind === 'start');
+    const stops = sched.filter((e) => e.kind === 'stop');
+
+    // Every oscillator that started is stopped — no orphans left ringing. This
+    // is the exact failure the maintainer saw ("started but never stopped: 6").
+    expect(starts.length).toBe(melody.length);
+    expect(stops.length).toBe(starts.length);
+
+    // One start per note, at the right pitch, in order. Compare against the
+    // CTC-reconstructed pitch (what the firmware's integer OCR actually yields),
+    // not the nominal note — same round-trip the buzzer's getFrequency does.
+    const heard = (freq: number) => Math.round(125000 / (ocrFor(freq) + 1));
+    starts.forEach((s, i) => {
+      expect(s.freq).toBe(heard(melody[i]));
+      if (i > 0) expect(s.when).toBeGreaterThan(starts[i - 1].when); // monotonic, no backward
+    });
+    // Pitch is read FRESH per note (not stuck on the first onset): the tune rises
+    // then falls, so the heard sequence is non-constant and tracks the melody.
+    const heardSeq = starts.map((s) => s.freq);
+    expect(new Set(heardSeq).size).toBeGreaterThan(1);
+    expect(heardSeq).toEqual(melody.map(heard));
+
+    // Bounded overlap (replacement, not stacking): each note is released close to
+    // the NEXT note's onset — not smeared to the end of the tune. Pair each start
+    // with its own stop (interleaved start/stop/start/stop… once the guard fires).
+    const notesSeq: { on: number; off: number }[] = [];
+    for (let i = 0; i + 1 < sched.length; i++) {
+      if (sched[i].kind === 'start' && sched[i + 1].kind === 'stop') {
+        notesSeq.push({ on: sched[i].when, off: sched[i + 1].when });
+      }
+    }
+    expect(notesSeq.length).toBe(melody.length);
+    for (let i = 0; i < notesSeq.length - 1; i++) {
+      // old note ends as the next begins (≤ a release tail past the next onset)
+      expect(notesSeq[i].off).toBeLessThanOrEqual(notesSeq[i + 1].on + 0.01);
+      expect(notesSeq[i].off).toBeGreaterThan(notesSeq[i].on); // positive duration
+    }
+  });
+
+  // A melody that ends WITHOUT a noTone() — the real "sketch loops tone() and
+  // never calls noTone()" pattern. Correct Arduino semantics: a tone() plays
+  // until noTone() or the NEXT tone(), so the final note must keep ringing. The
+  // guard must release exactly the SUPERSEDED notes (one stop each) and leave the
+  // last one sounding — not orphan the middle notes, not cut the last one short.
+  it('releases superseded notes but leaves the final note ringing (no trailing noTone)', () => {
+    const { sim } = setupBuzzer();
+    const pwm = sim.pinManager.onPwmChange.mock.calls[0][1] as (
+      p: number,
+      dc: number,
+      t?: number,
+    ) => void;
+
+    const melody = [440, 494, 523]; // A4 B4 C5
+    const step = 200;
+    melody.forEach((freq, i) => {
+      sim.cpu.data[OCR2A] = ocrFor(freq);
+      sim.cpu.data[TCCR2B] = 0x04;
+      clock = (i * step) / 1000;
+      pwm(11, 0.5, i * step); // pitch change, NO dc=0 — and no noTone at the end
+    });
+
+    const starts = sched.filter((e) => e.kind === 'start');
+    const stops = sched.filter((e) => e.kind === 'stop');
+    // Every note starts; only the superseded ones stop → exactly one note (the
+    // last) is still live. Pre-guard this was starts=3, stops=0 (all orphaned).
+    expect(starts.length).toBe(melody.length);
+    expect(stops.length).toBe(starts.length - 1);
+  });
 });
