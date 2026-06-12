@@ -34,7 +34,7 @@ import {
   decodeCdc,
   decodeEventBody,
 } from '../simulation/cyw43';
-import { decodeHeader } from '../simulation/cyw43/PioBusSniffer';
+import { decodeHeader, swap16x2 } from '../simulation/cyw43/PioBusSniffer';
 
 function makeHdr(opts: {
   write: boolean;
@@ -74,14 +74,18 @@ describe('cyw43 barrel exports', () => {
 
 describe('Cyw43Emulator bus handshake', () => {
   it('returns 0 then 0xFEEDBEAD on F0:0x14 reads', () => {
+    // Responses are now wire-encoded for the chosen word-order regime (boot =
+    // halfword-swapped), so decode with swap16x2 to recover the logical value.
     const chip = new Cyw43Emulator();
     const r1 = chip.onCommand(makeHdr({ write: false, func: 0, addr: F0.READ_TEST, length: 4 }), new Uint8Array(0))!;
     const r2 = chip.onCommand(makeHdr({ write: false, func: 0, addr: F0.READ_TEST, length: 4 }), new Uint8Array(0))!;
-    expect(readU32(r1)).toBe(0);
-    expect(readU32(r2)).toBe(TEST_PATTERN);
+    expect(swap16x2(readU32(r1))).toBe(0);
+    expect(swap16x2(readU32(r2))).toBe(TEST_PATTERN);
   });
 
-  it('flips HT_AVAIL after a HT_AVAIL_REQ write', () => {
+  it('reports HT_AVAIL on the clock CSR', () => {
+    // The chip reports ALP+HT available; backplane reads place the value in the
+    // last word, wire-encoded — decode it before checking the bit.
     const chip = new Cyw43Emulator();
     chip.onCommand(
       makeHdr({ write: true, func: 1, addr: F1.SDIO_CHIP_CLOCK_CSR, length: 1 }),
@@ -91,7 +95,7 @@ describe('Cyw43Emulator bus handshake', () => {
       makeHdr({ write: false, func: 1, addr: F1.SDIO_CHIP_CLOCK_CSR, length: 1 }),
       new Uint8Array(0),
     )!;
-    expect(r[0] & ClockCsr.HT_AVAIL).toBeGreaterThan(0);
+    expect(swap16x2(readU32(r.subarray(r.length - 4))) & ClockCsr.HT_AVAIL).toBeGreaterThan(0);
   });
 });
 

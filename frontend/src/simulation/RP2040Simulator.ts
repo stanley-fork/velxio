@@ -400,6 +400,9 @@ export class RP2040Simulator {
     if (this.cyw43) return this.cyw43;
     const emu = new Cyw43Emulator();
     const sniffer = new PioBusSniffer();
+    // The sniffer de-swaps commands/data per the chip's word-order regime,
+    // which the emulator owns (flips at the SPI_BUS_CONTROL write).
+    sniffer.setModeProvider(() => emu.isBigEndian());
     this.cyw43 = emu;
     this.cyw43Sniffer = sniffer;
     this.cyw43Bridge = bridge;
@@ -452,14 +455,26 @@ export class RP2040Simulator {
         if (!tx || !rx) continue;
         const origPush: (v: number) => void = tx.push.bind(tx);
         tx.push = (value: number) => {
-          // Feed the gSPI sniffer; if the command produces a response,
-          // surface it word-by-word into the rxFIFO so the driver's
-          // `pull` instruction reads it back.
+          // Feed the gSPI sniffer; commands that produce a response queue it
+          // for on-demand delivery (see the rxFIFO.pull hook below).
           this.feedCyw43Word(value);
           return origPush(value);
         };
+        // Serve the chip's response when the driver's DMA actually reads the
+        // RX FIFO. Pushing into the FIFO eagerly raced the async DMA/PIO and
+        // the data arrived late or was lost; serving on pull keeps it in lock
+        // step with the driver.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const origPull: () => number = (rx as any).pull.bind(rx);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (rx as any).pull = () =>
+          this.cyw43RxQueue.length > 0 ? (this.cyw43RxQueue.shift() as number) : origPull();
         this.cyw43HookedFifos.push({
-          restore: () => { tx.push = origPush; },
+          restore: () => {
+            tx.push = origPush;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (rx as any).pull = origPull;
+          },
         });
       }
     }
@@ -470,12 +485,10 @@ export class RP2040Simulator {
     if (!this.cyw43Sniffer || !this.cyw43) return;
     for (const ev of this.cyw43Sniffer.feedWord(word)) {
       if (ev.kind === 'payload') {
-        const reply = this.cyw43.onCommand(ev.cmd, ev.payload);
+        const reply = this.cyw43.onCommand(ev.cmd, ev.payload, ev.readBytes);
         if (reply && reply.length > 0) this.queueCyw43Reply(reply);
       }
     }
-    // Drain queued reply words into any state machine that has space.
-    this.drainCyw43RxIntoSomeSM();
   }
 
   private queueCyw43Reply(reply: Uint8Array): void {
@@ -494,23 +507,6 @@ export class RP2040Simulator {
       let w = 0;
       for (let i = 0; i < tail.length; i++) w |= tail[i] << (i * 8);
       this.cyw43RxQueue.push(w >>> 0);
-    }
-  }
-
-  private drainCyw43RxIntoSomeSM(): void {
-    if (!this.rp2040 || this.cyw43RxQueue.length === 0) return;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const pios: any[] = (this.rp2040 as any).pio;
-    for (const pio of pios) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      for (const sm of pio.machines as any[]) {
-        const rx = sm.rxFIFO;
-        if (!rx) continue;
-        while (this.cyw43RxQueue.length > 0 && !rx.full) {
-          rx.push(this.cyw43RxQueue.shift());
-        }
-        if (this.cyw43RxQueue.length === 0) return;
-      }
     }
   }
 

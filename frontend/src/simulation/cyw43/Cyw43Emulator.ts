@@ -88,15 +88,39 @@ export class Cyw43Emulator {
 
   // ── Bus state ────────────────────────────────────────────────────
   private f0Regs = new Uint32Array(16);
-  private clockCsr = ClockCsr.ALP_AVAIL;
+  // Report both ALP and HT clocks available from the start. The driver polls
+  // ALP early (after requesting it) and HT after releasing the WLAN core
+  // (without re-requesting) — a behavioural chip can just have both ready.
+  private clockCsr = ClockCsr.ALP_AVAIL | ClockCsr.HT_AVAIL;
   private readTestPrimed = false;
   private f1Window = 0;
+  /**
+   * gSPI word-order regime. The chip powers up in 16-bit little-endian: the
+   * driver drives all register access through read_reg_u32_swap /
+   * write_reg_u32_swap (which apply SWAP32) until it writes SPI_BUS_CONTROL
+   * (F0 0x00) with WORD_LENGTH_32 | ENDIAN_BIG, after which it switches to
+   * 32-bit big-endian and stops swapping. We must mirror both regimes when we
+   * encode read responses (and, later, when decoding commands/write-data).
+   * See project/picow-wifi-emulation/research/01-gspi-bus-protocol.md §3.
+   */
+  private bigEndian = false;
+  private busControl = 0;
+  private _rtN = 0;
+  /** F2 channel usable. We have no real firmware to boot, so it's always ready. */
+  private f2Ready = true;
+  /** Echo store for direct F1 registers the driver writes-then-reads. */
+  private f1Mem = new Map<number, number>();
   /** Flips true on the first read of F0:0x14. Available via isChipReady() for diagnostics. */
   private chipReady = false;
 
   // ── Sequence counters (host expects monotonic) ──────────────────
   private hostToChipSeq = 0;
   private chipToHostSeq = 0;
+  // SDPCM bus flow-control: the host may only transmit F2 data while the
+  // chip-advertised credit is ahead of its transmit sequence number. We keep
+  // the credit a window beyond the number of host frames we've consumed.
+  private hostTxFrames = 0;
+  private static readonly CREDIT_WINDOW = 4;
 
   // ── WiFi state ──────────────────────────────────────────────────
   private linkState: LinkState = 'down';
@@ -121,6 +145,27 @@ export class Cyw43Emulator {
     this.staMac = opts.staMac ?? DEFAULT_STA_MAC;
     // F2 ready at boot — driver tolerates this being true early.
     this.f0Regs[F0.F2_INFO >> 2] = 0x01;
+    // Send an initial SDPCM control frame so the host's first F2 poll grants it
+    // bus credits (otherwise its very first IOCTL stalls forever and wifi_on
+    // times out). Content is a benign empty control frame; only the credit
+    // byte matters here.
+    this.pushFrame(encodeSdpcm({
+      channel: SdpcmChannel.CONTROL,
+      sequence: this.chipToHostSeq++ & 0xff,
+      payload: new Uint8Array(CDC_HEADER_LEN),
+    }));
+  }
+
+  /**
+   * Queue a chip→host SDPCM frame, stamping the bus-credit byte so the host
+   * stays un-stalled, and raise the F2 packet-available interrupt.
+   */
+  private pushFrame(sdpcm: Uint8Array): void {
+    if (sdpcm.length > 9) {
+      sdpcm[9] = (this.hostTxFrames + Cyw43Emulator.CREDIT_WINDOW) & 0xff;
+    }
+    this.inboundEvents.push(sdpcm);
+    this.f0Regs[F0.INTERRUPT >> 2] |= 0x40;
   }
 
   // ── Listener registration ───────────────────────────────────────
@@ -154,11 +199,15 @@ export class Cyw43Emulator {
    * payload carries data the driver wrote; for RD commands the chip
    * returns a Uint8Array of length ``cmd.length``.
    */
-  onCommand(cmd: Cyw43Cmd, payload: Uint8Array): Uint8Array | null {
-    if (cmd.function === 0) return this.handleF0(cmd, payload);
-    if (cmd.function === 1) return this.handleF1(cmd, payload);
-    if (cmd.function === 2) return this.handleF2(cmd, payload);
-    return cmd.write ? null : new Uint8Array(cmd.length);
+  onCommand(cmd: Cyw43Cmd, payload: Uint8Array, readBytes?: number): Uint8Array | null {
+    // readBytes = bytes the host will clock back (from the PIO in-count word).
+    // It can exceed cmd.length for backplane reads (response-delay padding), so
+    // the response must be sized by it, not by the command's length field.
+    const rx = readBytes ?? cmd.length;
+    if (cmd.function === 0) return this.handleF0(cmd, payload, rx);
+    if (cmd.function === 1) return this.handleF1(cmd, payload, rx);
+    if (cmd.function === 2) return this.handleF2(cmd, payload, rx);
+    return cmd.write ? null : new Uint8Array(rx);
   }
 
   /**
@@ -172,16 +221,37 @@ export class Cyw43Emulator {
       sequence: this.chipToHostSeq++ & 0xff,
       payload: ether,
     });
-    this.inboundEvents.push(sdpcm);
-    // Light up the F2 packet-available bit so the driver polls.
-    this.f0Regs[F0.INTERRUPT >> 2] |= 0x40;
+    this.pushFrame(sdpcm);
   }
 
   // ── F0: gSPI bus control ────────────────────────────────────────
 
-  private handleF0(cmd: Cyw43Cmd, payload: Uint8Array): Uint8Array | null {
+  /**
+   * Encode a 32-bit register value into the RX-FIFO word so that, after the
+   * host's DMA byte-swap (+ SWAP32 in boot mode), the driver recovers `value`.
+   * Calibrated against the real READ_TEST handshake (boot mode must yield
+   * 0xFEEDBEAD). queueReply packs these bytes little-endian back into the word.
+   */
+  private encodeReadWord(value: number): number {
+    // Boot (16-bit-LE, driver SWAP32s): chip drives the halfword-swapped value.
+    // 32-BE (after SPI_BUS_CONTROL): big-endian, so the value is byte-reversed
+    // (symmetric with the bswap32 command decode). Validated: the clock-CSR
+    // ALP/HT bits land in the byte the driver checks.
+    return this.bigEndian ? bswap32(value >>> 0) : swap16(value >>> 0);
+  }
+
+  /** True once the driver has switched the bus to 32-bit big-endian. */
+  isBigEndian(): boolean { return this.bigEndian; }
+
+  private handleF0(cmd: Cyw43Cmd, payload: Uint8Array, rxBytes: number): Uint8Array | null {
     if (cmd.write) {
       const word = readU32LE(payload, 0);
+      // SPI_BUS_CONTROL (F0 0x00) write flips the chip out of the 16-bit-LE
+      // boot regime into 32-bit big-endian. After this, no more SWAP32.
+      if (cmd.address === F0.BUS_CTRL) {
+        this.busControl = word;
+        this.bigEndian = true;
+      }
       const idx = cmd.address >>> 2;
       if (idx >= 0 && idx < this.f0Regs.length) this.f0Regs[idx] = word;
       if (cmd.address === F0.RESET_BP) this.f1Window = 0;
@@ -191,24 +261,53 @@ export class Cyw43Emulator {
       }
       return null;
     }
-    const out = new Uint8Array(cmd.length);
+    // F0 (bus) reads have no response-delay padding: the value is the first
+    // word the host clocks back.
+    const out = new Uint8Array(Math.max(4, rxBytes));
+    let value = 0;
     if (cmd.address === F0.READ_TEST) {
-      const value = this.readTestPrimed ? TEST_PATTERN : 0;
+      // READ_TEST is only read during the boot (16-bit-LE) resync. If the
+      // driver's bus_init do/while retried, the chip is back in boot mode, so
+      // reset the regime flag (otherwise the retry's swapped commands decode
+      // as 32-BE and turn to garbage).
+      this.bigEndian = false;
+      // First read returns 0 (chip not ready yet), then the magic — models the
+      // real chip and exercises the driver's retry loop.
+      value = this.readTestPrimed ? TEST_PATTERN : 0;
       this.readTestPrimed = true;
-      writeU32LE(out, 0, value);
       this.chipReady = true;
+    } else if (cmd.address === F0.BUS_CTRL) {
+      value = this.busControl;
+    } else if (cmd.address === F0.STATUS) {
+      value = this.spiStatus();
+    } else if (cmd.address === F0.INTR_STATUS) {
+      // SPI_INTERRUPT_REGISTER (16-bit): report ONLY F2_PACKET_AVAILABLE when a
+      // frame is queued — never the error bits (COMMAND_ERROR/DATA_ERROR/
+      // F1_OVERFLOW), which would send the driver into an error-recovery loop.
+      value = this.inboundEvents.length > 0 ? 0x20 : 0;
     } else {
       const idx = cmd.address >>> 2;
-      if (idx >= 0 && idx < this.f0Regs.length) {
-        writeU32LE(out, 0, this.f0Regs[idx]);
-      }
+      if (idx >= 0 && idx < this.f0Regs.length) value = this.f0Regs[idx];
     }
+    writeU32LE(out, 0, this.encodeReadWord(value));
     return out;
+  }
+
+  /** SPI_STATUS_REGISTER (F0 0x08): advertise F2 ready / packet-available. */
+  private spiStatus(): number {
+    let s = 0;
+    if (this.f2Ready) s |= 0x20; // STATUS_F2_RX_READY
+    if (this.inboundEvents.length > 0) {
+      // F2 packet available + its length in STATUS_F2_PKT_LEN (shift 9).
+      const len = this.inboundEvents[0].length & 0x7ff;
+      s |= 0x100 | (len << 9);
+    }
+    return s >>> 0;
   }
 
   // ── F1: backplane window ────────────────────────────────────────
 
-  private handleF1(cmd: Cyw43Cmd, payload: Uint8Array): Uint8Array | null {
+  private handleF1(cmd: Cyw43Cmd, payload: Uint8Array, rxBytes: number): Uint8Array | null {
     if (cmd.write) {
       if (cmd.address === F1.SDIO_BACKPLANE_ADDRESS_LOW) {
         this.f1Window = (this.f1Window & 0xffff00) | (payload[0] ?? 0);
@@ -220,28 +319,61 @@ export class Cyw43Emulator {
         const requested = payload[0] ?? 0;
         if (requested & ClockCsr.ALP_AVAIL_REQ) this.clockCsr |= ClockCsr.ALP_AVAIL;
         if (requested & ClockCsr.HT_AVAIL_REQ) this.clockCsr |= ClockCsr.HT_AVAIL;
+      } else if (cmd.address >= 0x10000 && cmd.address <= 0x1ffff) {
+        // Direct F1 register (sleep/wakeup CSR, watermark, frame control, …):
+        // remember the written byte so the driver's write-then-poll succeeds.
+        this.f1Mem.set(cmd.address, payload[0] ?? 0);
       }
       // Auto-increment window pointer for sequential streaming (firmware,
       // NVRAM, CLM blob). We don't store any of those bytes — the host
       // driver never reads them back.
-      if (cmd.increment) this.f1Window += cmd.length;
+      if (cmd.increment) this.f1Window += payload.length;
       return null;
     }
 
-    const out = new Uint8Array(cmd.length);
+    // Backplane (F1) reads carry a response-delay pad: the host reads the data
+    // word LAST (buf32[index-1]), so the value goes in the final 4 bytes.
+    let value = 0;
     if (cmd.address === F1.SDIO_CHIP_CLOCK_CSR) {
-      out[0] = this.clockCsr & 0xff;
+      // ALP requested on first poll, HT once the WLAN core is released. Both
+      // are reported available so the poll loops (x10 / x1000) pass fast.
+      value = this.clockCsr & 0xff;
     } else if (cmd.address === F1.SDIO_INT_STATUS) {
-      // Signal "F2 packet available" if we have queued frames for the host.
-      if (this.inboundEvents.length > 0) writeU32LE(out, 0, 0x40);
+      if (this.inboundEvents.length > 0) value = 0x40;
+    } else if (cmd.address === 0x1001f) {
+      // SDIO_SLEEP_CSR: echo back with DeviceOn set so the wake poll passes.
+      value = (this.f1Mem.get(0x1001f) ?? 0) | 0x02;
+    } else if (cmd.address >= 0x10000 && cmd.address <= 0x1ffff) {
+      value = this.f1Mem.get(cmd.address) ?? 0;
+    } else if (this.f1ReadValue) {
+      value = this.f1ReadValue(this.f1Window);
+    } else {
+      // Windowed backplane read (core wrappers / chipcommon / RAM). The driver
+      // checks each core is clocked + out of reset via the AI wrapper:
+      //   +0x408 AI_IOCTRL    -> must read SICF_CLOCK_EN(0x1), FGC(0x2) clear
+      //   +0x800 AI_RESETCTRL -> must read AIRC_RESET(0x1) clear
+      const off = cmd.address & 0xfff;
+      if (off === 0x408) value = 0x01;
+      else if (off === 0x800) value = 0x00;
+      else value = 0;
     }
-    if (cmd.increment) this.f1Window += cmd.length;
+    return this.backplaneRead(value, rxBytes);
+  }
+
+  /** Optional hook for chip-ID / backplane-memory reads (set by tests). */
+  private f1ReadValue: ((addr: number) => number) | null = null;
+
+  /** Build an F1 read response of rxBytes with the value word at the end. */
+  private backplaneRead(value: number, rxBytes: number): Uint8Array {
+    const n = Math.max(4, rxBytes);
+    const out = new Uint8Array(n);
+    writeU32LE(out, n - 4, this.encodeReadWord(value >>> 0));
     return out;
   }
 
   // ── F2: SDPCM frame channel ─────────────────────────────────────
 
-  private handleF2(cmd: Cyw43Cmd, _payload: Uint8Array): Uint8Array | null {
+  private handleF2(cmd: Cyw43Cmd, _payload: Uint8Array, _rxBytes: number): Uint8Array | null {
     if (cmd.write) {
       const frame = decodeSdpcm(_payload);
       if (frame) this.handleHostFrame(frame.channel, frame.payload);
@@ -266,6 +398,8 @@ export class Cyw43Emulator {
   // ── Host → chip frame dispatch ──────────────────────────────────
 
   private handleHostFrame(channel: number, payload: Uint8Array): void {
+    // Count every host F2 frame so the credit we advertise stays ahead.
+    this.hostTxFrames++;
     if (channel === SdpcmChannel.CONTROL) {
       this.handleIoctl(payload);
     } else if (channel === SdpcmChannel.DATA) {
@@ -382,8 +516,7 @@ export class Cyw43Emulator {
       sequence: this.chipToHostSeq++ & 0xff,
       payload: replyCdc,
     });
-    this.inboundEvents.push(sdpcm);
-    this.f0Regs[F0.INTERRUPT >> 2] |= 0x40;
+    this.pushFrame(sdpcm);
   }
 
   // ── Concrete IOCTL handlers ─────────────────────────────────────
@@ -480,8 +613,7 @@ export class Cyw43Emulator {
       payload,
       this.staMac,
     );
-    this.inboundEvents.push(frame);
-    this.f0Regs[F0.INTERRUPT >> 2] |= 0x40;
+    this.pushFrame(frame);
   }
 
   private hasAnyMaskBitsSet(): boolean {
@@ -518,6 +650,17 @@ export class Cyw43Emulator {
 
 function safe<T>(cb: (ev: T) => void, ev: T): void {
   try { cb(ev); } catch { /* harness — never throw across listener */ }
+}
+
+/** Reverse the 4 bytes of a 32-bit word (mirrors the host DMA's bswap). */
+function bswap32(x: number): number {
+  const v = x >>> 0;
+  return (((v & 0xff) << 24) | ((v & 0xff00) << 8) | ((v >>> 8) & 0xff00) | (v >>> 24)) >>> 0;
+}
+/** Swap the two 16-bit halfwords (mirrors the driver's SWAP32/__swap16x2). */
+function swap16(x: number): number {
+  const v = x >>> 0;
+  return (((v & 0xffff) << 16) | (v >>> 16)) >>> 0;
 }
 
 function readU32LE(buf: Uint8Array, off: number): number {
