@@ -283,14 +283,19 @@ describe.skipIf(!process.env.CYW43_HARNESS)('Pico W cyw43 boot harness (investig
         // once all TX FIFOs are drained to avoid spinning when idle.
         if (typeof pio.run === 'function') {
           pio.run = () => {
-            for (let i = 0; i < 1_000_000 && !pio.stopped; i++) {
+            // Cap sized for the largest real transfer (260-word F2 IOCTL write =
+            // ~16k steps); firmware data is dropped so it never needs deep drain.
+            // Break out fast once all TX FIFOs are empty (check every 64 steps,
+            // require a couple of empty checks so the PIO still raises TXSTALL).
+            let idleChecks = 0;
+            for (let i = 0; i < 64_000 && !pio.stopped; i++) {
               pio.step();
-              if (i >= 2000 && (i & 1023) === 0) {
+              if ((i & 63) === 0) {
                 let pending = false;
                 for (const m of pio.machines) {
                   if (m.txFIFO && !m.txFIFO.empty) { pending = true; break; }
                 }
-                if (!pending) break;
+                if (pending) { idleChecks = 0; } else if (++idleChecks >= 2) break;
               }
             }
             if (!pio.stopped) pio.runTimer = setTimeout(() => pio.run(), 0);
@@ -370,7 +375,7 @@ describe.skipIf(!process.env.CYW43_HARNESS)('Pico W cyw43 boot harness (investig
         const ipsr = (core?.IPSR ?? 0) & 0x3f; // 0=thread, else exception number
         ipsrHist.set(ipsr, (ipsrHist.get(ipsr) ?? 0) + 1);
       }, 20);
-      const deadline = setTimeout(finish, 70_000);
+      const deadline = setTimeout(finish, 165_000);
       function finish() {
         if (finished) return;
         finished = true;
@@ -444,5 +449,5 @@ describe.skipIf(!process.env.CYW43_HARNESS)('Pico W cyw43 boot harness (investig
     console.log('\n===== reachedImport=' + result.reachedImport + ' reachedActive=' + result.reachedActive + ' =====');
 
     expect(result.trace.length).toBeGreaterThan(0);
-  }, 90_000);
+  }, 185_000);
 });

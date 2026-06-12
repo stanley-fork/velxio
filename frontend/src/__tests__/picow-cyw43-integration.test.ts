@@ -114,7 +114,9 @@ describe('Cyw43Emulator IOCTL — SET_SSID Velxio-GUEST', () => {
     const events = pushIoctl(chip, WLC.SET_SSID, payload, 1);
 
     expect(chip.getLinkState()).toBe('up');
-    expect(events.some((e) => e.type === WLC_E.LINK && e.reason === 1)).toBe(true);
+    // Link-up is signalled by the LINK event's flags bit 0 (the driver checks
+    // ev->flags & 1, not the reason), plus a WLC_SUP_KEYED supplicant event.
+    expect(events.some((e) => e.type === WLC_E.LINK && (e.flags & 1) === 1)).toBe(true);
     expect(events.some((e) => e.type === WLC_E.SET_SSID && e.status === 0)).toBe(true);
   });
 });
@@ -187,10 +189,10 @@ function pushIoctl(
   cmd: number,
   payload: Uint8Array,
   isSet: number,
-): Array<{ type: number; status: number; reason: number; data: Uint8Array }> {
+): Array<{ type: number; status: number; reason: number; flags: number; data: Uint8Array }> {
   const sdpcm = encodeIoctlRequest(0, cmd, isSet, 0, payload);
   chip.onCommand(makeHdr({ write: true, func: 2, addr: 0, length: sdpcm.length, inc: true }), sdpcm);
-  const events: Array<{ type: number; status: number; reason: number; data: Uint8Array }> = [];
+  const events: Array<{ type: number; status: number; reason: number; flags: number; data: Uint8Array }> = [];
   for (let i = 0; i < 32; i++) {
     const out = chip.onCommand(makeHdr({ write: false, func: 2, addr: 0, length: 1600, inc: true }), new Uint8Array(0))!;
     if (!out || out.every((b) => b === 0)) break;
@@ -198,7 +200,7 @@ function pushIoctl(
     if (!f) break;
     if (f.channel === SdpcmChannel.EVENT) {
       const ev = decodeEventBody(f.payload);
-      if (ev) events.push({ type: ev.eventType, status: ev.status, reason: ev.reason, data: ev.data });
+      if (ev) events.push({ type: ev.eventType, status: ev.status, reason: ev.reason, flags: ev.flags, data: ev.data });
     } else if (f.channel === SdpcmChannel.CONTROL) {
       decodeCdc(f.payload); // ignore — we just care about events
     }

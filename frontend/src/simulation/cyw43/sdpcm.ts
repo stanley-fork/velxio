@@ -141,28 +141,37 @@ export function encodeEventFrame(
   reason: number,
   payload: Uint8Array = new Uint8Array(0),
   srcMac: Uint8Array = new Uint8Array([0, 0, 0, 0, 0, 0]),
+  flags = 0,
 ): Uint8Array {
   // Event SDPCM payload layout used by Broadcom firmware:
+  //   BDC_HDR (4 bytes)            flags, priority, interface, data_offset
   //   ETHER_HDR (14 bytes)         dest+src+ethertype
   //   BCMETH_HDR (10 bytes)        Broadcom OUI tag
   //   EVENT_HDR (48 bytes)         event_type, status, …
   //   <payload>
+  // The driver reads the BDC header at the SDPCM header_length, then takes the
+  // ethernet payload at bdc + 4 + (data_offset<<2). Without the BDC it reads
+  // the broadcast-MAC byte as data_offset and the payload points out of bounds.
   const ETHERTYPE_BRCM = 0x886c;
+  const BDC_LEN = 4;
   const ETH_LEN = 14;
   const BCMETH_LEN = 10;
   const EVENT_LEN = 48;
-  const total = ETH_LEN + BCMETH_LEN + EVENT_LEN + payload.length;
+  const total = BDC_LEN + ETH_LEN + BCMETH_LEN + EVENT_LEN + payload.length;
   const buf = new Uint8Array(total);
   const dv = new DataView(buf.buffer);
+  // BDC header: data_offset = 0 (ethernet immediately follows), interface 0.
+  // buf[0..3] stay zero.
+  const eth = BDC_LEN;
   // Ethernet header: dst = broadcast, src = chip MAC, ethertype = BRCM
-  for (let i = 0; i < 6; i++) buf[i] = 0xff;
-  buf.set(srcMac, 6);
-  dv.setUint16(12, ETHERTYPE_BRCM, false);
+  for (let i = 0; i < 6; i++) buf[eth + i] = 0xff;
+  buf.set(srcMac, eth + 6);
+  dv.setUint16(eth + 12, ETHERTYPE_BRCM, false);
 
   // Broadcom Ethernet header (subtype/len/ver/oui/usr_subtype)
-  let off = ETH_LEN;
+  let off = eth + ETH_LEN;
   dv.setUint16(off + 0, 0, false);
-  dv.setUint16(off + 2, total - ETH_LEN, false);
+  dv.setUint16(off + 2, total - BDC_LEN - ETH_LEN, false);
   buf[off + 4] = 0x02; // ver
   buf[off + 5] = 0x00; // oui[0]
   buf[off + 6] = 0x10; // oui[1]
@@ -172,7 +181,7 @@ export function encodeEventFrame(
   // EVENT_HDR (big-endian — Broadcom firmware writes this BE)
   off += BCMETH_LEN;
   dv.setUint16(off + 0, 1, false); // ver
-  dv.setUint16(off + 2, 0, false); // flags
+  dv.setUint16(off + 2, flags & 0xffff, false); // flags (bit 0 = link up for WLC_E_LINK)
   dv.setUint32(off + 4, eventType >>> 0, false);
   dv.setUint32(off + 8, status >>> 0, false);
   dv.setUint32(off + 12, reason >>> 0, false);
@@ -191,24 +200,27 @@ export function encodeEventFrame(
   });
 }
 
-/** Decode an event payload — returns the event_type / status / reason. */
+/** Decode an event payload — returns the flags / event_type / status / reason. */
 export function decodeEventBody(payload: Uint8Array): {
+  flags: number;
   eventType: number;
   status: number;
   reason: number;
   datalen: number;
   data: Uint8Array;
 } | null {
+  const BDC_LEN = 4;
   const ETH_LEN = 14;
   const BCMETH_LEN = 10;
   const EVENT_LEN = 48;
-  if (payload.length < ETH_LEN + BCMETH_LEN + EVENT_LEN) return null;
+  if (payload.length < BDC_LEN + ETH_LEN + BCMETH_LEN + EVENT_LEN) return null;
   const dv = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
-  const off = ETH_LEN + BCMETH_LEN;
+  const off = BDC_LEN + ETH_LEN + BCMETH_LEN;
+  const flags = dv.getUint16(off + 2, false);
   const eventType = dv.getUint32(off + 4, false);
   const status = dv.getUint32(off + 8, false);
   const reason = dv.getUint32(off + 12, false);
   const datalen = dv.getUint32(off + 20, false);
   const data = payload.slice(off + EVENT_LEN, off + EVENT_LEN + datalen);
-  return { eventType, status, reason, datalen, data };
+  return { flags, eventType, status, reason, datalen, data };
 }

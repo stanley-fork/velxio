@@ -101,8 +101,18 @@ export const WLC_E = {
   SCAN_COMPLETE: 26,
   JOIN_START: 36,
   ASSOC_START: 38,
+  PSK_SUP: 46, // WPA supplicant state; status 6 (WLC_SUP_KEYED) => key exchange done
   ESCAN_RESULT: 69,
 } as const;
+
+// WLC_E_PSK_SUP status values (the WPA supplicant state machine). The driver
+// only marks WIFI_JOIN_STATE_KEYED when it sees status == KEYED.
+export const WLC_SUP = {
+  KEYED: 6, // WLC_SUP_KEYED — 4-way handshake complete, link may come up
+} as const;
+
+// LINK event flag: bit 0 set means "link up" (cyw43_ll.c checks ev->flags & 1).
+export const WLC_E_LINK_UP_FLAG = 1;
 
 // ── Status codes used in event payloads ───────────────────────────
 export const WLC_E_STATUS = {

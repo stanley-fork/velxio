@@ -38,6 +38,8 @@ import {
   WLC,
   WLC_E,
   WLC_E_STATUS,
+  WLC_E_LINK_UP_FLAG,
+  WLC_SUP,
   u32le,
 } from './constants';
 import {
@@ -130,6 +132,13 @@ export class Cyw43Emulator {
   private ap: VirtualAp;
   private eventMask = new Uint8Array(32); // up to 256 event types
   private inboundEvents: Uint8Array[] = [];
+  // Async events raised WHILE handling an IOCTL are deferred until just after
+  // the IOCTL response is queued, mirroring the real chip: it answers the
+  // ioctl, THEN emits async events. Critical for SET_SSID — the driver only
+  // sets wifi_join_state=ACTIVE after cyw43_ll_wifi_join returns, so join
+  // events delivered before that would be wiped out (link never comes up).
+  private deferEvents = false;
+  private pendingEvents: Uint8Array[] = [];
 
   // ── Debug counters (investigation harness only) ─────────────────
   private _dbgF2Writes = 0;       // F2 write transfers received
@@ -484,6 +493,8 @@ export class Cyw43Emulator {
     const cdc = decodeCdc(cdcBytes);
     if (!cdc) { this._dbgIoctlFail++; return; }
     this._dbgLastIoctl = cdc.cmd;
+    // Defer any async events the handler raises until after the ioctl reply.
+    this.deferEvents = true;
     // SDPCM_SET is 0x2 (bit 1) in the CDC flags; SDPCM_GET is 0. (cyw43_ll.c)
     const ioctlKind = cdc.flags & 0x2;
     const isGet = ioctlKind === 0;
@@ -589,6 +600,15 @@ export class Cyw43Emulator {
       payload: replyCdc,
     });
     this.pushFrame(sdpcm);
+
+    // Now release any deferred async events AFTER the ioctl response, so the
+    // driver reads the reply (do_ioctl returns) before processing them.
+    this.deferEvents = false;
+    if (this.pendingEvents.length > 0) {
+      const evs = this.pendingEvents;
+      this.pendingEvents = [];
+      for (const f of evs) this.pushFrame(f);
+    }
   }
 
   // ── Concrete IOCTL handlers ─────────────────────────────────────
@@ -611,7 +631,15 @@ export class Cyw43Emulator {
       this.queueEvent(WLC_E.ASSOC, WLC_E_STATUS.SUCCESS, 0);
       this.queueEvent(WLC_E.SET_SSID, WLC_E_STATUS.SUCCESS, 0,
         encodeSetSsidPayload(ssid));
-      this.queueEvent(WLC_E.LINK, WLC_E_STATUS.SUCCESS, 1 /* link up flag */);
+      // LINK up: the driver checks ev->flags & 1 (NOT the reason) to mark the
+      // link up, and only sets WIFI_JOIN_STATE_LINK when that bit is set.
+      this.queueEvent(WLC_E.LINK, WLC_E_STATUS.SUCCESS, 0, new Uint8Array(0),
+        WLC_E_LINK_UP_FLAG);
+      // Supplicant "keyed": for a secured join the driver needs
+      // WIFI_JOIN_STATE_KEYED before it declares the link up (open networks
+      // preset it, but MicroPython's connect(ssid, "") still configures the
+      // WPA supplicant). Emit WLC_SUP_KEYED so the 4-bit join state completes.
+      this.queueEvent(WLC_E.PSK_SUP, WLC_SUP.KEYED, 0);
       this.linkState = 'up';
       this.fireConnect(ssid);
     } else {
@@ -638,16 +666,20 @@ export class Cyw43Emulator {
       const val = dv.getUint32(4, true);
       if (mask & 0x1) this.fireLed((val & 0x1) === 0x1);
     }
-    // bsscfg:event_msgs payload: 4-byte cfg index + 16-byte mask
-    if (name === 'bsscfg:event_msgs' && value.length >= 4 + 16) {
-      const mask = value.slice(4, 4 + 16);
+    // bsscfg:event_msgs (and plain event_msgs) payload: 4-byte bsscfg index
+    // followed by the event bitmask. Store the buffer VERBATIM (index included)
+    // so the bitmask lines up at offset 4 — exactly where queueEvent and
+    // hasAnyMaskBitsSet read it (eventMask[4 + (eventType>>3)]). Slicing the
+    // index off here mis-aligned the mask by 4 bytes, so the join events
+    // (AUTH/LINK/PSK_SUP) were dropped and the link never came up.
+    if ((name === 'bsscfg:event_msgs' || name === 'event_msgs') && value.length >= 4 + 4) {
       this.eventMask = new Uint8Array(32);
-      this.eventMask.set(mask);
+      this.eventMask.set(value.subarray(0, Math.min(value.length, 32)));
     }
     // sup_wpa_psk / wsec_pmk / passphrase — accept silently.
   }
 
-  private handleGetVar(name: string, _outlen: number): Uint8Array {
+  private handleGetVar(name: string, outlen: number): Uint8Array {
     if (name === 'cur_etheraddr') {
       return new Uint8Array(this.staMac);
     }
@@ -655,7 +687,15 @@ export class Cyw43Emulator {
       // Synthetic firmware version banner; the driver only uses the prefix.
       return new TextEncoder().encode('velxio-cyw43-emu 1.0\0');
     }
-    return new Uint8Array(0);
+    // Every other GET must return a ZERO-FILLED buffer of the size the driver
+    // asked for — NEVER an empty response. cyw43_do_ioctl only memmoves the
+    // bytes we return over the driver's request buffer, so an empty reply
+    // leaves the request bytes in place. Several GETs then parse a leading u32
+    // as a count/length and run away: e.g. cyw43_ll_wifi_update_multicast_filter
+    // reads mcast_list's first word as the address count and loops that many
+    // times (the ASCII "mcas" => ~1.9e9 iterations, which read out of bounds
+    // and hang wifi_on). Zeros => count 0 / status 0 (success) everywhere.
+    return new Uint8Array(Math.max(4, Math.min(outlen, 1536)));
   }
 
   // ── Event queueing ─────────────────────────────────────────────
@@ -665,6 +705,7 @@ export class Cyw43Emulator {
     status: number,
     reason: number,
     payload: Uint8Array = new Uint8Array(0),
+    flags = 0,
   ): void {
     // Honour the host's event mask if it's been set; events outside the
     // mask are dropped on the floor (the chip wouldn't deliver them).
@@ -684,8 +725,10 @@ export class Cyw43Emulator {
       reason,
       payload,
       this.staMac,
+      flags,
     );
-    this.pushFrame(frame);
+    if (this.deferEvents) this.pendingEvents.push(frame);
+    else this.pushFrame(frame);
   }
 
   private hasAnyMaskBitsSet(): boolean {
