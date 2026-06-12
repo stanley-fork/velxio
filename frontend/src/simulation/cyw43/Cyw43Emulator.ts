@@ -55,6 +55,7 @@ import {
   DEFAULT_STA_MAC,
   type VirtualAp,
 } from './virtual-ap';
+import { DEFAULT_VNET, virtualNetReply, type VirtualNetConfig } from './virtualNet';
 import type { Cyw43Cmd } from './PioBusSniffer';
 
 // ── Public event surface ────────────────────────────────────────────
@@ -80,6 +81,12 @@ export interface Cyw43EmulatorOptions {
   staMac?: Uint8Array;
   /** Optional clock for tests. */
   now?: () => number;
+  /**
+   * Self-contained virtual network (DHCP/ARP responder). Defaults to on so a
+   * joined STA gets an IP with no backend. Pass `null` when an external bridge
+   * owns the network, or an object to override the addressing.
+   */
+  virtualNet?: VirtualNetConfig | null;
 }
 
 type Listener<T> = (ev: T) => void;
@@ -130,6 +137,7 @@ export class Cyw43Emulator {
   private currentSsid = '';
   private staMac: Uint8Array;
   private ap: VirtualAp;
+  private virtualNet: VirtualNetConfig | null;
   private eventMask = new Uint8Array(32); // up to 256 event types
   private inboundEvents: Uint8Array[] = [];
   // Async events raised WHILE handling an IOCTL are deferred until just after
@@ -172,6 +180,7 @@ export class Cyw43Emulator {
     this.bootMs = this.now();
     this.ap = opts.ap ?? DEFAULT_AP;
     this.staMac = opts.staMac ?? DEFAULT_STA_MAC;
+    this.virtualNet = opts.virtualNet === undefined ? DEFAULT_VNET : opts.virtualNet;
     // F2 ready at boot — driver tolerates this being true early.
     this.f0Regs[F0.F2_INFO >> 2] = 0x01;
     // Send an initial SDPCM control frame so the host's first F2 poll grants it
@@ -263,10 +272,15 @@ export class Cyw43Emulator {
    * receives bytes destined for the simulated STA's IP address.
    */
   injectPacket(ether: Uint8Array): void {
+    // Chip -> host DATA frames carry the same 4-byte BDC header as events: the
+    // driver reads bdc at SDPCM header_length, then the ethernet at bdc + 4 +
+    // (data_offset<<2). data_offset 0 => ethernet immediately follows.
+    const bdc = new Uint8Array(4 + ether.length);
+    bdc.set(ether, 4);
     const sdpcm = encodeSdpcm({
       channel: SdpcmChannel.DATA,
       sequence: this.chipToHostSeq++ & 0xff,
-      payload: ether,
+      payload: bdc,
     });
     this.pushFrame(sdpcm);
   }
@@ -477,11 +491,18 @@ export class Cyw43Emulator {
     if (channel === SdpcmChannel.CONTROL) {
       this.handleIoctl(payload);
     } else if (channel === SdpcmChannel.DATA) {
-      // Outbound Ethernet frame. Strip BDC header (4 bytes) if present;
-      // for the test harness we forward raw payload.
+      // Outbound Ethernet frame. Strip the 4-byte BDC header the driver
+      // prepends, then forward to any external bridge.
       const BDC = 4;
-      const ether = payload.length >= BDC ? payload.subarray(BDC) : payload;
+      const ether = payload.length >= BDC ? new Uint8Array(payload.subarray(BDC)) : payload;
       this.firePacketOut(ether);
+      // Self-contained virtual network: answer DHCP / ARP so a freshly-joined
+      // STA gets an IP and the link advances NOIP -> UP (isconnected == True).
+      // Disabled when an external bridge owns the network.
+      if (this.virtualNet) {
+        const reply = virtualNetReply(this.virtualNet, ether);
+        if (reply) this.injectPacket(reply);
+      }
     }
     // Channel 1 (events) is chip → host only.
   }

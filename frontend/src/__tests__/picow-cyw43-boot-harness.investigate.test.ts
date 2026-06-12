@@ -124,8 +124,18 @@ describe.skipIf(!process.env.CYW43_HARNESS)('Pico W cyw43 boot harness (investig
       const funcHist = [0, 0, 0, 0]; // count of decoded gSPI functions F0..F3
       const cmdCounts = new Map<string, number>();
       let ledOn = false;
+      let packetsOut = 0;
+      const packetLog: string[] = [];
       chip.onLed((e) => { ledOn = e.on; trace.push(`** LED ${e.on ? 'ON' : 'OFF'} **`); });
       chip.onConnect((e) => trace.push(`** WIFI CONNECT ssid=${e.ssid} **`));
+      chip.onPacketOut((e) => {
+        packetsOut++;
+        if (packetLog.length < 12) {
+          const et = e.ether.length >= 14 ? ((e.ether[12] << 8) | e.ether[13]) : 0;
+          packetLog.push(`pkt ${e.ether.length}B ethertype=0x${et.toString(16)}` +
+            (et === 0x0806 ? ' ARP' : et === 0x0800 ? ' IPv4' : ''));
+        }
+      });
 
       const key = (c: Cyw43Cmd) =>
         `${c.write ? 'WR' : 'RD'} F${c.function} 0x${c.address.toString(16)} len=${c.length}`;
@@ -412,6 +422,7 @@ describe.skipIf(!process.env.CYW43_HARNESS)('Pico W cyw43 boot harness (investig
           `===== IOCTL ${chip.debugIoctlStats()} =====\n` +
           '===== IOCTL SEQUENCE =====\n' + chip.debugIoctlLog().map((s, i) => `  ${i}: ${s}`).join('\n') + '\n' +
           `===== restartsAtClm=${restartsAtClm} restartsFinal=${restartCount} rxPulled=${rxPulled} =====\n` +
+          `===== packetsOut=${packetsOut} =====\n` + packetLog.map((s) => `  ${s}`).join('\n') + '\n' +
           `===== CPU FAULTS faultCount=${faultCount} =====\n` + faultLog.join('\n') + '\n' +
           '===== HOT PCs (busy-wait localization) =====\n' +
           [...pcHist.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12)
