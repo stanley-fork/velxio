@@ -29,7 +29,9 @@
         "message": "Bibliothek fehlt? Installieren Sie sie über den",
         "cta": "Bibliotheksmanager",
         "dismiss": "Schließen"
-      }
+      },
+      "exportBom": "Stückliste exportieren (CSV — Pro)",
+      "exportScreenshot": "Schaltplan als Bild exportieren (PNG — Pro)"
     },
     "fileExplorer": {
       "workspace": "ARBEITSBEREICH",

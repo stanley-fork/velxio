@@ -29,7 +29,9 @@
         "message": "Bibliothèque manquante ? Installez-la depuis le",
         "cta": "Gestionnaire de bibliothèques",
         "dismiss": "Ignorer"
-      }
+      },
+      "exportBom": "Exporter la nomenclature (CSV — Pro)",
+      "exportScreenshot": "Exporter le schéma en image (PNG — Pro)"
     },
     "fileExplorer": {
       "workspace": "ESPACE DE TRAVAIL",

@@ -29,7 +29,9 @@
         "message": "Libreria mancante? Installala dal",
         "cta": "Gestore Librerie",
         "dismiss": "Ignora"
-      }
+      },
+      "exportBom": "Esporta distinta base (CSV — Pro)",
+      "exportScreenshot": "Esporta schema come immagine (PNG — Pro)"
     },
     "fileExplorer": {
       "workspace": "WORKSPACE",
