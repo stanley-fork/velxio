@@ -1222,12 +1222,12 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
     return () => cleanups.forEach((fn) => fn());
   }, [components, wires, boards]);
 
-  // Handle keyboard delete for components and boards
+  // Handle keyboard delete for the selected component
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Skip when the user is typing in an input/textarea/contenteditable —
       // otherwise Backspace inside the AI chat (or any future text field)
-      // also asks to delete the active board.
+      // would also delete the selected component.
       const t = e.target as HTMLElement | null;
       if (t) {
         const tag = t.tagName;
@@ -1240,15 +1240,20 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
           // Recorded so the user can Ctrl+Z this back. Cascades wire removal too.
           recordRemoveComponent(selectedComponentId);
           setSelectedComponentId(null);
-        } else if (activeBoardId) {
-          setBoardToRemove(activeBoardId);
         }
+        // The board is intentionally NOT deletable via Delete/Backspace. It is
+        // always the "active" board (its code is shown in the editor), so keying
+        // off activeBoardId here popped the board-removal confirmation whenever
+        // the user pressed Delete to remove a wire, or after they had just
+        // deleted a component. Board removal stays on the explicit, deliberate
+        // paths: the right-click "Remove board" context menu and the touch
+        // pin-picker delete action.
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedComponentId, recordRemoveComponent, activeBoardId]);
+  }, [selectedComponentId, recordRemoveComponent]);
 
   // Handle component selection from modal
   const handleSelectComponent = (metadata: ComponentMetadata) => {
@@ -1782,10 +1787,21 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
   // Keyboard handlers for wires
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Escape → cancel in-progress wire
+      // Escape → cancel in-progress wire (works even while a field is focused).
       if (e.key === 'Escape' && wireInProgress) {
         cancelWireCreation();
         return;
+      }
+      // Skip the rest when the user is typing in an input/textarea/select/
+      // contenteditable — otherwise Backspace in a text field (e.g. the AI chat)
+      // would delete the selected wire, and the color-shortcut keys below would
+      // hijack normal typing.
+      const t = e.target as HTMLElement | null;
+      if (t) {
+        const tag = t.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t.isContentEditable) {
+          return;
+        }
       }
       // Delete / Backspace → remove selected wire (recorded for undo).
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedWireId) {
