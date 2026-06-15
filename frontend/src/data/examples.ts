@@ -8,7 +8,12 @@ import { circuitExamples } from './examples-circuits';
 import { analogExamples } from './examples-analog';
 import { digitalExamples } from './examples-digital';
 import { hundredDaysExamples } from './examples-100-days';
-import { picowWifiExamples } from './examples-picow-wifi';
+// Pro overlay examples (the Pico W WiFi showcase) — resolves to the real list
+// when built with the overlay (VITE_PRO_BUILD), else an empty stub in OSS.
+// Static import so the build-time SSR prerender + gallery + sitemap pick them
+// up. See pro/frontend/src/pro/data/proExamples.ts (overlay) and
+// src/__pro_stub__/data/proExamples.ts (OSS no-op).
+import { proExamples } from '@pro/data/proExamples';
 import { epaperExamples } from './examples-displays-epaper';
 import { retroIntelExamples } from './examples-retro-intel';
 import { robotDesktopExamples } from './examples-robot-desktop';
@@ -9735,7 +9740,7 @@ export const exampleProjects: ExampleProject[] = [
   ...analogExamples,
   ...digitalExamples,
   ...hundredDaysExamples,
-  ...picowWifiExamples,
+  ...proExamples,
   ...epaperExamples,
   ...retroIntelExamples,
   ...robotDesktopExamples,

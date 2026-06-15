@@ -3449,32 +3449,3 @@ R_autopull_n5 n5 0 100Meg
 .op
 .end"
 `;
-
-exports[`netlist snapshot — picow-wifi (4 examples) > picow-wifi-async-led 1`] = `
-"* Velxio circuit
-.op
-.end"
-`;
-
-exports[`netlist snapshot — picow-wifi (4 examples) > picow-wifi-relay-web-server 1`] = `
-"* Velxio circuit
-V_relay-led_sense n0 relay-led_sense_mid DC 0
-D_relay-led relay-led_sense_mid n1 LED_RED
-R_autopull_n0 n0 0 100Meg
-R_autopull_n1 n1 0 100Meg
-.model LED_RED D(Is=1e-20 N=1.7)
-.op
-.end"
-`;
-
-exports[`netlist snapshot — picow-wifi (4 examples) > picow-wifi-servo-web 1`] = `
-"* Velxio circuit
-.op
-.end"
-`;
-
-exports[`netlist snapshot — picow-wifi (4 examples) > picow-wifi-websocket-led 1`] = `
-"* Velxio circuit
-.op
-.end"
-`;

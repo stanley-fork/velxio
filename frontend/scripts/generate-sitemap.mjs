@@ -57,6 +57,23 @@ const exampleIds = [
   ...parseExampleIds(circuitSource),
 ];
 
+// Pro overlay examples (e.g. the Pico W WiFi showcase) live in
+// <PRO_OVERLAY_PATH>/data/proExamples.ts and are spread into examples.ts via the
+// `@pro` alias at build time. This script parses example IDs from source TEXT
+// (it never executes the module), so it can't follow the alias — read the
+// overlay file directly when building with the overlay. OSS builds skip this.
+if (process.env.VITE_PRO_BUILD && process.env.PRO_OVERLAY_PATH) {
+  try {
+    const proSource = readFileSync(
+      resolve(process.env.PRO_OVERLAY_PATH, 'data/proExamples.ts'),
+      'utf-8',
+    );
+    exampleIds.push(...parseExampleIds(proSource));
+  } catch {
+    // No overlay examples file — nothing to add.
+  }
+}
+
 const exampleUrls = exampleIds.map((id) => ({
   loc: `${DOMAIN}/examples/${id}`,
   lastmod: TODAY,
