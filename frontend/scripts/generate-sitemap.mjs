@@ -64,6 +64,11 @@ const exampleUrls = exampleIds.map((id) => ({
   priority: 0.6,
 }));
 
+// Every <loc> carries a trailing slash. nginx serves the prerendered route
+// files as `<route>/index.html` and 301-redirects the slash-less form to add
+// the slash, so a slash-less sitemap URL is fetched as a redirect and filed
+// under "Page with redirect" in Search Console. Matching the served (slash)
+// form keeps the sitemap URL == canonical == 200, with no redirect hop.
 const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
         xmlns:xhtml="http://www.w3.org/1999/xhtml">
@@ -71,7 +76,7 @@ ${indexable
   .map(
     (r) => `
   <url>
-    <loc>${DOMAIN}${r.path}</loc>
+    <loc>${DOMAIN}${r.path}${r.path.endsWith('/') ? '' : '/'}</loc>
     <lastmod>${TODAY}</lastmod>
     <changefreq>${r.changefreq ?? 'monthly'}</changefreq>
     <priority>${r.priority ?? 0.5}</priority>
@@ -82,7 +87,7 @@ ${exampleUrls
   .map(
     (u) => `
   <url>
-    <loc>${u.loc}</loc>
+    <loc>${u.loc}/</loc>
     <lastmod>${u.lastmod}</lastmod>
     <changefreq>${u.changefreq}</changefreq>
     <priority>${u.priority}</priority>
