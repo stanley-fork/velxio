@@ -373,6 +373,8 @@
     "ariaLabel": "Mettre une étoile à Velxio sur GitHub",
     "title": "Vous appréciez Velxio ?",
     "body": "Une ⭐ sur GitHub aide plus de développeurs à découvrir le projet — cela ne prend que 2 secondes !",
+    "title2": "Un petit service ?",
+    "body2": "Velxio est gratuit et open source. Une étoile sur GitHub est le moyen le plus simple de le soutenir et d'aider davantage de personnes à le découvrir.",
     "cta": "Mettre une étoile sur GitHub",
     "dismiss": "Ignorer"
   },
