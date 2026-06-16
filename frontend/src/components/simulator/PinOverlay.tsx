@@ -68,6 +68,8 @@ export const PinOverlay: React.FC<PinOverlayProps> = ({
   const isCoarse = useIsCoarsePointer();
 
   useEffect(() => {
+    let raf = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const tryRead = () => {
       const element = document.getElementById(componentId);
       if (element && (element as any).pinInfo) {
@@ -84,12 +86,22 @@ export const PinOverlay: React.FC<PinOverlayProps> = ({
       }
       return false;
     };
-    if (!tryRead()) {
-      // Retry once after a tick in case the element sets pinInfo asynchronously (e.g. via useEffect)
-      const t = setTimeout(tryRead, 50);
-      return () => clearTimeout(t);
-    }
-  }, [componentId, rotation]);
+    // Read immediately (correct when the element is already laid out), then
+    // re-measure after layout. On import / undo / project load the component
+    // mounts ALREADY rotated and its wokwi-element may not have its final size
+    // on the mount tick — reading offsetWidth then bakes a wrong rotation pivot
+    // that previously only refreshed when the user rotated again (issues #230,
+    // #232). Re-running on `showPins` also re-measures right before the overlay
+    // becomes visible, by which point the element is laid out.
+    tryRead();
+    raf = requestAnimationFrame(() => {
+      if (!tryRead()) timer = setTimeout(tryRead, 50);
+    });
+    return () => {
+      cancelAnimationFrame(raf);
+      if (timer) clearTimeout(timer);
+    };
+  }, [componentId, rotation, showPins]);
 
   if (!showPins || pins.length === 0) {
     return null;

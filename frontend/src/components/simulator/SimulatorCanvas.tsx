@@ -26,6 +26,7 @@ import { PROPERTY_CHANGE_EVENT, type PropertyChangeDetail } from '../../simulati
 import { mountDigitalGateEngine } from '../../simulation/digital/digitalGateController';
 import { isSpiceMapped } from '../../simulation/spice/componentToSpice';
 import { PinOverlay } from './PinOverlay';
+import { calculatePinPosition } from '../../utils/pinPositionCalculator';
 import { isBoardComponent, boardPinToNumber } from '../../utils/boardPinMapping';
 import { autoWireColor, WIRE_KEY_COLORS } from '../../utils/wireUtils';
 import {
@@ -2714,30 +2715,24 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
                   setPinPicker(null);
                   return;
                 }
-                // Resolve world coords from the rendered element rect — this
-                // accounts for wrapper offsets, rotation, and current zoom.
-                const compEl = document.getElementById(targetId);
-                const canvasRect = canvasRef.current?.getBoundingClientRect();
-                const compRect = compEl?.getBoundingClientRect();
+                // Resolve world coords the SAME way wires + the pin overlay do:
+                // calculatePinPosition rotates the pin around the wrapper centre
+                // for the component's rotation. The old getBoundingClientRect path
+                // added the unrotated pin offset to the ROTATED bounding-box corner,
+                // landing the wire start ~70-100px off on a rotated part (issue #231).
                 let worldX: number;
                 let worldY: number;
-                if (canvasRect && compRect) {
-                  const screenX = compRect.left + pin.x * zoomRef.current;
-                  const screenY = compRect.top + pin.y * zoomRef.current;
-                  const w = toWorld(screenX, screenY);
-                  worldX = w.x;
-                  worldY = w.y;
+                if (pinPicker.kind === 'board') {
+                  const b = boards.find((x) => x.id === targetId);
+                  const pos = calculatePinPosition(targetId, pinName, b?.x ?? 0, b?.y ?? 0, 0);
+                  worldX = pos?.x ?? (b?.x ?? 0) + pin.x;
+                  worldY = pos?.y ?? (b?.y ?? 0) + pin.y;
                 } else {
-                  // Fallback: approximate from the stored x/y of the target.
-                  if (pinPicker.kind === 'board') {
-                    const b = boards.find((x) => x.id === targetId);
-                    worldX = (b?.x ?? 0) + pin.x;
-                    worldY = (b?.y ?? 0) + pin.y;
-                  } else {
-                    const c = components.find((x) => x.id === targetId);
-                    worldX = (c?.x ?? 0) + pin.x;
-                    worldY = (c?.y ?? 0) + pin.y;
-                  }
+                  const c = components.find((x) => x.id === targetId);
+                  const rot = c ? Number(c.properties?.rotation) || 0 : 0;
+                  const pos = calculatePinPosition(targetId, pinName, (c?.x ?? 0) + 6, (c?.y ?? 0) + 6, rot);
+                  worldX = pos?.x ?? (c?.x ?? 0) + pin.x;
+                  worldY = pos?.y ?? (c?.y ?? 0) + pin.y;
                 }
                 setPinPicker(null);
                 handlePinClick(targetId, pinName, worldX, worldY);
@@ -2787,30 +2782,19 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
                 }
               }}
               onPinSelect={(id, pinName) => {
-                // Pick world coords from the live element rect when possible —
-                // it accounts for the wokwi-element wrapper offset and the
-                // current rotation. Falls back to component origin + pin
-                // offset if the rect can't be read.
-                const compEl = document.getElementById(id);
+                // Resolve world coords the SAME way wires + the pin overlay do,
+                // via calculatePinPosition, which rotates the pin around the
+                // wrapper centre for the component's rotation. The old
+                // getBoundingClientRect path added the unrotated pin offset to the
+                // ROTATED bounding-box corner, so on a rotated part the wire start
+                // landed ~70-100px away from the pin (issue #231).
                 const pin = (pinInfo || []).find((p: { name: string }) => p.name === pinName);
                 const c = components.find((x) => x.id === id);
                 if (!c || !pin) return;
-                const canvasRect = canvasRef.current?.getBoundingClientRect();
-                const compRect = compEl?.getBoundingClientRect();
-                let worldX: number;
-                let worldY: number;
-                if (canvasRect && compRect) {
-                  // Convert pin's CSS-pixel offset (relative to component) into
-                  // world coords via the canvas pan/zoom transform.
-                  const screenX = compRect.left + pin.x * zoomRef.current;
-                  const screenY = compRect.top + pin.y * zoomRef.current;
-                  const w = toWorld(screenX, screenY);
-                  worldX = w.x;
-                  worldY = w.y;
-                } else {
-                  worldX = c.x + pin.x;
-                  worldY = c.y + pin.y;
-                }
+                const rot = Number(c.properties?.rotation) || 0;
+                const pos = calculatePinPosition(id, pinName, c.x + 6, c.y + 6, rot);
+                const worldX = pos?.x ?? c.x + pin.x;
+                const worldY = pos?.y ?? c.y + pin.y;
                 setShowPropertyDialog(false);
                 handlePinClick(id, pinName, worldX, worldY);
               }}

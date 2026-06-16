@@ -2623,11 +2623,20 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
               (w) => w.start.componentId !== id && w.end.componentId !== id,
             ),
           })),
-        undo: () =>
+        undo: () => {
           set((s) => ({
             components: [...s.components, removed],
             wires: [...s.wires, ...removedWires],
-          })),
+          }));
+          // Recalc this part's wire endpoints once it re-mounts. Without this
+          // a rotated component restored via Ctrl+Z keeps the unrotated wire
+          // coords captured at delete time, so its wires sit off the pins
+          // until the user rotates again (issue #232). rAF waits for the DOM
+          // node so calculatePinPosition can read the wrapper geometry.
+          const recalc = () => get().updateWirePositions(id);
+          if (typeof requestAnimationFrame === 'function') requestAnimationFrame(recalc);
+          else recalc();
+        },
       });
     },
 
