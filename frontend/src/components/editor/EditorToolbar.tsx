@@ -639,7 +639,20 @@ export const EditorToolbar = ({
         }),
       };
       const input = buildInputFromStore(snap);
-      return await verifyCircuit(input);
+      const result = await verifyCircuit(input);
+      // Concise outcome log — verification failing silently in production is
+      // hard to spot otherwise (the rules read 0 A when currents are missing).
+      console.log(
+        '[verify]',
+        JSON.stringify({
+          errors: result.errors.map((e) => e.code),
+          warnings: result.warnings.map((w) => w.code),
+          solved: !!result.solve,
+          branches: result.solve ? Object.keys(result.solve.branchCurrents) : null,
+          nodes: result.solve ? Object.keys(result.solve.nodeVoltages) : null,
+        }),
+      );
+      return result;
     } catch (err) {
       console.warn('[verifyCircuit] failed', err);
       return null;
