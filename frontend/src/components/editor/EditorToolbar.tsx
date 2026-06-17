@@ -1068,11 +1068,18 @@ export const EditorToolbar = ({
    * fresh WASM/ROM) + resuming the electrical solver when there's no board.
    * Mirrors single Run, generalised across all targets.
    */
-  const handleRunAll = async () => {
+  const handleRunAll = async (skipVerify = false) => {
     const sim = useSimulatorStore.getState();
     const boardsList = sim.boards;
     const chips = sim.components.filter((c) => c.metadataId === 'custom-chip');
     if (boardsList.length === 0 && chips.length === 0) return;
+
+    // Same pre-flight safety check as handleRun — block on shorts / overcurrent
+    // before starting every board, with a "Run anyway" escape.
+    if (!skipVerify) {
+      const ok = await checkOrBlock(() => handleRunAll(true));
+      if (!ok) return;
+    }
 
     // A chip needs compiling when it has no WASM yet, or it references a program
     // file but hasn't been assembled to ROM.
@@ -1392,7 +1399,7 @@ export const EditorToolbar = ({
 
             {/* Run */}
             <button
-              onClick={handleRun}
+              onClick={() => handleRun()}
               disabled={
                 isBoardless
                   ? digitalRunning
@@ -1478,7 +1485,7 @@ export const EditorToolbar = ({
 
                 {/* Run All */}
                 <button
-                  onClick={handleRunAll}
+                  onClick={() => handleRunAll()}
                   disabled={compileAllRunning || anyBoardRunning || digitalRunning}
                   className="tb-btn tb-btn-run-all"
                   title={t('editor.toolbar.runAll')}
