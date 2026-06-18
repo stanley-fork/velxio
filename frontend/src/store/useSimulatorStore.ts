@@ -822,6 +822,13 @@ interface SimulatorState {
   /** Bumped on every Reset so the open SensorControlPanel remounts and
    *  re-reads each interactive sensor's freshly-defaulted value. */
   sensorResetNonce: number;
+  /** Ids of components destroyed at runtime (P4 burnout) — the canvas renders
+   *  them charred. Cleared on Reset / restart. */
+  burntComponents: Set<string>;
+  /** Mark a component destroyed (called by the runtime burnout monitor). */
+  markComponentBurnt: (componentId: string) => void;
+  /** Clear all runtime-destroyed components (on Reset / restart). */
+  clearBurntComponents: () => void;
   serialOutput: string;
   serialBaudRate: number;
   serialMonitorOpen: boolean;
@@ -1922,6 +1929,9 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         return {
           boards,
           hexEpoch: s.hexEpoch + 1,
+          // A Reset un-chars any runtime-destroyed parts so a fixed circuit
+          // comes back to life (mirrors the LED's burnt-latch clearing).
+          ...(s.burntComponents.size > 0 ? { burntComponents: new Set<string>() } : {}),
           ...(isActive ? { running: false, serialOutput: '', serialBaudRate: 0 } : {}),
         };
       });
@@ -1959,6 +1969,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
     compiledHex: null,
     hexEpoch: 0,
     sensorResetNonce: 0,
+    burntComponents: new Set<string>(),
     serialOutput: '',
     serialBaudRate: 0,
     serialMonitorOpen: false,
@@ -2195,7 +2206,14 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       get().startBoard(boardId);
     },
 
-    restartParts: () => set((s) => ({ hexEpoch: s.hexEpoch + 1 })),
+    restartParts: () => set((s) => ({ hexEpoch: s.hexEpoch + 1, burntComponents: new Set() })),
+    markComponentBurnt: (componentId: string) =>
+      set((s) =>
+        s.burntComponents.has(componentId)
+          ? {}
+          : { burntComponents: new Set(s.burntComponents).add(componentId) },
+      ),
+    clearBurntComponents: () => set((s) => (s.burntComponents.size === 0 ? {} : { burntComponents: new Set() })),
 
     stopSimulation: () => {
       const { activeBoardId } = get();

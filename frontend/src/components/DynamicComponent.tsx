@@ -252,6 +252,8 @@ export const DynamicComponent: React.FC<DynamicComponentProps> = ({
   // re-created on every stop/play cycle — which previously caused the
   // display to flash blank and lose its frame buffer.
   const hexEpoch = useSimulatorStore((s) => s.hexEpoch);
+  // Runtime burnout (P4): destroyed parts render charred + a smoke badge.
+  const isBurnt = useSimulatorStore((s) => s.burntComponents.has(id));
 
   // Track wires connected to this component so attachEvents re-runs when
   // wires are added or removed (e.g. disconnecting an LED cathode from GND).
@@ -600,7 +602,7 @@ export const DynamicComponent: React.FC<DynamicComponentProps> = ({
   // while simulation is live.
   return (
     <div
-      className="dynamic-component-wrapper"
+      className={`dynamic-component-wrapper${isBurnt ? ' velxio-burnt' : ''}`}
       style={{
         position: 'absolute',
         left: `${x}px`,
@@ -624,6 +626,22 @@ export const DynamicComponent: React.FC<DynamicComponentProps> = ({
     >
       {/* Container for web component */}
       <div ref={containerRef} className="web-component-container" />
+
+      {/* Runtime-burnout smoke badge (P4) */}
+      {isBurnt && (
+        <div
+          className="velxio-burnt-smoke"
+          aria-hidden="true"
+          style={{ position: 'absolute', top: '-7px', right: '-7px', pointerEvents: 'none', zIndex: 6 }}
+        >
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+            <circle cx="8" cy="14" r="5" fill="#6b7280" opacity="0.85" />
+            <circle cx="14" cy="11" r="6" fill="#9ca3af" opacity="0.85" />
+            <circle cx="17" cy="16" r="4" fill="#4b5563" opacity="0.85" />
+            <circle cx="11" cy="8" r="3.5" fill="#9ca3af" opacity="0.7" />
+          </svg>
+        </div>
+      )}
 
       {/* Component label */}
       <div

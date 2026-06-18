@@ -472,3 +472,16 @@
     display: none;
   }
 }
+
+/* Runtime burnout (P4): a component destroyed mid-simulation renders charred,
+   with a red dashed outline + a smoke badge (the badge is a sibling of the
+   container, so it stays full-colour). Cleared on Reset. */
+.velxio-burnt .web-component-container {
+  filter: grayscale(0.85) brightness(0.4) sepia(0.5) contrast(1.15);
+  transition: filter 0.25s ease;
+}
+.velxio-burnt {
+  outline: 1px dashed rgba(220, 38, 38, 0.65);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
