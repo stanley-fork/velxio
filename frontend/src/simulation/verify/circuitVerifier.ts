@@ -35,6 +35,7 @@ export type WarningCode =
   | 'led-overcurrent'
   | 'over-voltage'
   | 'reverse-polarity'
+  | 'missing-connection'
   | 'resistor-overpower'
   | 'led-no-current';
 
@@ -140,6 +141,73 @@ export async function verifyCircuit(
           break;
         }
       }
+    }
+  }
+
+  // ── Wiring ERC (graph-based, no solve) ─────────────────────────────────
+  // Bad-connection checks that don't need a solve, so they run even when the
+  // circuit is too incomplete to solve. Build a per-component set of wired pin
+  // names from the wires first.
+  const wiredPins = new Map<string, Set<string>>();
+  for (const wire of input.wires) {
+    for (const end of [wire.start, wire.end]) {
+      let s = wiredPins.get(end.componentId);
+      if (!s) {
+        s = new Set();
+        wiredPins.set(end.componentId, s);
+      }
+      s.add(end.pinName);
+    }
+  }
+  const pinWired = (set: Set<string> | undefined, name: string): boolean => {
+    if (!set) return false;
+    if (set.has(name)) return true;
+    // Tolerate ASCII '-' vs the Unicode minus on an electrolytic cap's "−" pin.
+    if (name === '−' && set.has('-')) return true;
+    if (name === '-' && set.has('−')) return true;
+    return false;
+  };
+
+  // Missing power: a rated peripheral wired into the circuit but missing its
+  // supply or ground connection won't work. (Boards live in input.boards, not
+  // input.components, so they're correctly excluded — a board self-powers.)
+  for (const comp of input.components) {
+    const rating = COMPONENT_RATINGS[comp.metadataId];
+    if (!rating) continue;
+    const set = wiredPins.get(comp.id);
+    if (!set || set.size === 0) continue; // not connected yet — not a mistake
+    if (!rating.supplyPins.some((sp) => pinWired(set, sp.name))) {
+      warnings.push({
+        severity: 'warning',
+        code: 'missing-connection',
+        componentId: comp.id,
+        message: `${rating.label} ${comp.id} is wired up but its power (VCC) pin isn't connected — connect it to a supply or it won't work.`,
+      });
+    }
+    if (!rating.gndPins.some((g) => pinWired(set, g))) {
+      warnings.push({
+        severity: 'warning',
+        code: 'missing-connection',
+        componentId: comp.id,
+        message: `${rating.label} ${comp.id} is wired up but its ground (GND) pin isn't connected — connect GND or it won't work.`,
+      });
+    }
+  }
+
+  // Dangling two-terminal part: a resistor / LED / capacitor / diode connected
+  // on only one side has no current path through it.
+  for (const comp of input.components) {
+    const pins = twoTerminalPins(comp.metadataId);
+    if (!pins) continue;
+    const set = wiredPins.get(comp.id);
+    if (!set) continue;
+    if (pinWired(set, pins[0]) !== pinWired(set, pins[1])) {
+      warnings.push({
+        severity: 'warning',
+        code: 'missing-connection',
+        componentId: comp.id,
+        message: `${comp.metadataId} ${comp.id} is connected on only one side — its other terminal is floating, so no current can flow through it.`,
+      });
     }
   }
 
@@ -418,6 +486,27 @@ function sourceInfo(
 
 function isElectrolyticCap(metadataId: string): boolean {
   return metadataId === 'capacitor-electrolytic' || metadataId.startsWith('cap-elec');
+}
+
+/** The two terminal pin names of a 2-terminal part, or null if not 2-terminal. */
+function twoTerminalPins(id: string): [string, string] | null {
+  if (id === 'capacitor-electrolytic' || id.startsWith('cap-elec')) return ['+', '−'];
+  if (
+    id === 'resistor' ||
+    id.startsWith('resistor-') ||
+    id === 'capacitor' ||
+    (id.startsWith('cap-') && !id.startsWith('cap-elec')) ||
+    id === 'inductor'
+  ) {
+    return ['1', '2'];
+  }
+  if (id === 'analog-resistor' || id === 'analog-capacitor' || id === 'analog-inductor') {
+    return ['A', 'B'];
+  }
+  if (id === 'led' || id === 'diode' || id.startsWith('diode-') || id.startsWith('zener-')) {
+    return ['A', 'C'];
+  }
+  return null;
 }
 
 /** Parse a voltage rating like '25', '25V', '6.3' → volts (null if unparseable). */

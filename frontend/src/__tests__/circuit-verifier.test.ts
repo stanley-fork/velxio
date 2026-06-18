@@ -376,6 +376,58 @@ describe('verifyCircuit — electrolytic capacitor', () => {
   );
 });
 
+describe('verifyCircuit — wiring ERC (bad connections)', () => {
+  it(
+    'warns when a 2-terminal part is connected on only one side',
+    { timeout: 30_000 },
+    async () => {
+      const input: BuildNetlistInput = {
+        components: [pwr('src', 5), res('r1', '1k')],
+        wires: [w('w1', ['src', 'SIG'], ['r1', '1'])], // r1 pin '2' left floating
+        boards: [],
+        analysis: { kind: 'op' },
+      };
+      const result = await verifyCircuit(input);
+      const mc = result.warnings.find((x) => x.code === 'missing-connection' && x.componentId === 'r1');
+      expect(mc, JSON.stringify(result.warnings)).toBeDefined();
+    },
+  );
+
+  it(
+    'does NOT warn when both terminals are wired',
+    { timeout: 30_000 },
+    async () => {
+      const input: BuildNetlistInput = {
+        components: [pwr('src', 5), res('r1', '1k')],
+        wires: [
+          w('w1', ['src', 'SIG'], ['r1', '1']),
+          w('w2', ['r1', '2'], ['src', 'GND']),
+        ],
+        boards: [],
+        analysis: { kind: 'op' },
+      };
+      const result = await verifyCircuit(input);
+      expect(result.warnings.map((x) => x.code)).not.toContain('missing-connection');
+    },
+  );
+
+  it(
+    'warns when a powered module is missing its ground connection',
+    { timeout: 30_000 },
+    async () => {
+      const input: BuildNetlistInput = {
+        components: [pwr('src', 5), { id: 'o1', metadataId: 'ssd1306', properties: {} }],
+        wires: [w('w1', ['src', 'SIG'], ['o1', 'VIN'])], // VIN wired, GND not
+        boards: [],
+        analysis: { kind: 'op' },
+      };
+      const result = await verifyCircuit(input);
+      const mc = result.warnings.find((x) => x.code === 'missing-connection' && x.componentId === 'o1');
+      expect(mc, JSON.stringify(result.warnings)).toBeDefined();
+    },
+  );
+});
+
 // ── Sanity: shipping examples never trigger errors ─────────────────────────
 // If any gallery example produces a verifier error, that's a bug in the
 // example itself. Loop a handful of representative ones to catch
