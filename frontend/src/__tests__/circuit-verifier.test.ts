@@ -426,6 +426,41 @@ describe('verifyCircuit — wiring ERC (bad connections)', () => {
       expect(mc, JSON.stringify(result.warnings)).toBeDefined();
     },
   );
+
+  it(
+    'errors when a VCC pin is wired directly to a GND pin',
+    { timeout: 30_000 },
+    async () => {
+      const input: BuildNetlistInput = {
+        components: [{ id: 'o1', metadataId: 'ssd1306', properties: {} }],
+        wires: [w('w1', ['o1', '3V3'], ['o1', 'GND'])], // VCC tied straight to GND
+        boards: [],
+        analysis: { kind: 'op' },
+      };
+      const result = await verifyCircuit(input);
+      const codes = result.errors.map((e) => e.code);
+      expect(codes, JSON.stringify(result.errors)).toContain('power-short');
+    },
+  );
+
+  it(
+    'warns when a part has both terminals on the same node (shorted out)',
+    { timeout: 30_000 },
+    async () => {
+      const input: BuildNetlistInput = {
+        components: [pwr('src', 5), res('r1', '1k')],
+        wires: [
+          w('w1', ['src', 'SIG'], ['r1', '1']),
+          w('w2', ['src', 'SIG'], ['r1', '2']), // both terminals on the SIG net
+        ],
+        boards: [],
+        analysis: { kind: 'op' },
+      };
+      const result = await verifyCircuit(input);
+      const sc = result.warnings.find((x) => x.code === 'shorted-component' && x.componentId === 'r1');
+      expect(sc, JSON.stringify(result.warnings)).toBeDefined();
+    },
+  );
 });
 
 // ── Sanity: shipping examples never trigger errors ─────────────────────────

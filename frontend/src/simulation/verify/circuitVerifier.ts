@@ -36,6 +36,8 @@ export type WarningCode =
   | 'over-voltage'
   | 'reverse-polarity'
   | 'missing-connection'
+  | 'power-short'
+  | 'shorted-component'
   | 'resistor-overpower'
   | 'led-no-current';
 
@@ -207,6 +209,45 @@ export async function verifyCircuit(
         code: 'missing-connection',
         componentId: comp.id,
         message: `${comp.metadataId} ${comp.id} is connected on only one side — its other terminal is floating, so no current can flow through it.`,
+      });
+    }
+  }
+
+  // Power rail tied to ground: a wire directly joining a VCC-type pin and a
+  // GND-type pin shorts the supply to ground. When a board drives the rail and
+  // no battery/signal-generator source is present, the current-based
+  // short-circuit rule (which only inspects those sources) misses it — so name
+  // it structurally here. Blocking error.
+  const VCC_PIN_RE = /^(vcc|vdd|vcc_rail|5v|3v3|3\.3v)$/i;
+  const GND_PIN_RE = /^(gnd|vss|vee|ground|gnd\.\d+)$/i;
+  let powerShortReported = false;
+  for (const wire of input.wires) {
+    const a = wire.start.pinName;
+    const b = wire.end.pinName;
+    const shorted = (VCC_PIN_RE.test(a) && GND_PIN_RE.test(b)) || (GND_PIN_RE.test(a) && VCC_PIN_RE.test(b));
+    if (shorted && !powerShortReported) {
+      powerShortReported = true;
+      errors.push({
+        severity: 'error',
+        code: 'power-short',
+        message: `Power is shorted to ground — a wire connects a VCC pin (${a}) directly to a ground pin (${b}). Remove that connection; it would dump the full supply current through the wire.`,
+      });
+    }
+  }
+
+  // Two-terminal part shorted across itself: both terminals on the same net, so
+  // it carries no voltage and has no effect on the circuit. Non-blocking hint.
+  for (const comp of input.components) {
+    const pins = twoTerminalPins(comp.metadataId);
+    if (!pins) continue;
+    const n0 = pinNetMap.get(`${comp.id}:${pins[0]}`) ?? (pins[0] === '−' ? pinNetMap.get(`${comp.id}:-`) : undefined);
+    const n1 = pinNetMap.get(`${comp.id}:${pins[1]}`) ?? (pins[1] === '−' ? pinNetMap.get(`${comp.id}:-`) : undefined);
+    if (n0 !== undefined && n1 !== undefined && n0 === n1) {
+      warnings.push({
+        severity: 'warning',
+        code: 'shorted-component',
+        componentId: comp.id,
+        message: `${comp.metadataId} ${comp.id} has both terminals on the same node — it is shorted out and has no effect on the circuit.`,
       });
     }
   }
