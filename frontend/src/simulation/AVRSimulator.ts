@@ -38,6 +38,7 @@ import { PinManager } from './PinManager';
 import { hexToUint8Array } from '../utils/hexParser';
 import { I2CBusManager, nullI2CMaster } from './I2CBusManager';
 import type { I2CDevice } from './I2CBusManager';
+import { attachUsiI2c } from './UsiI2cBridge';
 
 /**
  * AVRSimulator - Emulates Arduino Uno (ATmega328p) using avr8js
@@ -441,7 +442,11 @@ export class AVRSimulator {
         new AVRTimer(this.cpu, attiny85Timer0Config),
         new ATtinyTimer1(this.cpu, attinyTimer1Config),
       ];
-      // usart stays null — ATtiny85 has no hardware USART
+      // usart stays null — ATtiny85 has no hardware USART.
+      // The ATtiny85 also has no hardware TWI: TinyWireM / Tiny4kOLED drive I2C
+      // through the USI peripheral on PB0 (SDA) / PB2 (SCL). Bridge that onto the
+      // shared I2C bus so devices (SSD1306 OLED, etc.) receive data.
+      this.peripherals.push(attachUsiI2c(this.cpu, this.portB, this.i2cBus));
     } else {
       // ATmega2560 has more vectors before the timers/USART (8 external INTs, etc.),
       // so the interrupt WORD addresses differ from ATmega328P.
