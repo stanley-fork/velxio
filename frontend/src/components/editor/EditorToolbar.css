@@ -164,11 +164,13 @@
 .tb-libraries-label {
   line-height: 1;
 }
-/* Hide the label when the toolbar is narrow — icon alone keeps the button
-   reachable without stealing horizontal space from the file tabs. The
-   container query reacts to the toolbar's own width, so it triggers when
-   the user drags the editor/canvas divider, not just on small viewports. */
-@container editor-toolbar (max-width: 600px) {
+/* Hide the label only when the toolbar is genuinely cramped — keep the
+   "Libraries" text visible in the default 50/50 split (~376px toolbar) so
+   the button reads clearly. Below 360px the icon alone keeps it reachable
+   without stealing horizontal space from the file tabs. The container query
+   reacts to the toolbar's own width, so it triggers when the user drags the
+   editor/canvas divider very narrow, not just on small viewports. */
+@container editor-toolbar (max-width: 360px) {
   .tb-libraries-label {
     display: none;
   }

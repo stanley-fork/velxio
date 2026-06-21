@@ -58,7 +58,7 @@
 .file-tab-active {
   background: #1e1e1e;
   color: #fff;
-  border-top: 2px solid #4fc3f7;
+  border-top: 2px solid var(--color-action-primary);
 }
 
 .file-tab-modified {
