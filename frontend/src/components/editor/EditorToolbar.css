@@ -63,7 +63,7 @@
 }
 .toolbar-center-slot .file-tab-active {
   background: #1e1e1e;
-  border-top: 2px solid #4fc3f7;
+  border-top: 2px solid var(--color-action-primary);
 }
 
 /* ── Divider ─────────────────────────────────────── */
@@ -99,34 +99,34 @@
   cursor: not-allowed;
 }
 
-/* Compile */
+/* Compile — accent blue (token, not neon) */
 .tb-btn-compile {
-  color: #4fc3f7;
+  color: var(--color-action-primary);
 }
 .tb-btn-compile:hover:not(:disabled) {
-  background: rgba(79, 195, 247, 0.12);
-  color: #81d4fa;
+  background: rgba(0, 113, 227, 0.14);
+  color: var(--color-action-primary-hover);
 }
 .tb-btn-compile:active:not(:disabled) {
-  background: rgba(79, 195, 247, 0.2);
+  background: rgba(0, 113, 227, 0.22);
 }
 
-/* Run */
+/* Run — semantic success green (token) */
 .tb-btn-run {
-  color: #4caf50;
+  color: var(--color-feedback-success);
 }
 .tb-btn-run:hover:not(:disabled) {
-  background: rgba(76, 175, 80, 0.12);
-  color: #66bb6a;
+  background: rgba(48, 209, 88, 0.14);
+  color: var(--color-feedback-success);
 }
 
-/* Stop */
+/* Stop — semantic error red (token) */
 .tb-btn-stop {
-  color: #ef5350;
+  color: var(--color-feedback-error);
 }
 .tb-btn-stop:hover:not(:disabled) {
-  background: rgba(239, 83, 80, 0.12);
-  color: #f44336;
+  background: rgba(255, 69, 58, 0.14);
+  color: var(--color-feedback-error);
 }
 
 /* Reset */
@@ -142,25 +142,23 @@
   gap: 4px;
   height: 26px;
   padding: 0 8px 0 7px;
-  border: 1px solid rgba(0, 184, 212, 0.3);
+  border: none;
   border-radius: 5px;
   cursor: pointer;
-  background: rgba(0, 184, 212, 0.08);
-  color: #00e5ff;
+  background: var(--color-action-primary);
+  color: #fff;
   font-size: 11px;
   font-weight: 500;
   font-family: inherit;
   white-space: nowrap;
   transition:
     background 0.15s,
-    border-color 0.15s,
     color 0.15s;
   flex-shrink: 0;
   align-self: center;
 }
 .tb-btn-libraries:hover {
-  background: rgba(0, 184, 212, 0.18);
-  border-color: rgba(0, 184, 212, 0.5);
+  background: var(--color-action-primary-hover);
   color: #fff;
 }
 .tb-libraries-label {
@@ -222,11 +220,11 @@
 
 /* Legacy lib icon-only button (for overflow items) */
 .tb-btn-lib {
-  color: #00b8d4;
+  color: var(--color-action-primary);
 }
 .tb-btn-lib:hover {
-  background: rgba(0, 184, 212, 0.1);
-  color: #00e5ff;
+  background: rgba(0, 113, 227, 0.12);
+  color: var(--color-action-primary-hover);
 }
 
 /* Missing library hint banner */
@@ -235,21 +233,21 @@
   align-items: center;
   gap: 6px;
   padding: 5px 12px;
-  background: rgba(255, 152, 0, 0.1);
-  border-bottom: 1px solid rgba(255, 152, 0, 0.25);
-  color: #ffb74d;
+  background: rgba(255, 159, 10, 0.1);
+  border-bottom: 1px solid rgba(255, 159, 10, 0.25);
+  color: var(--color-feedback-warning);
   font-size: 12px;
   font-family: inherit;
 }
 .tb-lib-hint svg {
   flex-shrink: 0;
-  color: #ffa726;
+  color: var(--color-feedback-warning);
 }
 .tb-lib-hint-btn {
-  background: rgba(0, 184, 212, 0.15);
-  border: 1px solid rgba(0, 184, 212, 0.4);
+  background: var(--color-action-primary);
+  border: none;
   border-radius: 4px;
-  color: #00e5ff;
+  color: #fff;
   font-size: 12px;
   font-weight: 600;
   font-family: inherit;
@@ -258,7 +256,7 @@
   transition: background 0.12s;
 }
 .tb-lib-hint-btn:hover {
-  background: rgba(0, 184, 212, 0.3);
+  background: var(--color-action-primary-hover);
   color: #fff;
 }
 .tb-lib-hint-close {
@@ -284,12 +282,12 @@
   color: #ccc;
 }
 .tb-btn-output-active {
-  color: #4fc3f7;
-  background: rgba(79, 195, 247, 0.1);
+  color: var(--color-action-primary);
+  background: rgba(0, 113, 227, 0.12);
 }
 .tb-btn-output-active:hover {
-  background: rgba(79, 195, 247, 0.18);
-  color: #81d4fa;
+  background: rgba(0, 113, 227, 0.2);
+  color: var(--color-action-primary-hover);
 }
 
 /* ── Spin animation (compiling) ─────────────────── */
@@ -317,13 +315,13 @@
 }
 
 .tb-status-success {
-  color: #4caf50;
-  background: rgba(76, 175, 80, 0.1);
+  color: var(--color-feedback-success);
+  background: rgba(48, 209, 88, 0.1);
 }
 
 .tb-status-error {
-  color: #ef5350;
-  background: rgba(239, 83, 80, 0.1);
+  color: var(--color-feedback-error);
+  background: rgba(255, 69, 58, 0.1);
 }
 
 .tb-status-text {
@@ -334,19 +332,19 @@
 
 /* ── Compile All / Run All buttons ─────────────── */
 .tb-btn-compile-all {
-  color: #80cbc4;
+  color: var(--color-action-primary);
 }
 .tb-btn-compile-all:hover:not(:disabled) {
-  background: rgba(128, 203, 196, 0.12);
-  color: #a7ffeb;
+  background: rgba(0, 113, 227, 0.14);
+  color: var(--color-action-primary-hover);
 }
 
 .tb-btn-run-all {
-  color: #aed581;
+  color: var(--color-feedback-success);
 }
 .tb-btn-run-all:hover:not(:disabled) {
-  background: rgba(174, 213, 129, 0.12);
-  color: #ccff90;
+  background: rgba(48, 209, 88, 0.14);
+  color: var(--color-feedback-success);
 }
 
 /* ── Board context pill ─────────────────────────── */
@@ -381,7 +379,7 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #4caf50;
+  background: var(--color-feedback-success);
   flex-shrink: 0;
   animation: pulse-run 1.4s ease-in-out infinite;
 }
@@ -456,7 +454,7 @@
 
 .tb-overflow-item svg {
   flex-shrink: 0;
-  color: #00b8d4;
+  color: var(--color-fg-default);
 }
 
 .tb-overflow-label {

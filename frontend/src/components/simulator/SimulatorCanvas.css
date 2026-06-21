@@ -183,7 +183,7 @@
   gap: 5px;
   padding: 0 10px;
   height: 32px;
-  background: #007acc;
+  background: var(--color-action-primary);
   color: #fff;
   border: none;
   border-radius: 5px;
@@ -195,7 +195,7 @@
 }
 
 .add-component-btn:hover:not(:disabled) {
-  background: #1a8bd4;
+  background: var(--color-action-primary-hover);
 }
 
 .add-component-btn:disabled {
