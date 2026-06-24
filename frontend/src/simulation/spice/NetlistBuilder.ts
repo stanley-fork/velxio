@@ -18,7 +18,11 @@ import { UnionFind } from './unionFind';
 import { componentToSpice } from './componentToSpice';
 import type { BuildNetlistInput, ComponentForSpice, BoardForSpice, WireForSpice } from './types';
 
-const GROUND_PIN_RE = /^(gnd|vss|vee|ground|gnd\.\d+)$/i;
+// Matches GND, VSS, VEE, GROUND and any numbered ground pin in the common
+// spellings boards actually emit: GND.1 / GND.2 (dotted), GND2 / GND3 (bare),
+// GND_2 (underscore). Several dev-kit board elements label their extra ground
+// pad "GND2" (no dot), which previously fell through and floated.
+const GROUND_PIN_RE = /^(gnd|vss|vee|ground)([._]?\d+)?$/i;
 // Deliberately excludes "V+" / "V-" (which are probe terminals) and
 // "VBB" (non-standard). VCC-like pins on boards are handled via the
 // board.vccPinNames list, not this regex.

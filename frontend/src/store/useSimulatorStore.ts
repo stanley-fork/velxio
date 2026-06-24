@@ -121,6 +121,11 @@ export const ARDUINO_POSITION = DEFAULT_BOARD_POSITION;
 // can call setPinState / pinManager just like they would on a local simulator. ──
 class Esp32BridgeShim {
   pinManager: PinManager;
+  // Digital input pins are driven from the SPICE solve
+  // (connectDigitalInputsToMcu), not the part-level seed — so a button reads
+  // the real circuit (pull-up, GND, shorts) like hardware. Parts check this
+  // flag and skip their direct setPinState seed for this board.
+  readonly spiceDrivenInputs = true;
   onSerialData: ((ch: string) => void) | null = null;
   onPinChangeWithTime: ((pin: number, state: boolean, timeMs: number) => void) | null = null;
   onBaudRateChange: ((baud: number) => void) | null = null;
@@ -574,17 +579,13 @@ function makeGpioRoutingClearHandler(boardId: string) {
 
 function makePinPullHandler(boardId: string) {
   return (gpio: number, pull: 0 | 1 | 2) => {
+    // Record the internal pull so the netlist stamps a weak resistor
+    // (vcc_rail for pull-up, GND for pull-down) and request a re-solve. The
+    // digital read itself is driven from the solved circuit by
+    // connectDigitalInputsToMcu — we deliberately do NOT seed the pin directly
+    // here, because that would bypass the real wiring and re-introduce the
+    // "mis-wired button still works" bug.
     pinManagerMap.get(boardId)?.setPinPull(gpio, pull);
-    // Drive the digital input to the pull's idle level so the firmware's
-    // digitalRead reflects INPUT_PULLUP / INPUT_PULLDOWN. QEMU does not model
-    // the MCU's internal pull on the GPIO input register, and the part-level
-    // HIGH seed (BasicParts) is sent at component-attach — before the
-    // several-second QEMU boot finishes — so it's lost and the pin reads LOW.
-    // This fires when the guest actually programs the pull (inside pinMode,
-    // post-boot), so it sticks. A real button press/release overrides it after.
-    if (pull !== 0) getEsp32Bridge(boardId)?.sendPinEvent(gpio, pull === 1);
-    // The pull also feeds the SPICE netlist (a weak resistor); re-solve so the
-    // electrical view matches.
     requestElectricalResolve();
   };
 }

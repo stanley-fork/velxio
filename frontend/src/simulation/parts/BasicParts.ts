@@ -4,6 +4,19 @@ import { useSimulatorStore } from '../../store/useSimulatorStore';
 import { emitPropertyChange } from './partUtils';
 
 /**
+ * Boards whose digital inputs are driven from the SPICE solve
+ * (connectDigitalInputsToMcu) advertise `spiceDrivenInputs`. For those, the
+ * input-control parts below (button / switch) must NOT push a pin level
+ * directly — they only flip the component property (pressed / value), which
+ * re-solves the circuit, and the connector decides the logic level from the
+ * real wiring. Pushing a seed here would bypass the wiring and make a
+ * mis-wired button read "correct" instead of like hardware.
+ */
+function spiceDriven(sim: unknown): boolean {
+  return !!(sim as { spiceDrivenInputs?: boolean } | null)?.spiceDrivenInputs;
+}
+
+/**
  * Basic Pushbutton implementation (full-size)
  */
 PartSimulationRegistry.register('pushbutton', {
@@ -19,15 +32,15 @@ PartSimulationRegistry.register('pushbutton', {
     // this, the firmware reads LOW from the moment loop() starts and
     // believes the button is permanently pressed (the classic "LED is
     // always on, pressing the button does nothing" UX bug).
-    if (arduinoPin !== null) avrSimulator.setPinState(arduinoPin, true);
+    if (arduinoPin !== null && !spiceDriven(avrSimulator)) avrSimulator.setPinState(arduinoPin, true);
 
     const onButtonPress = () => {
-      if (arduinoPin !== null) avrSimulator.setPinState(arduinoPin, false); // Active LOW
+      if (arduinoPin !== null && !spiceDriven(avrSimulator)) avrSimulator.setPinState(arduinoPin, false); // Active LOW
       (element as any).pressed = true;
       emitPropertyChange(componentId, 'pressed', true);
     };
     const onButtonRelease = () => {
-      if (arduinoPin !== null) avrSimulator.setPinState(arduinoPin, true);
+      if (arduinoPin !== null && !spiceDriven(avrSimulator)) avrSimulator.setPinState(arduinoPin, true);
       (element as any).pressed = false;
       emitPropertyChange(componentId, 'pressed', false);
     };
@@ -54,15 +67,15 @@ PartSimulationRegistry.register('pushbutton-6mm', {
 
     // Same INPUT_PULLUP seeding as the full-size pushbutton — see comment
     // in `register('pushbutton', ...)` above for why this is required.
-    if (arduinoPin !== null) avrSimulator.setPinState(arduinoPin, true);
+    if (arduinoPin !== null && !spiceDriven(avrSimulator)) avrSimulator.setPinState(arduinoPin, true);
 
     const onPress = () => {
-      if (arduinoPin !== null) avrSimulator.setPinState(arduinoPin, false);
+      if (arduinoPin !== null && !spiceDriven(avrSimulator)) avrSimulator.setPinState(arduinoPin, false);
       (element as any).pressed = true;
       emitPropertyChange(componentId, 'pressed', true);
     };
     const onRelease = () => {
-      if (arduinoPin !== null) avrSimulator.setPinState(arduinoPin, true);
+      if (arduinoPin !== null && !spiceDriven(avrSimulator)) avrSimulator.setPinState(arduinoPin, true);
       (element as any).pressed = false;
       emitPropertyChange(componentId, 'pressed', false);
     };
@@ -87,13 +100,13 @@ PartSimulationRegistry.register('slide-switch', {
     // Read initial value from element (0 or 1)
     const raw = (element as any).value;
     let state = raw === 1 || raw === '1';
-    if (arduinoPin !== null) avrSimulator.setPinState(arduinoPin, state);
+    if (arduinoPin !== null && !spiceDriven(avrSimulator)) avrSimulator.setPinState(arduinoPin, state);
     emitPropertyChange(componentId, 'value', state ? 1 : 0);
 
     const onChange = () => {
       const v = (element as any).value;
       state = v === 1 || v === '1';
-      if (arduinoPin !== null) avrSimulator.setPinState(arduinoPin, state);
+      if (arduinoPin !== null && !spiceDriven(avrSimulator)) avrSimulator.setPinState(arduinoPin, state);
       emitPropertyChange(componentId, 'value', state ? 1 : 0);
     };
 

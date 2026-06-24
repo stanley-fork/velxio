@@ -270,7 +270,10 @@ describe('NetlistBuilder — ESP32 internal pull-up (INPUT_PULLUP)', () => {
           id: 'esp32',
           vcc: 3.3,
           pins: { '4': { type: 'input', pull: 1 } },
-          groundPinNames: ['GND2'],
+          // NOTE: "GND2" is deliberately NOT listed in groundPinNames — it must
+          // canonicalize to node 0 via GROUND_PIN_RE (bare GNDn spelling). This
+          // is the exact pin the ESP32 DevKit element labels; before the regex
+          // fix it floated and the pulled-up input never read a clean level.
         },
       ],
       analysis: { kind: 'op' as const },
