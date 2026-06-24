@@ -5,6 +5,7 @@ import { RiscVSimulator } from '../simulation/RiscVSimulator';
 import { Esp32C3Simulator } from '../simulation/Esp32C3Simulator';
 import { PinManager } from '../simulation/PinManager';
 import { SignalRouter } from '../simulation/SignalRouter';
+import { requestElectricalResolve } from '../simulation/spice/electricalResolveHook';
 import { ledcSignalForChannel } from '../simulation/esp32-signals';
 import {
   VirtualDS1307,
@@ -571,6 +572,17 @@ function makeGpioRoutingClearHandler(boardId: string) {
   };
 }
 
+function makePinPullHandler(boardId: string) {
+  return (gpio: number, pull: 0 | 1 | 2) => {
+    pinManagerMap.get(boardId)?.setPinPull(gpio, pull);
+    // The pull adds/removes a netlist resistor (structural change), so a full
+    // re-solve is needed. It also matters at idle: nothing else triggers a
+    // solve while the firmware just polls digitalRead, so without this an
+    // INPUT_PULLUP input stays stuck at the floating 0 V the last solve found.
+    requestElectricalResolve();
+  };
+}
+
 // ── Lightweight shim wrapping Stm32Bridge so PartSimulationRegistry parts
 // (I2C displays, sensors, SPI panels) attach to an STM32 board the same way
 // they attach to ESP32.  Like the STM32 firmware itself, every device model
@@ -1100,6 +1112,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         bridge.onLedcDuty = makeLedcDutyHandler(id);
         bridge.onGpioRouting = makeGpioRoutingHandler(id);
         bridge.onGpioRoutingClear = makeGpioRoutingClearHandler(id);
+        bridge.onPinPull = makePinPullHandler(id);
         bridge.onWs2812Update = (channel, pixels) => {
           // Forward WS2812 pixel data to any DOM element with id=`ws2812-{id}-{channel}`
           // (set by NeoPixel components rendered in SimulatorCanvas).
@@ -2034,6 +2047,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         bridge.onLedcDuty = makeLedcDutyHandler(boardId);
         bridge.onGpioRouting = makeGpioRoutingHandler(boardId);
         bridge.onGpioRoutingClear = makeGpioRoutingClearHandler(boardId);
+        bridge.onPinPull = makePinPullHandler(boardId);
         bridge.onWs2812Update = (channel, pixels) => {
           const eventTarget = document.getElementById(`ws2812-${boardId}-${channel}`);
           if (eventTarget) {
@@ -2146,6 +2160,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         bridge.onLedcDuty = makeLedcDutyHandler(boardId);
         bridge.onGpioRouting = makeGpioRoutingHandler(boardId);
         bridge.onGpioRoutingClear = makeGpioRoutingClearHandler(boardId);
+        bridge.onPinPull = makePinPullHandler(boardId);
         bridge.onWs2812Update = (channel, pixels) => {
           const eventTarget = document.getElementById(`ws2812-${boardId}-${channel}`);
           if (eventTarget) {

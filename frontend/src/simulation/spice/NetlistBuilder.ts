@@ -152,10 +152,27 @@ export function buildNetlist(input: BuildNetlistInput): BuildNetlistResult {
   // hyphenated source names — making MCU pin transitions stop propagating
   // after the very first solve. So MixedModeScheduler.onMcuPinChange must
   // build the same sanitized name we emit here. See sanitizeSpiceId().
+  // Set when an internal pull-up is stamped to vcc_rail but no wired pin
+  // referenced VCC — we must still emit the rail source (step 6) or the
+  // pull-up would hang off a dead node and the input would read LOW anyway.
+  let vccRailNeeded = false;
   for (const board of boards) {
     for (const [pinName, state] of Object.entries(board.pins)) {
-      if (state.type === 'input') continue; // don't drive the pin
       const net = netLookup(board.id, pinName);
+      if (state.type === 'input') {
+        // Internal pull-up / pull-down (INPUT_PULLUP / INPUT_PULLDOWN): a weak
+        // resistor to the rail so the idle level is correct. 45 kΩ matches the
+        // ESP32 internal pull and is weak enough that any real external driver
+        // or pull (<= 10 kΩ) dominates. An input is never driven otherwise.
+        if (state.pull && net && net !== '0' && net !== 'vcc_rail') {
+          const rail = state.pull === 1 ? 'vcc_rail' : '0';
+          if (state.pull === 1) vccRailNeeded = true;
+          cards.push(
+            `R_pull_${sanitizeSpiceId(board.id)}_${sanitizeSpiceId(pinName)} ${net} ${rail} 45000`,
+          );
+        }
+        continue;
+      }
       if (!net) continue;
       if (net === '0' || net === 'vcc_rail') continue; // already served
       const v = state.type === 'digital' ? state.v : state.duty * board.vcc;
@@ -163,8 +180,8 @@ export function buildNetlist(input: BuildNetlistInput): BuildNetlistResult {
     }
   }
 
-  // ── 6. Vcc rail source (if any pin referenced it) ─────────────────────────
-  if (hasNet(netNames, 'vcc_rail')) {
+  // ── 6. Vcc rail source (if any pin referenced it, or a pull-up needs it) ──
+  if (hasNet(netNames, 'vcc_rail') || vccRailNeeded) {
     cards.unshift(`V_VCC_RAIL vcc_rail 0 DC ${dominantVcc}`);
   }
 

@@ -36,6 +36,11 @@ export class PinManager {
   // (NTC + divider on A0, photoresistor, etc.) don't get clamped to
   // the MCU's idle V-source.
   private outputPins: Set<number> = new Set();
+  // Internal pull config the MCU programmed per pin: 0=none, 1=up, 2=down.
+  // Used by the SPICE collector to add a weak pull resistor so INPUT_PULLUP
+  // inputs read the right idle level (the ESP32's internal pulls live inside
+  // QEMU and are otherwise invisible to the netlist).
+  private pinPulls: Map<number, 0 | 1 | 2> = new Map();
 
   // ── Digital pin API ──────────────────────────────────────────────────────
 
@@ -142,6 +147,21 @@ export class PinManager {
   }
 
   /**
+   * Record the internal pull the MCU programmed for a pin (from the guest's
+   * IO_MUX / pad config): 0 = none, 1 = pull-up, 2 = pull-down. The SPICE
+   * collector reads this back via `getPinPull` to stamp a weak resistor.
+   */
+  setPinPull(pin: number, pull: 0 | 1 | 2): void {
+    if (pull === 0) this.pinPulls.delete(pin);
+    else this.pinPulls.set(pin, pull);
+  }
+
+  /** Internal pull config for a pin: 0 = none, 1 = pull-up, 2 = pull-down. */
+  getPinPull(pin: number): 0 | 1 | 2 {
+    return this.pinPulls.get(pin) ?? 0;
+  }
+
+  /**
    * Drop only the MCU-output classification (SPICE side). Used by
    * paths that need to forget which pins were driven this session
    * without disturbing the cached pin states or notifying listeners.
@@ -168,6 +188,7 @@ export class PinManager {
     }
     this.pinStates.clear();
     this.outputPins.clear();
+    this.pinPulls.clear();
     for (const pin of wereHigh) {
       const callbacks = this.listeners.get(pin);
       if (callbacks) {

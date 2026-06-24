@@ -24,6 +24,7 @@ stdout        : JSON event lines (one per line, flushed immediately)
                {"type": "system",       "event": "reboot", "count": N}
                {"type": "gpio_change",  "pin": N,  "state": V}
                {"type": "gpio_dir",     "pin": N,  "dir": V}
+               {"type": "gpio_pull",    "pin": N,  "pull": V}   # 0=none 1=up 2=down
                {"type": "uart_tx",      "uart": N, "byte": V}
                {"type": "ledc_duty",    "channel": N, "duty_pct": F}
                {"type": "rmt_event",    "channel": N, ...}
@@ -518,6 +519,38 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                        'signal_id': signal_id})
             for gpio_pin in cleared:
                 _emit({'type': 'gpio_routing_clear', 'gpio': gpio_pin})
+        except Exception:
+            pass
+
+    # GPIO pull-up / pull-down state, keyed by GPIO number → 0=none 1=up 2=down.
+    # Diff-based like the SignalRouter snapshot so we only emit real changes.
+    _pull_state: dict[int, int] = {}
+
+    def _refresh_pin_pulls() -> None:
+        """Scan IO_MUX FUN_WPU/FUN_WPD bits and emit `gpio_pull` on change.
+
+        The ESP32's internal pull resistors are configured per pad in the
+        IO_MUX register: FUN_WPU (bit 8) enables the pull-up, FUN_WPD
+        (bit 7) the pull-down. The frontend needs this to model
+        INPUT_PULLUP / INPUT_PULLDOWN — without it an input wired to a
+        button-to-GND floats to 0 V in the SPICE solve and reads LOW even
+        at idle, so the canonical active-low button never works. The
+        `muxgpios[40]` array is exposed read-only via get_internals(3) and
+        is indexed by GPIO number. Idempotent + diff-based; runs every
+        100 ms from the LEDC poll thread (off the QEMU iothread, so the
+        _emit here can't stall the guest the way _on_gpio_matrix would).
+        """
+        try:
+            iomux_ptr = lib.qemu_picsimlab_get_internals(3)  # QEMU_INTERNAL_IOMUX_GPIOS
+            if not iomux_ptr:
+                return
+            mux = (ctypes.c_uint32 * 40).from_address(iomux_ptr)
+            for gpio_pin in range(40):
+                reg = int(mux[gpio_pin])
+                pull = 1 if (reg >> 8) & 1 else (2 if (reg >> 7) & 1 else 0)
+                if _pull_state.get(gpio_pin, 0) != pull:
+                    _pull_state[gpio_pin] = pull
+                    _emit({'type': 'gpio_pull', 'pin': gpio_pin, 'pull': pull})
         except Exception:
             pass
 
@@ -1631,6 +1664,9 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                 # `gpio_routing` events so frontend's SignalRouter is
                 # in sync before duty updates land.
                 _refresh_signal_routing()
+                # Reconcile internal pull-up/down config (INPUT_PULLUP etc.)
+                # so the frontend's netlist can add the matching resistor.
+                _refresh_pin_pulls()
                 for ch in range(16):
                     duty_pct = float(arr[ch])
                     if abs(duty_pct - _last_duty[ch]) < 0.01:

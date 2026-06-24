@@ -92,11 +92,17 @@ export function collectPinStates(
         type: 'digital',
         v: pm.getPinState(arduinoPin) ? vcc : 0,
       };
+    } else {
+      // Not driven by the MCU. If the firmware enabled an internal pull
+      // (INPUT_PULLUP / INPUT_PULLDOWN), surface it so NetlistBuilder can
+      // stamp the weak resistor — without it a button-to-GND input floats
+      // to 0 V and reads LOW even at idle, so active-low buttons never work.
+      // For pull-less inputs leave the net free: external components (sensor
+      // divider, pull-up, button, etc.) drive the SPICE node, and an
+      // unconditional 0 V source would short out any analog sensor on the pin.
+      const pull = pm.getPinPull(arduinoPin);
+      if (pull !== 0) result[pinName] = { type: 'input', pull };
     }
-    // else: leave the net free — external components (sensor divider,
-    // pull-up, button, etc.) drive the SPICE node.  Without this guard,
-    // an unconditional V-source at 0 V would short-circuit any analog
-    // sensor on the pin and analogRead() would always return 0.
   }
   return result;
 }
