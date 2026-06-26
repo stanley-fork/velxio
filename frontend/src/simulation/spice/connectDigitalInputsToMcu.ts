@@ -43,7 +43,7 @@ export function connectDigitalInputsToMcu(): () => void {
   const lastLevel = new Map<string, boolean>();
 
   function injectDigitalInputs() {
-    const { nodeVoltages, pinNetMap } = useElectricalStore.getState();
+    const { nodeVoltages, pinNetMap, sourcedNets } = useElectricalStore.getState();
     const { boards } = useSimulatorStore.getState();
     for (const board of boards) {
       const sim = getBoardSimulator(board.id) as
@@ -58,6 +58,14 @@ export function connectDigitalInputsToMcu(): () => void {
         const gpio = gpioFromPinName(key.slice(prefix.length));
         if (gpio < 0) continue;
         if (driven.has(gpio)) continue; // the MCU drives this pin (digitalWrite)
+        // Only drive pins whose net is backed by a real source/element (rail,
+        // pull, button switch, divider, cross-board output, …). A net that is
+        // only floating (an event-driven part like a rotary encoder / keypad
+        // that has no SPICE model) is left to the part layer, which seeds the
+        // pin directly — otherwise its ~0 V floating read would force it LOW
+        // and fight the part. This is what makes it safe to enable
+        // spiceDrivenInputs on the AVR (which has many such part-driven pins).
+        if (!sourcedNets.has(net)) continue;
         const v = nodeVoltages[net];
         if (v == null) continue;
         const stateKey = `${board.id}:${gpio}`;
