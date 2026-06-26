@@ -85,6 +85,22 @@ export class PinManager {
   ) {
     const legacyOffsets: Record<string, number> = { PORTB: 8, PORTC: 14, PORTD: 0 };
 
+    // AVR internal pull-up: a pin configured as INPUT (DDR bit 0) with its PORT
+    // bit set enables the ~35k internal pull-up. Surface it as a pin pull so the
+    // SPICE netlist stamps the pull resistor and an INPUT_PULLUP input reads the
+    // correct idle level (HIGH) under spice-driven inputs — without this, the
+    // canonical button-to-GND would float LOW. AVR has no internal pull-down.
+    // Runs over all 8 bits (not just changed ones) so DDR/PORT edits both apply.
+    if (ddrMask !== undefined) {
+      for (let bit = 0; bit < 8; bit++) {
+        const mask = 1 << bit;
+        const arduinoPin = pinMap ? pinMap[bit] : (legacyOffsets[portName] ?? 0) + bit;
+        if (arduinoPin < 0) continue;
+        const isInput = (ddrMask & mask) === 0;
+        this.setPinPull(arduinoPin, isInput && (newValue & mask) !== 0 ? 1 : 0);
+      }
+    }
+
     for (let bit = 0; bit < 8; bit++) {
       const mask = 1 << bit;
       const oldState = (oldValue & mask) !== 0;

@@ -67,6 +67,9 @@ export interface ElectricalSnapshot {
   timeWaveforms?: TimeWaveforms;
   /** Convergence warnings from the solver. */
   warnings: string[];
+  /** Nets backed by a real source/element (see NetlistBuilder). Gates which
+   *  MCU input pins connectDigitalInputsToMcu may drive from the solve. */
+  sourcedNets: Set<string>;
 }
 
 /** What the service needs from the scheduler. */
@@ -130,6 +133,7 @@ export class CircuitSimulationService {
     nets: string[];
     voltageSources: string[];
     analysisKind: 'op' | 'tran' | 'ac';
+    sourcedNets: Set<string>;
   } | null = null;
 
   /** Set by `stop()`. Once true, `tick()` and `handleMcuEdge()`
@@ -302,7 +306,7 @@ export class CircuitSimulationService {
       })),
     };
     const input = buildInputFromStore(snap as Parameters<typeof buildInputFromStore>[0]);
-    const { netlist, pinNetMap, nets, voltageSources } = buildNetlist(input);
+    const { netlist, pinNetMap, nets, voltageSources, sourcedNets } = buildNetlist(input);
 
     // Tell the scheduler exactly which vectors we want — every net
     // voltage + every branch current.
@@ -326,6 +330,7 @@ export class CircuitSimulationService {
       nets,
       voltageSources,
       analysisKind: input.analysis.kind,
+      sourcedNets,
     };
     this.publishFromLastResult();
   }
@@ -380,6 +385,7 @@ export class CircuitSimulationService {
       analysisMode: ctx.analysisKind,
       timeWaveforms,
       warnings: result.warnings,
+      sourcedNets: ctx.sourcedNets,
     });
   }
 
