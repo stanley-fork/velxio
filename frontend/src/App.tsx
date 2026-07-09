@@ -1,5 +1,5 @@
 import { useEffect, type ReactElement } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { LandingPage } from './pages/LandingPage';
 import { EditorPage } from './pages/EditorPage';
 import { ExamplesPage } from './pages/ExamplesPage';
@@ -90,6 +90,20 @@ const ROUTES: { path: string; element: ReactElement; index?: boolean }[] = [
   // pro overlay (project persistence + public profiles are pro features).
 ];
 
+/**
+ * The default locale (English) is served at the root with NO `/en` prefix, so
+ * `/en/...` matches no route and renders blank. People reasonably guess `/en/`
+ * by analogy with `/es/`, `/zh-cn/`, … — redirect them to the prefix-free path
+ * (`/en/project/x` → `/project/x`, `/en` → `/`) instead of a blank page. This
+ * keeps the canonical no-prefix English URLs (good for SEO) while handling the
+ * guessed ones gracefully.
+ */
+function EnPrefixRedirect() {
+  const { pathname, search, hash } = useLocation();
+  const stripped = pathname.replace(/^\/en(?=\/|$)/, '');
+  return <Navigate to={(stripped || '/') + search + hash} replace />;
+}
+
 function App() {
   // Pro overlay registers extra routes (login, register, admin, profile,
   // project-by-slug, …) via registerProRoutes() inside mountPro(). The
@@ -144,6 +158,10 @@ function App() {
               )}
             </Route>
           ))}
+
+          {/* `/en/...` is the default locale spelled out — redirect to the
+              canonical prefix-free path instead of rendering a blank page. */}
+          <Route path="/en/*" element={<EnPrefixRedirect />} />
         </Routes>
       </LocaleSync>
     </Router>
