@@ -17,6 +17,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { PartSimulationRegistry } from '../simulation/parts/PartSimulationRegistry';
 import { dispatchSensorUpdate } from '../simulation/SensorUpdateRegistry';
+import { useSimulatorStore } from '../store/useSimulatorStore';
 import '../simulation/parts/ProtocolParts';
 
 // ─── Globals ──────────────────────────────────────────────────────────────────
@@ -228,31 +229,35 @@ describe('ssd1306 — protocol auto-detect', () => {
     expect(sim.addI2CDevice).not.toHaveBeenCalled();
   });
 
-  it('runs SPI when DC is wired to a GPIO', () => {
-    const sim = makeSPISim();
+  it('runs I2C when only DC is wired (DC is the I2C address-select, not SPI)', () => {
+    const sim = makeI2CSim();
     PartSimulationRegistry.get('ssd1306')!.attachEvents!(
       makeElement(),
       sim as any,
       pinMap({ DC: 4 }),
     );
-    expect(typeof sim.spi.onByte).toBe('function');
-    expect(sim.addI2CDevice).not.toHaveBeenCalled();
-  });
-
-  it('legacy ssd1306-i2c alias forces I2C even with CS wired', () => {
-    const sim = makeI2CSim();
-    PartSimulationRegistry.get('ssd1306-i2c')!.attachEvents!(
-      makeElement(),
-      sim as any,
-      pinMap({ CS: 5 }),
-    );
     expect(sim.addI2CDevice).toHaveBeenCalledOnce();
   });
 
-  it('legacy ssd1306-spi alias forces SPI even with nothing wired', () => {
-    const sim = makeSPISim();
-    PartSimulationRegistry.get('ssd1306-spi')!.attachEvents!(makeElement(), sim as any, noPins);
-    expect(typeof sim.spi.onByte).toBe('function');
+  it('honors an explicit protocol property (migrated legacy projects)', () => {
+    // A project migrated from the old ssd1306-spi entry carries protocol:'spi';
+    // it must run SPI even though nothing SPI-specific is wired (CS absent).
+    useSimulatorStore.setState({
+      components: [{ id: 'oled-legacy', metadataId: 'ssd1306', properties: { protocol: 'spi' } }],
+    } as any);
+    try {
+      const sim = makeSPISim();
+      PartSimulationRegistry.get('ssd1306')!.attachEvents!(
+        makeElement(),
+        sim as any,
+        noPins,
+        'oled-legacy',
+      );
+      expect(typeof sim.spi.onByte).toBe('function');
+      expect(sim.addI2CDevice).not.toHaveBeenCalled();
+    } finally {
+      useSimulatorStore.setState({ components: [] } as any);
+    }
   });
 });
 

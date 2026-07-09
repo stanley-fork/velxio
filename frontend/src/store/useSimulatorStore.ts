@@ -1374,8 +1374,23 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       // (createFileGroup is a no-op for existing ids) — overwrite their files.
       useEditorStore.getState().replaceFileGroups(payload.fileGroups);
 
-      // Components and wires
-      setComponents(payload.components);
+      // Components and wires. Normalize the retired ssd1306-i2c / ssd1306-spi
+      // ids (merged into the single auto-detecting `ssd1306`, issues #101/#215)
+      // so old .vlx files and pre-migration snapshots still render and simulate;
+      // the old id's protocol is pinned so behaviour is preserved exactly.
+      const normalizedComponents = payload.components.map((c) =>
+        c.metadataId === 'ssd1306-i2c' || c.metadataId === 'ssd1306-spi'
+          ? {
+              ...c,
+              metadataId: 'ssd1306',
+              properties: {
+                protocol: c.metadataId === 'ssd1306-spi' ? 'spi' : 'i2c',
+                ...(c.properties ?? {}),
+              },
+            }
+          : c,
+      );
+      setComponents(normalizedComponents);
       setWires(payload.wires);
 
       // Active board: prefer the saved one, fall back to the first.

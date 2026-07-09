@@ -329,8 +329,8 @@ function attachSSD1306SPI(
 
 /**
  * Internal: SSD1306 attach logic, parameterised over the wire protocol.
- * Used by the three picker entries (the generic `ssd1306` plus the two
- * dedicated `ssd1306-i2c` / `ssd1306-spi` shortcuts).
+ * Called by the single `ssd1306` entry once the protocol has been resolved
+ * (auto-detected from the wiring, or read from an explicit `protocol` property).
  */
 function attachSSD1306(
   element: HTMLElement,
@@ -376,50 +376,41 @@ function attachSSD1306(
 }
 
 /**
- * Which wire protocol did the user build?  A real SSD1306 breakout is ONE
- * board that talks either I2C or SPI depending on how it is wired: SPI drives
- * the chip-select (CS) and data/command (DC) lines from MCU GPIOs, while I2C
- * leaves them tied to power (address select) or unconnected.  So if CS or DC is
- * wired to a GPIO we decode SPI; otherwise I2C.  This mirrors the physical part
- * — one component, no protocol switch to set, just wire it up.
+ * Which wire protocol did the user build?  A real SSD1306 breakout is ONE board
+ * that talks either I2C or SPI depending on how it is wired.  The definitive
+ * SPI-only signal is chip-select (CS): I2C never uses it.  (DC deliberately does
+ * NOT count — on the 8-pin module DC doubles as the I2C address-select/SA0 line,
+ * so many I2C circuits wire it too.)  So CS wired to a GPIO => SPI, otherwise
+ * I2C.  This mirrors the physical part — one component, no protocol switch to
+ * set, just wire it up.
  *
- * Pure wiring check: it deliberately does NOT read `simulator.spi`, whose
- * getter on some boards (RP2040, and the ESP32/STM32 bridge shims) lazily
- * re-routes the board SPI bus as a side effect and must not fire in I2C mode.
+ * Pure wiring check: it deliberately does NOT read `simulator.spi`, whose getter
+ * on some boards (RP2040, and the ESP32/STM32 bridge shims) lazily re-routes the
+ * board SPI bus as a side effect and must not fire in I2C mode.
  */
 function detectSSD1306Protocol(getPin: (n: string) => number | null): 'i2c' | 'spi' {
-  return getPin('CS') !== null || getPin('DC') !== null ? 'spi' : 'i2c';
+  return getPin('CS') !== null ? 'spi' : 'i2c';
 }
 
 /**
  * SSD1306 OLED — a single component that works on every board with an I2C or
- * SPI bus (AVR, RP2040, ESP32, STM32), auto-detecting the protocol from the
- * wiring like the physical module.  Consolidates the old ssd1306 / ssd1306-i2c
- * / ssd1306-spi picker entries into one (issues #101 / #215).
+ * SPI bus (AVR, RP2040, ESP32, STM32).  New projects just wire it up and the
+ * protocol is auto-detected from the wiring like the physical module; a
+ * `protocol` property, when present, pins it explicitly (projects migrated from
+ * the old ssd1306-i2c / ssd1306-spi entries carry it so their behaviour is
+ * preserved exactly).  Consolidates the old three picker entries into one
+ * (issues #101 / #215).
  */
 PartSimulationRegistry.register('ssd1306', {
   attachEvents: (element, simulator, getPin, componentId) => {
     const { components } = useSimulatorStore.getState();
     const comp = components.find((c) => c.id === componentId);
     const i2cAddr = parseI2cAddress(comp?.properties?.i2cAddress, 0x3c);
-    const protocol = detectSSD1306Protocol(getPin);
+    const explicit = comp?.properties?.protocol;
+    const protocol: 'i2c' | 'spi' =
+      explicit === 'i2c' || explicit === 'spi' ? explicit : detectSSD1306Protocol(getPin);
     return attachSSD1306(element, simulator, getPin, protocol, i2cAddr);
   },
-});
-
-/**
- * Legacy aliases kept ONLY for projects saved before the picker entries merged
- * into the single auto-detecting `ssd1306` above.  New projects never carry
- * these ids.  They force a fixed protocol (no auto-detect) to reproduce the old
- * behaviour exactly.
- */
-PartSimulationRegistry.register('ssd1306-i2c', {
-  attachEvents: (element, simulator, getPin) =>
-    attachSSD1306(element, simulator, getPin, 'i2c'),
-});
-PartSimulationRegistry.register('ssd1306-spi', {
-  attachEvents: (element, simulator, getPin) =>
-    attachSSD1306(element, simulator, getPin, 'spi'),
 });
 
 // ─── DS1307 RTC ──────────────────────────────────────────────────────────────
