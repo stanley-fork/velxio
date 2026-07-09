@@ -38,6 +38,7 @@ import { getBoardLogicFamily } from '../simulation/LogicFamilies';
 // <velxio-instr-voltmeter>) that don't exist upstream.
 import '@wokwi/elements';
 import '../velxio-elements';
+import './velxio-components/Ssd1306I2cElement'; // registers velxio-ssd1306-i2c-4pin (4-pin I2C OLED)
 
 // Map metadataId → [pinA, pinB] for 2-terminal passives.
 // "Tracing through" means: if the caller arrived on pinA, continue from pinB

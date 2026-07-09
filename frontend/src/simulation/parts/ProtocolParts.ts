@@ -413,6 +413,20 @@ PartSimulationRegistry.register('ssd1306', {
   },
 });
 
+/**
+ * SSD1306 OLED (I2C, 4-pin) — the cheap `velxio-ssd1306-i2c` module (GND/VCC/
+ * SCL/SDA). Same display core as the 8-pin part but I2C-only by construction,
+ * so there's no protocol to detect. Issue #215.
+ */
+PartSimulationRegistry.register('ssd1306-i2c-4pin', {
+  attachEvents: (element, simulator, getPin, componentId) => {
+    const { components } = useSimulatorStore.getState();
+    const comp = components.find((c) => c.id === componentId);
+    const i2cAddr = parseI2cAddress(comp?.properties?.i2cAddress, 0x3c);
+    return attachSSD1306(element, simulator, getPin, 'i2c', i2cAddr);
+  },
+});
+
 // ─── DS1307 RTC ──────────────────────────────────────────────────────────────
 
 /**

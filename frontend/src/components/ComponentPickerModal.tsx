@@ -21,6 +21,7 @@ import { Attiny85 } from './velxio-components/Attiny85';
 import './velxio-components/Esp32Element'; // registers velxio-esp32
 import './velxio-components/PiPicoWElement'; // registers velxio-pi-pico-w
 import './velxio-components/Stm32BluePillElement'; // registers velxio-stm32-bluepill
+import './velxio-components/Ssd1306I2cElement'; // registers velxio-ssd1306-i2c-4pin
 // Register every wokwi tag that the picker might try to instantiate as a
 // thumbnail. The picker calls `document.createElement(tagName)`, so any tag
 // that isn't already a registered custom element renders as an empty
