@@ -206,6 +206,56 @@ describe('ssd1306 — I2C device', () => {
   });
 });
 
+// ─── ssd1306 — protocol auto-detect (one component, wired like real life) ─────
+
+describe('ssd1306 — protocol auto-detect', () => {
+  it('runs I2C when neither CS nor DC is wired', () => {
+    const sim = makeI2CSim();
+    PartSimulationRegistry.get('ssd1306')!.attachEvents!(makeElement(), sim as any, noPins);
+    expect(sim.addI2CDevice).toHaveBeenCalledOnce();
+    expect(sim.spi).toBeNull();
+  });
+
+  it('runs SPI when CS is wired to a GPIO', () => {
+    const sim = makeSPISim();
+    PartSimulationRegistry.get('ssd1306')!.attachEvents!(
+      makeElement(),
+      sim as any,
+      pinMap({ CS: 5 }),
+    );
+    // SPI decoder hooks spi.onByte; the I2C path would call addI2CDevice instead.
+    expect(typeof sim.spi.onByte).toBe('function');
+    expect(sim.addI2CDevice).not.toHaveBeenCalled();
+  });
+
+  it('runs SPI when DC is wired to a GPIO', () => {
+    const sim = makeSPISim();
+    PartSimulationRegistry.get('ssd1306')!.attachEvents!(
+      makeElement(),
+      sim as any,
+      pinMap({ DC: 4 }),
+    );
+    expect(typeof sim.spi.onByte).toBe('function');
+    expect(sim.addI2CDevice).not.toHaveBeenCalled();
+  });
+
+  it('legacy ssd1306-i2c alias forces I2C even with CS wired', () => {
+    const sim = makeI2CSim();
+    PartSimulationRegistry.get('ssd1306-i2c')!.attachEvents!(
+      makeElement(),
+      sim as any,
+      pinMap({ CS: 5 }),
+    );
+    expect(sim.addI2CDevice).toHaveBeenCalledOnce();
+  });
+
+  it('legacy ssd1306-spi alias forces SPI even with nothing wired', () => {
+    const sim = makeSPISim();
+    PartSimulationRegistry.get('ssd1306-spi')!.attachEvents!(makeElement(), sim as any, noPins);
+    expect(typeof sim.spi.onByte).toBe('function');
+  });
+});
+
 // ─── ds1307 ───────────────────────────────────────────────────────────────────
 
 describe('ds1307 — I2C RTC', () => {

@@ -337,20 +337,22 @@ function attachSSD1306(
   simulator: unknown,
   getPin: (n: string) => number | null,
   protocol: 'i2c' | 'spi',
+  i2cAddr = 0x3c,
 ): () => void {
   if (protocol === 'spi') {
     return attachSSD1306SPI(element, simulator, getPin);
   }
   const sim = simulator as any;
-  const i2cAddr = 0x3c;
   const device = new VirtualSSD1306(i2cAddr, element);
 
-  // Check ESP32 first — its shim exposes BOTH registerSensor (for the
-  // backend QEMU slave) AND addI2CDevice (for the frontend bus used by
-  // the Interconnect cross-board bridge).  AVR / RP2040 only expose
-  // addI2CDevice, so registerSensor is the unambiguous ESP32 marker.
+  // The ESP32/STM32 bridge shims expose registerSensor (backend QEMU slave) +
+  // addI2CTransactionListener (framebuffer bytes streamed back) AND addI2CDevice
+  // (frontend bus for the cross-board Interconnect). AVR / RP2040 also carry a
+  // registerSensor() stub that returns false, so they enter this branch too —
+  // harmlessly: registerSensor no-ops, the absent addI2CTransactionListener is
+  // skipped, and the real attach happens via the addI2CDevice mirror below.
   if (typeof sim.registerSensor === 'function') {
-    // ── ESP32 path ─────────────────────────────────────────────────────────
+    // ── ESP32 / STM32 (and AVR/RP2040 via the addI2CDevice mirror) ──────────
     const virtualPin = 200 + i2cAddr;
     sim.registerSensor('ssd1306', virtualPin, { addr: i2cAddr });
     sim.addI2CTransactionListener?.(i2cAddr, (data: number[]) => {
@@ -374,31 +376,47 @@ function attachSSD1306(
 }
 
 /**
- * Generic `ssd1306` entry — reads the user-selectable `protocol`
- * property (control: select, options: i2c | spi).  Keeps backward
- * compatibility for existing projects whose components carry this id.
+ * Which wire protocol did the user build?  A real SSD1306 breakout is ONE
+ * board that talks either I2C or SPI depending on how it is wired: SPI drives
+ * the chip-select (CS) and data/command (DC) lines from MCU GPIOs, while I2C
+ * leaves them tied to power (address select) or unconnected.  So if CS or DC is
+ * wired to a GPIO we decode SPI; otherwise I2C.  This mirrors the physical part
+ * — one component, no protocol switch to set, just wire it up.
+ *
+ * Pure wiring check: it deliberately does NOT read `simulator.spi`, whose
+ * getter on some boards (RP2040, and the ESP32/STM32 bridge shims) lazily
+ * re-routes the board SPI bus as a side effect and must not fire in I2C mode.
+ */
+function detectSSD1306Protocol(getPin: (n: string) => number | null): 'i2c' | 'spi' {
+  return getPin('CS') !== null || getPin('DC') !== null ? 'spi' : 'i2c';
+}
+
+/**
+ * SSD1306 OLED — a single component that works on every board with an I2C or
+ * SPI bus (AVR, RP2040, ESP32, STM32), auto-detecting the protocol from the
+ * wiring like the physical module.  Consolidates the old ssd1306 / ssd1306-i2c
+ * / ssd1306-spi picker entries into one (issues #101 / #215).
  */
 PartSimulationRegistry.register('ssd1306', {
   attachEvents: (element, simulator, getPin, componentId) => {
     const { components } = useSimulatorStore.getState();
     const comp = components.find((c) => c.id === componentId);
-    const protocol = ((comp?.properties?.protocol as string) ?? 'i2c') as 'i2c' | 'spi';
-    return attachSSD1306(element, simulator, getPin, protocol);
+    const i2cAddr = parseI2cAddress(comp?.properties?.i2cAddress, 0x3c);
+    const protocol = detectSSD1306Protocol(getPin);
+    return attachSSD1306(element, simulator, getPin, protocol, i2cAddr);
   },
 });
 
 /**
- * Picker shortcut: "SSD1306 OLED (I2C)" — same web component, but the
- * metadata defaults protocol to 'i2c' and the part skips the property
- * lookup.  Lets users find the I2C variant by name without having to
- * discover the protocol property on the generic ssd1306 entry.
+ * Legacy aliases kept ONLY for projects saved before the picker entries merged
+ * into the single auto-detecting `ssd1306` above.  New projects never carry
+ * these ids.  They force a fixed protocol (no auto-detect) to reproduce the old
+ * behaviour exactly.
  */
 PartSimulationRegistry.register('ssd1306-i2c', {
   attachEvents: (element, simulator, getPin) =>
     attachSSD1306(element, simulator, getPin, 'i2c'),
 });
-
-/** Picker shortcut: "SSD1306 OLED (SPI)" — counterpart to ssd1306-i2c. */
 PartSimulationRegistry.register('ssd1306-spi', {
   attachEvents: (element, simulator, getPin) =>
     attachSSD1306(element, simulator, getPin, 'spi'),

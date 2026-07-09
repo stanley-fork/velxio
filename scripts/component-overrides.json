@@ -2455,57 +2455,6 @@
         "2004",
         "liquidcrystal"
       ]
-    },
-    {
-      "$comment": "Picker shortcut for SSD1306 in I2C mode — same wokwi-ssd1306 element, but the user finds it by name without having to discover the protocol selector on the generic ssd1306 entry. Issue #101.",
-      "id": "ssd1306-i2c",
-      "tagName": "wokwi-ssd1306",
-      "name": "SSD1306 OLED (I2C)",
-      "category": "displays",
-      "thumbnail": "<svg width=\"64\" height=\"64\" xmlns=\"http://www.w3.org/2000/svg\"><rect width=\"64\" height=\"64\" fill=\"#0b1226\" rx=\"4\"/><rect x=\"8\" y=\"14\" width=\"48\" height=\"32\" rx=\"2\" fill=\"#000\"/><text x=\"32\" y=\"30\" text-anchor=\"middle\" font-size=\"7\" font-family=\"monospace\" fill=\"#9be1ff\" font-weight=\"bold\">SSD1306</text><text x=\"32\" y=\"40\" text-anchor=\"middle\" font-size=\"6\" font-family=\"monospace\" fill=\"#9be1ff\">I2C 0x3C</text><text x=\"32\" y=\"60\" text-anchor=\"middle\" font-size=\"7\" font-family=\"sans-serif\" fill=\"#e5e7eb\" font-weight=\"bold\">SDA SCL</text></svg>",
-      "properties": [
-        {
-          "name": "imageData",
-          "type": "string",
-          "control": "text"
-        }
-      ],
-      "defaultValues": {
-        "protocol": "i2c"
-      },
-      "pinCount": 4,
-      "tags": [
-        "ssd1306",
-        "oled",
-        "display",
-        "i2c",
-        "0x3c"
-      ]
-    },
-    {
-      "$comment": "Picker shortcut for SSD1306 in SPI mode — counterpart to ssd1306-i2c.",
-      "id": "ssd1306-spi",
-      "tagName": "wokwi-ssd1306",
-      "name": "SSD1306 OLED (SPI)",
-      "category": "displays",
-      "thumbnail": "<svg width=\"64\" height=\"64\" xmlns=\"http://www.w3.org/2000/svg\"><rect width=\"64\" height=\"64\" fill=\"#0b1226\" rx=\"4\"/><rect x=\"8\" y=\"14\" width=\"48\" height=\"32\" rx=\"2\" fill=\"#000\"/><text x=\"32\" y=\"30\" text-anchor=\"middle\" font-size=\"7\" font-family=\"monospace\" fill=\"#9be1ff\" font-weight=\"bold\">SSD1306</text><text x=\"32\" y=\"40\" text-anchor=\"middle\" font-size=\"6\" font-family=\"monospace\" fill=\"#9be1ff\">SPI mode</text><text x=\"32\" y=\"60\" text-anchor=\"middle\" font-size=\"6\" font-family=\"sans-serif\" fill=\"#e5e7eb\" font-weight=\"bold\">MOSI/SCK/DC</text></svg>",
-      "properties": [
-        {
-          "name": "imageData",
-          "type": "string",
-          "control": "text"
-        }
-      ],
-      "defaultValues": {
-        "protocol": "spi"
-      },
-      "pinCount": 7,
-      "tags": [
-        "ssd1306",
-        "oled",
-        "display",
-        "spi"
-      ]
     }
   ],
   "led": {
@@ -2525,21 +2474,28 @@
     }
   },
   "ssd1306": {
+    "$comment": "Single SSD1306 OLED entry. One physical breakout; the sim auto-detects I2C vs SPI from the wiring (see ProtocolParts.detectSSD1306Protocol). Replaces the old ssd1306-i2c/ssd1306-spi picker shortcuts (issues #101/#215).",
+    "name": "SSD1306 OLED",
+    "pinCount": 8,
+    "tags": [
+      "ssd1306",
+      "oled",
+      "display",
+      "i2c",
+      "spi",
+      "0x3c"
+    ],
     "properties": {
-      "protocol": {
-        "name": "protocol",
+      "i2cAddress": {
+        "name": "i2cAddress",
         "type": "string",
-        "defaultValue": "i2c",
-        "control": "select",
-        "description": "Communication protocol",
-        "options": [
-          "i2c",
-          "spi"
-        ]
+        "defaultValue": "0x3c",
+        "control": "text",
+        "description": "I2C address (I2C mode)"
       }
     },
     "defaultValues": {
-      "protocol": "i2c"
+      "i2cAddress": "0x3c"
     }
   },
   "resistor": {
