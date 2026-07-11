@@ -1248,7 +1248,19 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         // through the picker; this just closes the API gap.
         const stillExists = s.boards.some((b) => b.id === s.activeBoardId);
         const nextActive = stillExists ? s.activeBoardId : id;
-        return { boards: [...s.boards, newBoard], activeBoardId: nextActive };
+        // Keep `simulator` in sync with `activeBoardId`. setActiveBoardId is the
+        // only other place that promotes a board, and it sets BOTH — if addBoard
+        // promotes a board (first board, or the active one was removed) without
+        // syncing the simulator, s.simulator stays pointed at the previous board.
+        // Parts that read s.simulator (SPI displays like ILI9341, which attach
+        // `spi.onByte` to the active simulator) then wire onto the wrong board's
+        // bus and never receive data — the "boards[] ESP32 TFT renders black"
+        // bug. When nextActive is unchanged this is a no-op (same reference).
+        return {
+          boards: [...s.boards, newBoard],
+          activeBoardId: nextActive,
+          simulator: simulatorMap.get(nextActive) ?? s.simulator,
+        };
       });
       // Create the editor file group for this board
       useEditorStore.getState().createFileGroup(`group-${id}`);
