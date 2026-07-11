@@ -19,6 +19,7 @@ import { retroIntelExamples } from './examples-retro-intel';
 import { robotDesktopExamples } from './examples-robot-desktop';
 import { microsdExamples } from './examples-storage-microsd';
 import { esp32MqttExamples } from './examples-esp32-mqtt';
+import { esp32s3TftExamples } from './examples-esp32s3-tft';
 
 /** Per-board setup for multi-board examples */
 export interface ExampleBoard {
@@ -9999,6 +10000,7 @@ export const exampleProjects: ExampleProject[] = [
   ...robotDesktopExamples,
   ...microsdExamples,
   ...esp32MqttExamples,
+  ...esp32s3TftExamples,
 ];
 
 // Get examples by category
