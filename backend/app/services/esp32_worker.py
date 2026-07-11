@@ -268,9 +268,14 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
         except Exception as _e:  # noqa: BLE001
             _log(f'[sd] failed to attach microSD: {_e!r}')
 
-    # Adjust GPIO pinmap based on chip: ESP32-C3 has only 22 GPIOs
+    # Adjust GPIO pinmap based on chip: ESP32-C3 has only 22 GPIOs; the
+    # ESP32-S3 has 49 (GPIO0..48). The identity pinmap's length is what
+    # picsimlab_wire_gpio iterates, so the S3 needs 49 for pins 40..48 to be
+    # wired to the host (bank-1 named outputs in the widened esp32_gpio model).
     if 'c3' in machine:
         _build_pinmap(22)
+    elif 's3' in machine:
+        _build_pinmap(49)
 
     # ── 2. Load DLL ───────────────────────────────────────────────────────────
     _MINGW64_BIN = r'C:\msys64\mingw64\bin'
