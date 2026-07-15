@@ -560,8 +560,12 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
             pulls: dict[int, int] = {}
             iomux_ptr = lib.qemu_picsimlab_get_internals(3)  # QEMU_INTERNAL_IOMUX_GPIOS
             if iomux_ptr:
-                mux = (ctypes.c_uint32 * 40).from_address(iomux_ptr)
-                for gpio_pin in range(40):
+                # The exposed array is indexed by GPIO and sized per chip:
+                # classic muxgpios[40], S3 iomux regs[49] (GPIO0..48). A
+                # fixed 40 here missed S3 GPIO40-48 pulls entirely.
+                n_gpio = _GPIO_COUNT
+                mux = (ctypes.c_uint32 * n_gpio).from_address(iomux_ptr)
+                for gpio_pin in range(n_gpio):
                     reg = int(mux[gpio_pin])
                     pulls[gpio_pin] = 1 if (reg >> 8) & 1 else (2 if (reg >> 7) & 1 else 0)
             rtcio_ptr = lib.qemu_picsimlab_get_internals(10)  # QEMU_INTERNAL_RTCIO
