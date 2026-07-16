@@ -2678,6 +2678,8 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
               panRef.current = p;
               setPan(p);
             }}
+            panRef={panRef}
+            zoomRef={zoomRef}
             components={components}
             boards={boards}
             viewportRef={canvasRef}
