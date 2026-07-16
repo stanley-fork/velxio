@@ -283,6 +283,23 @@ export const CustomChipDialog = ({ initial, onClose, onSave }: CustomChipDialogP
               {compiling ? t('editor.customChip.compiling') : t('editor.customChip.compile')}
             </button>
           )}
+          <button
+            style={cancelBtn}
+            title="Describe the chip and the AI agent writes, compiles and programs it"
+            onClick={() => {
+              // Pro AI agent hook — no-op when no overlay listener is mounted.
+              window.dispatchEvent(new CustomEvent('velxio:agent-prompt', {
+                detail: {
+                  prompt:
+                    'Crea un custom chip que ... (describe qué debe hacer; ' +
+                    'el agente escribe el C, lo compila y lo programa en el canvas)',
+                },
+              }));
+              onClose();
+            }}
+          >
+            ✨ Create with AI
+          </button>
           <div style={{ flex: 1 }} />
           <button style={cancelBtn} onClick={onClose}>{t('editor.customChip.cancel')}</button>
           <button style={canSave ? saveBtn : saveBtnDisabled} disabled={!canSave} onClick={doSave}>
