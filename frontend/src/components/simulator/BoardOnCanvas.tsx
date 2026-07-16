@@ -27,7 +27,7 @@ import { PinOverlay } from './PinOverlay';
 
 // Board visual dimensions (width × height) for the drag-overlay sizing.
 // ESP32 sizes match the wokwi-boards SVG rendered at 5 px/mm.
-const BOARD_SIZE: Record<string, { w: number; h: number }> = {
+export const BOARD_SIZE: Record<string, { w: number; h: number }> = {
   // wokwi-elements: rendered at 96 dpi — 1mm = 3.7795px
   'arduino-uno': { w: 274, h: 202 }, // 72.58mm × 53.34mm
   'arduino-nano': { w: 170, h: 67 }, // 44.9mm  × 17.8mm
