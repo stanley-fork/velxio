@@ -11,6 +11,7 @@ import {
 import type { BoardKind } from '../../types/board';
 import { boardDisplayName } from '../../types/board';
 import { importProjectFile, PROJECT_FILE_ACCEPT } from '../../utils/importProject';
+import { showMessageDialog } from '../../store/useMessageDialogStore';
 import './FileExplorer.css';
 
 // SVG icons — same style as EditorToolbar (stroke-based, 16x16)
@@ -284,7 +285,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({ onSaveClick, onNewCl
         }
       }
     } catch (err) {
-      window.alert((err as Error).message);
+      showMessageDialog((err as Error).message, { kind: 'error' });
     }
   }, []);
 
