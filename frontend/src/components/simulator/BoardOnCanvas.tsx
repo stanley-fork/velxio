@@ -75,6 +75,9 @@ interface BoardOnCanvasProps {
   /** When false, the pin overlay is hidden — keeps the canvas uncluttered when
    * the user isn't hovering, isn't selecting, and isn't actively wiring. */
   showPins?: boolean;
+  /** True while a wire is in progress — forwarded to PinOverlay so dense
+   * boards paint every square (they're all valid wire targets). */
+  wiring?: boolean;
   onMouseDown: (e: React.MouseEvent) => void;
   onContextMenu?: (e: React.MouseEvent) => void;
   onMouseEnter?: () => void;
@@ -89,6 +92,7 @@ export const BoardOnCanvas = ({
   led13 = false,
   isActive = false,
   showPins = true,
+  wiring = false,
   onMouseDown,
   onContextMenu,
   onMouseEnter,
@@ -162,7 +166,15 @@ export const BoardOnCanvas = ({
     // coords, but board + pins now share ONE stacking context, so this
     // board's pins can never paint above a component/board covering it.
     // z 0 keeps every board below components (their groups use z 1/2).
-    <div style={{ position: 'absolute', left: 0, top: 0, zIndex: 0 }}>
+    // Hover handlers live HERE, on the wrapper that owns both the drag
+    // overlay AND the pin squares — putting them on the drag overlay (a
+    // sibling of PinOverlay) made moving onto a pin fire mouseleave, which
+    // cleared the hover and hid the pins before you could click one.
+    <div
+      style={{ position: 'absolute', left: 0, top: 0, zIndex: 0 }}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+    >
       {boardEl}
 
       {/* Active board highlight ring */}
@@ -219,8 +231,6 @@ export const BoardOnCanvas = ({
             onMouseDown(e);
           }}
           onContextMenu={onContextMenu}
-          onMouseEnter={onMouseEnter}
-          onMouseLeave={onMouseLeave}
         />
       )}
 
@@ -234,6 +244,7 @@ export const BoardOnCanvas = ({
         wrapperOffsetX={0}
         wrapperOffsetY={0}
         zoom={zoom}
+        wiring={wiring}
       />
     </div>
   );
