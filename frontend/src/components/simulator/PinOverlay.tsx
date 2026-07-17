@@ -24,14 +24,6 @@ const TOUCH_MIN_SCREEN_PX = 44;
  */
 const PIN_WORLD_MAX = 28;
 
-/**
- * Components with more pins than this (breadboards: 170/830) don't paint
- * every square on hover — that's a wall of blue. Their squares stay invisible
- * and light up individually under the cursor. While a wire is in progress
- * (`wiring`) every square is painted again: they're all valid targets.
- */
-const DENSE_PIN_THRESHOLD = 60;
-
 interface PinInfo {
   name: string;
   x: number; // CSS pixels
@@ -127,9 +119,10 @@ export const PinOverlay: React.FC<PinOverlayProps> = ({
     : PIN_VISUAL;
   const pinHalf = pinSize / 2;
 
-  // Dense components (breadboards) keep their squares invisible until the
-  // cursor is over the individual pin; wiring mode paints them all.
-  const subtle = !wiring && pins.length > DENSE_PIN_THRESHOLD;
+  // On hover, squares stay invisible and only the ONE under the cursor lights
+  // up (its own onMouseEnter paints it) — no wall of blue on any component.
+  // While a wire is in progress every square paints: they're all valid targets.
+  const subtle = !wiring;
   const baseBackground = subtle ? 'transparent' : 'rgba(0, 200, 255, 0.8)';
   const baseBorder = subtle ? '1.5px solid transparent' : '1.5px solid white';
 
