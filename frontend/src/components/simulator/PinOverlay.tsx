@@ -24,6 +24,14 @@ const TOUCH_MIN_SCREEN_PX = 44;
  */
 const PIN_WORLD_MAX = 28;
 
+/**
+ * Components with more pins than this (breadboards: 170/830) don't paint
+ * every square on hover — that's a wall of blue. Their squares stay invisible
+ * and light up individually under the cursor. While a wire is in progress
+ * (`wiring`) every square is painted again: they're all valid targets.
+ */
+const DENSE_PIN_THRESHOLD = 60;
+
 interface PinInfo {
   name: string;
   x: number; // CSS pixels
@@ -50,6 +58,9 @@ interface PinOverlayProps {
    * boxes follow the visually-rotated pin tips.
    */
   rotation?: number;
+  /** True while a wire is in progress — paints every square even on dense
+   * components (breadboards) because they're all valid wire targets. */
+  wiring?: boolean;
 }
 
 export const PinOverlay: React.FC<PinOverlayProps> = ({
@@ -62,6 +73,7 @@ export const PinOverlay: React.FC<PinOverlayProps> = ({
   wrapperOffsetY = 6,
   zoom = 1,
   rotation = 0,
+  wiring = false,
 }) => {
   const [pins, setPins] = useState<PinInfo[]>([]);
   const [wrapperBox, setWrapperBox] = useState<{ w: number; h: number } | null>(null);
@@ -115,6 +127,12 @@ export const PinOverlay: React.FC<PinOverlayProps> = ({
     : PIN_VISUAL;
   const pinHalf = pinSize / 2;
 
+  // Dense components (breadboards) keep their squares invisible until the
+  // cursor is over the individual pin; wiring mode paints them all.
+  const subtle = !wiring && pins.length > DENSE_PIN_THRESHOLD;
+  const baseBackground = subtle ? 'transparent' : 'rgba(0, 200, 255, 0.8)';
+  const baseBorder = subtle ? '1.5px solid transparent' : '1.5px solid white';
+
   return (
     <div
       style={{
@@ -157,6 +175,11 @@ export const PinOverlay: React.FC<PinOverlayProps> = ({
           <div
             key={`${pin.name}-${index}`}
             data-pin-overlay="true"
+            onMouseDown={(e) => {
+              // Without this, press-and-drag on a pin square bubbles to the
+              // canvas and pans it — a pin press must never move the canvas.
+              e.stopPropagation();
+            }}
             onClick={(e) => {
               e.stopPropagation();
               onPinClick(
@@ -183,8 +206,8 @@ export const PinOverlay: React.FC<PinOverlayProps> = ({
               width: `${pinSize}px`,
               height: `${pinSize}px`,
               borderRadius: '3px',
-              backgroundColor: 'rgba(0, 200, 255, 0.8)',
-              border: '1.5px solid white',
+              backgroundColor: baseBackground,
+              border: baseBorder,
               cursor: 'crosshair',
               pointerEvents: 'all',
               transition: 'all 0.15s',
@@ -192,10 +215,12 @@ export const PinOverlay: React.FC<PinOverlayProps> = ({
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.backgroundColor = 'rgba(0, 255, 100, 1)';
+              e.currentTarget.style.border = '1.5px solid white';
               e.currentTarget.style.transform = 'scale(1.4)';
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = 'rgba(0, 200, 255, 0.8)';
+              e.currentTarget.style.backgroundColor = baseBackground;
+              e.currentTarget.style.border = baseBorder;
               e.currentTarget.style.transform = 'scale(1)';
             }}
             title={pin.name}
