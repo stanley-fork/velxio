@@ -245,6 +245,11 @@
   left: 0;
   right: 0;
   bottom: 0;
+  /* Hit-test transparent: this full-canvas div sits later in the DOM than
+     the boards, so with pointer events it would swallow clicks meant for
+     board pins / board drag overlays (their z-index is local to each
+     board's stacking context). Component groups re-enable their own. */
+  pointer-events: none;
 }
 
 /* ── Zoom controls ───────────────────────────────── */

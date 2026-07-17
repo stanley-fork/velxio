@@ -1969,7 +1969,18 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
             onMouseLeave={() =>
               setHoveredComponentId((curr) => (curr === component.id ? null : curr))
             }
-            style={{ display: 'contents' }}
+            // Zero-size positioned wrapper: children keep their absolute canvas
+            // coords, but body + pins now share ONE stacking context, so this
+            // component's pins can never paint above a component covering it.
+            // pointerEvents re-enables hit-testing under .components-area's
+            // pointer-events: none.
+            style={{
+              position: 'absolute',
+              left: 0,
+              top: 0,
+              zIndex: isSelected ? 2 : 1,
+              pointerEvents: 'auto',
+            }}
           >
             <InstrumentComponent
               id={component.id}
@@ -2021,7 +2032,19 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
           onMouseLeave={() =>
             setHoveredComponentId((curr) => (curr === component.id ? null : curr))
           }
-          style={{ display: 'contents' }}
+          // Zero-size positioned wrapper: children keep their absolute canvas
+          // coords, but body + pins now share ONE stacking context, so this
+          // component's pins can never paint above a component covering it.
+          // Selected components (z 2) still raise above unselected ones (z 1).
+          // pointerEvents re-enables hit-testing under .components-area's
+          // pointer-events: none.
+          style={{
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            zIndex: isSelected ? 2 : 1,
+            pointerEvents: 'auto',
+          }}
         >
           <DynamicComponent
             id={component.id}

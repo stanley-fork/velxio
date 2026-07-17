@@ -12,7 +12,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  /* Above every floating panel, including the pro AI chat (8000/8001). */
+  z-index: 9000;
   animation: fadeIn 0.2s ease;
 }
 

@@ -10,6 +10,7 @@
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { ComponentRegistry } from '../services/ComponentRegistry';
 import type { ComponentMetadata, ComponentCategory } from '../types/component-metadata';
@@ -153,7 +154,9 @@ export const ComponentPickerModal: React.FC<ComponentPickerModalProps> = ({
 
   if (!isOpen) return null;
 
-  return (
+  // Portal to <body>: the picker must escape the canvas subtree so no ancestor
+  // stacking context can pin it below floating panels (e.g. the AI chat).
+  return createPortal(
     <div className="component-picker-overlay" onClick={onClose}>
       <div className="component-picker-modal" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
@@ -312,7 +315,8 @@ export const ComponentPickerModal: React.FC<ComponentPickerModalProps> = ({
           </>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
 
