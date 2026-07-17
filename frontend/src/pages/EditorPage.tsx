@@ -6,6 +6,7 @@ import React, { useRef, useState, useCallback, useEffect, lazy, Suspense } from 
 import { useTranslation } from 'react-i18next';
 import { startSimulation } from '../simulation/spice/start';
 import { useSEO } from '../utils/useSEO';
+import { restoreStashedWorkspace } from '../utils/workspaceDraft';
 import { CodeEditor } from '../components/editor/CodeEditor';
 import { EditorToolbar } from '../components/editor/EditorToolbar';
 import { FileExplorer } from '../components/editor/FileExplorer';
@@ -98,6 +99,13 @@ export const EditorPage: React.FC = () => {
   // WASM ngspice (via NgSpiceWorkerAdapter) is the only solver.
   useEffect(() => {
     return startSimulation();
+  }, []);
+
+  // Restore an in-progress workspace stashed before a login redirect, so a
+  // user who was building something and signed in lands back on their circuit
+  // (not the empty starter board). One-shot; see utils/workspaceDraft.
+  useEffect(() => {
+    restoreStashedWorkspace();
   }, []);
 
   // ── GitHub star prompt (show twice at most: 2nd visit OR after 3 min) ──────
