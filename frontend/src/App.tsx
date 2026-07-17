@@ -34,6 +34,7 @@ import { LocaleSync } from './i18n/LocaleSync';
 import { NON_DEFAULT_LOCALES } from './i18n/config';
 import { useProRoutes } from './lib/proRoutes';
 import { triggerSessionCheck } from './lib/proSession';
+import { MessageDialogHost } from './components/ui/MessageDialogHost';
 import './App.css';
 
 /**
@@ -164,6 +165,9 @@ function App() {
           <Route path="/en/*" element={<EnPrefixRedirect />} />
         </Routes>
       </LocaleSync>
+      {/* Global alert() replacement — opened from anywhere (React or plain
+          .ts) via showMessageDialog() in store/useMessageDialogStore. */}
+      <MessageDialogHost />
     </Router>
   );
 }
