@@ -122,7 +122,11 @@ export const PinOverlay: React.FC<PinOverlayProps> = ({
         left: `${componentX + wrapperOffsetX}px`,
         top: `${componentY + wrapperOffsetY}px`,
         pointerEvents: 'none',
-        zIndex: 30, // Above wires (20) and components, below modals/dialogs (1000+)
+        // Local to the owning component's stacking context (its wrapper in
+        // SimulatorCanvas/BoardOnCanvas sets position + z-index): above the
+        // component's own body/overlays only — a covering component hides
+        // these pins along with the body.
+        zIndex: 30,
       }}
     >
       {pins.map((pin, index) => {

@@ -158,7 +158,11 @@ export const BoardOnCanvas = ({
   })();
 
   return (
-    <>
+    // Zero-size positioned wrapper: children keep their absolute canvas
+    // coords, but board + pins now share ONE stacking context, so this
+    // board's pins can never paint above a component/board covering it.
+    // z 0 keeps every board below components (their groups use z 1/2).
+    <div style={{ position: 'absolute', left: 0, top: 0, zIndex: 0 }}>
       {boardEl}
 
       {/* Active board highlight ring */}
@@ -231,6 +235,6 @@ export const BoardOnCanvas = ({
         wrapperOffsetY={0}
         zoom={zoom}
       />
-    </>
+    </div>
   );
 };
