@@ -75,6 +75,9 @@ interface BoardOnCanvasProps {
   /** When false, the pin overlay is hidden — keeps the canvas uncluttered when
    * the user isn't hovering, isn't selecting, and isn't actively wiring. */
   showPins?: boolean;
+  /** True while a wire is in progress — forwarded to PinOverlay so dense
+   * boards paint every square (they're all valid wire targets). */
+  wiring?: boolean;
   onMouseDown: (e: React.MouseEvent) => void;
   onContextMenu?: (e: React.MouseEvent) => void;
   onMouseEnter?: () => void;
@@ -89,6 +92,7 @@ export const BoardOnCanvas = ({
   led13 = false,
   isActive = false,
   showPins = true,
+  wiring = false,
   onMouseDown,
   onContextMenu,
   onMouseEnter,
@@ -234,6 +238,7 @@ export const BoardOnCanvas = ({
         wrapperOffsetX={0}
         wrapperOffsetY={0}
         zoom={zoom}
+        wiring={wiring}
       />
     </div>
   );

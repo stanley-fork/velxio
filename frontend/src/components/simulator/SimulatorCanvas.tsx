@@ -1957,10 +1957,10 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
         showPropertyDialog || customChipComponentId !== null || sensorControlComponentId !== null;
       // On touch devices the pin picker dialog (PinPickerDialog) is the
       // primary way to pick pins, so the tiny overlay squares are hidden —
-      // they're hard to hit with a finger anyway. Desktop still uses overlays
-      // (hover/select shows them so the user can click with a mouse).
+      // they're hard to hit with a finger anyway. Desktop shows overlays on
+      // hover / while wiring only — selection alone doesn't light them up.
       const showPinsForComponent =
-        !dialogOpen && !isTouchDevice && (wireInProgress || isSelected || isHovered);
+        !dialogOpen && !isTouchDevice && (wireInProgress || isHovered);
       return (
         <React.Fragment key={component.id}>
           <div
@@ -2000,6 +2000,7 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
                 zoom={zoom}
                 wrapperOffsetX={0}
                 wrapperOffsetY={0}
+                wiring={wireInProgress}
               />
             )}
           </div>
@@ -2018,11 +2019,12 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
     const dialogOpen =
       showPropertyDialog || customChipComponentId !== null || sensorControlComponentId !== null;
     // Show pins only when relevant: while a wire is in progress (any pin is a
-    // valid target), when this component is selected, or while hovering it.
+    // valid target) or while hovering the component — selection alone doesn't
+    // light them up (a selected breadboard lit 170 squares permanently).
     // Hidden when a dialog is open. Hidden entirely on touch — there the
     // PinPickerDialog (tap component → list of pins) replaces the overlays.
     const showPinsForComponent =
-      !dialogOpen && !isTouchDevice && (wireInProgress || isSelected || isHovered);
+      !dialogOpen && !isTouchDevice && (wireInProgress || isHovered);
 
     return (
       <React.Fragment key={component.id}>
@@ -2068,6 +2070,7 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
               showPins={showPinsForComponent}
               zoom={zoom}
               rotation={Number(component.properties?.rotation) || 0}
+              wiring={wireInProgress}
             />
           )}
         </div>
@@ -2584,13 +2587,14 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
                 showPropertyDialog ||
                 customChipComponentId !== null ||
                 sensorControlComponentId !== null;
-              // Pins show during wiring (every endpoint is a valid target),
-              // when hovering the board, or when it's the active board.
+              // Pins show during wiring (every endpoint is a valid target) or
+              // when hovering the board — NOT just for being the active board,
+              // which lit up every pin permanently and cluttered the canvas.
               // Suppressed while a dialog is open. Hidden entirely on touch
               // since the PinPickerDialog (tap board to open list) replaces
               // the overlays — fingers can't reliably hit a 12px pin anyway.
               const showPins =
-                !dialogOpen && !isTouchDevice && (wireInProgress || isHovered || isActive);
+                !dialogOpen && !isTouchDevice && (wireInProgress || isHovered);
               return (
                 <BoardOnCanvas
                   key={board.id}
@@ -2598,6 +2602,7 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
                   running={running}
                   isActive={isActive}
                   showPins={showPins}
+                  wiring={wireInProgress}
                   led13={Boolean(boardLedStates[board.id])}
                   onMouseEnter={() => setHoveredBoardId(board.id)}
                   onMouseLeave={() =>
