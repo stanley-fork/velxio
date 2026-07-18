@@ -36,6 +36,7 @@ import {
   normalizeWireWaypoints,
   previewElbow,
 } from '../utils/wireUtils';
+import { routeAroundObstacles, collectComponentObstacles } from '../utils/wireAutoRoute';
 import { createSerialBatcher } from './serialBatcher';
 import {
   bindBoard as icBindBoard,
@@ -2552,6 +2553,23 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       // Finish wire: auto-detect color from pin name
       const finalColor = color === DEFAULT_WIRE_COLOR ? autoWireColor(endpoint.pinName) : color;
 
+      // First-time auto-routing: a direct pin-to-pin wire (no user-placed
+      // waypoints) gets routed around other components. This only ever
+      // happens here at creation — the routed corners become ordinary
+      // stored waypoints, so any later manual edit stays exactly where
+      // the user puts it, never re-routed.
+      let routed: { x: number; y: number }[] | null = null;
+      if (waypoints.length === 0) {
+        routed = routeAroundObstacles(
+          { x: startEndpoint.x, y: startEndpoint.y },
+          { x: endpoint.x, y: endpoint.y },
+          collectComponentObstacles(state.components, [
+            startEndpoint.componentId,
+            endpoint.componentId,
+          ]),
+        );
+      }
+
       // Materialise the elbow of the final leg exactly as the live preview
       // drew it (longer axis first). Without this the committed wire falls
       // back to the implicit horizontal-first corner and visibly changes
@@ -2567,7 +2585,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         end: endpoint,
         waypoints: normalizeWireWaypoints(
           { x: startEndpoint.x, y: startEndpoint.y },
-          elbow ? [...waypoints, elbow] : waypoints,
+          routed ?? (elbow ? [...waypoints, elbow] : waypoints),
           { x: endpoint.x, y: endpoint.y },
         ),
         color: finalColor,
