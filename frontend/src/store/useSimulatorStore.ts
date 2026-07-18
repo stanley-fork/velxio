@@ -30,7 +30,13 @@ import { useEditorStore } from './useEditorStore';
 import { useVfsStore } from './useVfsStore';
 import { buildProjectSdImage, decodeSdFiles, bytesToB64 } from '../utils/sdCardFiles';
 import { boardPinToNumber, isBoardComponent } from '../utils/boardPinMapping';
-import { autoWireColor, DEFAULT_WIRE_COLOR } from '../utils/wireUtils';
+import {
+  autoWireColor,
+  DEFAULT_WIRE_COLOR,
+  normalizeWireWaypoints,
+  previewElbow,
+} from '../utils/wireUtils';
+import { routeAroundObstacles, collectComponentObstacles } from '../utils/wireAutoRoute';
 import { createSerialBatcher } from './serialBatcher';
 import {
   bindBoard as icBindBoard,
@@ -2547,11 +2553,41 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       // Finish wire: auto-detect color from pin name
       const finalColor = color === DEFAULT_WIRE_COLOR ? autoWireColor(endpoint.pinName) : color;
 
+      // First-time auto-routing: a direct pin-to-pin wire (no user-placed
+      // waypoints) gets routed around other components. This only ever
+      // happens here at creation — the routed corners become ordinary
+      // stored waypoints, so any later manual edit stays exactly where
+      // the user puts it, never re-routed.
+      let routed: { x: number; y: number }[] | null = null;
+      if (waypoints.length === 0) {
+        routed = routeAroundObstacles(
+          { x: startEndpoint.x, y: startEndpoint.y },
+          { x: endpoint.x, y: endpoint.y },
+          collectComponentObstacles(state.components, [
+            startEndpoint.componentId,
+            endpoint.componentId,
+          ]),
+        );
+      }
+
+      // Materialise the elbow of the final leg exactly as the live preview
+      // drew it (longer axis first). Without this the committed wire falls
+      // back to the implicit horizontal-first corner and visibly changes
+      // shape the instant the user clicks the destination pin.
+      const last = waypoints.length
+        ? waypoints[waypoints.length - 1]
+        : { x: startEndpoint.x, y: startEndpoint.y };
+      const elbow = previewElbow(last, endpoint.x, endpoint.y);
+
       const newWire: Wire = {
         id: `wire-${Date.now()}`,
         start: startEndpoint,
         end: endpoint,
-        waypoints,
+        waypoints: normalizeWireWaypoints(
+          { x: startEndpoint.x, y: startEndpoint.y },
+          routed ?? (elbow ? [...waypoints, elbow] : waypoints),
+          { x: endpoint.x, y: endpoint.y },
+        ),
         color: finalColor,
       };
       set((state) => ({ wires: [...state.wires, newWire], wireInProgress: null }));

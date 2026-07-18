@@ -28,7 +28,7 @@ import { isSpiceMapped } from '../../simulation/spice/componentToSpice';
 import { PinOverlay } from './PinOverlay';
 import { calculatePinPosition } from '../../utils/pinPositionCalculator';
 import { isBoardComponent, boardPinToNumber } from '../../utils/boardPinMapping';
-import { autoWireColor, WIRE_KEY_COLORS } from '../../utils/wireUtils';
+import { autoWireColor, WIRE_KEY_COLORS, expandOrthogonalPoints } from '../../utils/wireUtils';
 import {
   findWireNearPoint,
   findSegmentNearPoint,
@@ -40,6 +40,7 @@ import {
   simplifyOrthogonalPath,
   insertWaypointAtSegment,
   collectAlignmentTargets,
+  addOwnWireAlignmentTargets,
   snapToNearest,
 } from '../../utils/wireHitDetection';
 import { useIsCoarsePointer } from '../../utils/useTouchDevice';
@@ -61,6 +62,7 @@ import {
 import { SelectionActionBar } from './SelectionActionBar';
 import { WireModeBanner } from './WireModeBanner';
 import { PinPickerDialog } from './PinPickerDialog';
+import { useButtonKeyBindings } from '../../hooks/useButtonKeyBindings';
 import './SimulatorCanvas.css';
 
 /** World-units of tolerance for alignment snap (scales with zoom). */
@@ -136,6 +138,9 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
 
   // Active board (for WiFi/BLE status display)
   const activeBoard = boards.find((b) => b.id === activeBoardId) ?? null;
+
+  // Keyboard → pushbutton bindings (component `key` property).
+  useButtonKeyBindings(components);
 
   // Legacy derived values for components that still use them
   const boardType = useSimulatorStore((s) => s.boardType);
@@ -1401,6 +1406,10 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
       sd.isDragging = true;
       const threshold = ALIGN_SNAP_PX / zoomRef.current;
       const targets = collectAlignmentTargets(wiresRef.current, sd.wireId);
+      // Snap against the wire's own runs too, so a dragged segment can
+      // line up with (and fuse into) its neighbours instead of ending
+      // up millimetres off.
+      addOwnWireAlignmentTargets(targets, sd.renderedPts, [sd.segIndex, sd.segIndex + 1]);
       const guides: AlignmentGuide[] = [];
       let newValue = sd.axis === 'horizontal' ? world.y : world.x;
       const snap = snapToNearest(
@@ -1428,6 +1437,17 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
       if (wire) {
         const threshold = ALIGN_SNAP_PX / zoomRef.current;
         const targets = collectAlignmentTargets(wiresRef.current, wd.wireId);
+        // Own-wire targets (start, end, other bends) minus the dragged
+        // bend itself, so it can fuse back onto its own wire's lines.
+        addOwnWireAlignmentTargets(
+          targets,
+          [
+            { x: wire.start.x, y: wire.start.y },
+            ...wd.originalWaypoints,
+            { x: wire.end.x, y: wire.end.y },
+          ],
+          [wd.waypointIndex + 1],
+        );
         const guides: AlignmentGuide[] = [];
         let snappedX = world.x;
         let snappedY = world.y;
@@ -1447,20 +1467,11 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
         );
         setWaypointDragPreview({ wireId: wd.wireId, waypoints: newWaypoints });
         // Reflect the moved bend point in the rendered path live
-        const stored = [
+        const expanded = expandOrthogonalPoints([
           { x: wire.start.x, y: wire.start.y },
           ...newWaypoints,
           { x: wire.end.x, y: wire.end.y },
-        ];
-        const expanded: { x: number; y: number }[] = [stored[0]];
-        for (let i = 1; i < stored.length; i++) {
-          const prev = stored[i - 1];
-          const curr = stored[i];
-          if (prev.x !== curr.x && prev.y !== curr.y) {
-            expanded.push({ x: curr.x, y: prev.y });
-          }
-          expanded.push(curr);
-        }
+        ]);
         const overridePath = renderedPointsToPath(simplifyOrthogonalPath(expanded));
         setSegmentDragPreview({ wireId: wd.wireId, overridePath });
       }
@@ -1493,6 +1504,7 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
         const world = toWorld(e.clientX, e.clientY);
         const threshold = ALIGN_SNAP_PX / zoomRef.current;
         const targets = collectAlignmentTargets(wiresRef.current, sd.wireId);
+        addOwnWireAlignmentTargets(targets, sd.renderedPts, [sd.segIndex, sd.segIndex + 1]);
         let newValue = sd.axis === 'horizontal' ? world.y : world.x;
         const snap = snapToNearest(
           newValue,
@@ -1519,6 +1531,15 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
         if (wire) {
           const threshold = ALIGN_SNAP_PX / zoomRef.current;
           const targets = collectAlignmentTargets(wiresRef.current, wd.wireId);
+          addOwnWireAlignmentTargets(
+            targets,
+            [
+              { x: wire.start.x, y: wire.start.y },
+              ...wd.originalWaypoints,
+              { x: wire.end.x, y: wire.end.y },
+            ],
+            [wd.waypointIndex + 1],
+          );
           let snappedX = world.x;
           let snappedY = world.y;
           const snapX = snapToNearest(world.x, targets.xs, threshold);
@@ -1529,20 +1550,11 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
             i === wd.waypointIndex ? { x: snappedX, y: snappedY } : { ...wp },
           );
           // Run through expand → simplify so collinear waypoints get cleaned up
-          const stored = [
+          const expanded = expandOrthogonalPoints([
             { x: wire.start.x, y: wire.start.y },
             ...newWaypoints,
             { x: wire.end.x, y: wire.end.y },
-          ];
-          const expanded: { x: number; y: number }[] = [stored[0]];
-          for (let i = 1; i < stored.length; i++) {
-            const prev = stored[i - 1];
-            const curr = stored[i];
-            if (prev.x !== curr.x && prev.y !== curr.y) {
-              expanded.push({ x: curr.x, y: prev.y });
-            }
-            expanded.push(curr);
-          }
+          ]);
           updateWire(wd.wireId, { waypoints: renderedToWaypoints(expanded) });
         }
       }
