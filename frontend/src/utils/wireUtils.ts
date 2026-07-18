@@ -57,10 +57,110 @@ interface Point {
 }
 
 /**
- * Generate an orthogonal SVG path through a sequence of points.
- * Between each pair of consecutive points, an L-shape is drawn:
- * - Go horizontal to the next point's X, then vertical to its Y.
- * This matches Wokwi's routing style.
+ * Corner radius (world px) for rounded wire bends, Wokwi-style. Each bend
+ * clamps to half the length of its shorter adjacent segment so short
+ * segments never overshoot.
+ */
+export const WIRE_BEND_RADIUS = 7;
+
+/**
+ * Expand a stored point chain into the rendered orthogonal polyline.
+ * Between consecutive points that are not axis-aligned an L-shape corner
+ * is inserted: horizontal to the next point's X, then vertical to its Y.
+ */
+export function expandOrthogonalPoints(points: Point[]): Point[] {
+  if (points.length < 2) return points.map((p) => ({ ...p }));
+  const out: Point[] = [{ ...points[0] }];
+  for (let i = 1; i < points.length; i++) {
+    const prev = points[i - 1];
+    const curr = points[i];
+    if (prev.x !== curr.x && prev.y !== curr.y) {
+      out.push({ x: curr.x, y: prev.y });
+    }
+    out.push({ ...curr });
+  }
+  return out;
+}
+
+/**
+ * Simplify an orthogonal polyline by removing duplicate points and
+ * collapsing collinear/U-turn triples.
+ *
+ * Three consecutive points sharing the same x (or same y) make the middle
+ * one redundant — whether the path goes straight through (collinear) or
+ * doubles back over itself (U-turn). Dropping the middle point handles
+ * both, which is what eliminates wires rendered on top of themselves.
+ */
+export function simplifyOrthogonalPath(pts: Point[]): Point[] {
+  if (pts.length <= 2) return pts.map((p) => ({ ...p }));
+
+  // Drop consecutive duplicates first
+  const dedup: Point[] = [];
+  for (const p of pts) {
+    const last = dedup[dedup.length - 1];
+    if (!last || last.x !== p.x || last.y !== p.y) dedup.push({ ...p });
+  }
+
+  // Iteratively collapse three-in-a-row on the same axis until stable
+  let result = dedup;
+  let changed = true;
+  while (changed && result.length > 2) {
+    changed = false;
+    for (let i = 1; i < result.length - 1; i++) {
+      const prev = result[i - 1];
+      const curr = result[i];
+      const next = result[i + 1];
+      if ((prev.x === curr.x && curr.x === next.x) || (prev.y === curr.y && curr.y === next.y)) {
+        result = [...result.slice(0, i), ...result.slice(i + 1)];
+        changed = true;
+        break;
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Build an SVG path through an orthogonal polyline with rounded bends.
+ * Every interior corner is shortened by the bend radius on both sides and
+ * bridged with a quadratic curve whose control point is the corner itself.
+ * Corners whose adjacent segments are too short to fit a visible arc fall
+ * back to a hard corner.
+ */
+export function roundedPathFromPoints(pts: Point[], radius: number = WIRE_BEND_RADIUS): string {
+  if (pts.length === 0) return '';
+  if (pts.length === 1) return `M ${pts[0].x} ${pts[0].y}`;
+
+  let d = `M ${pts[0].x} ${pts[0].y}`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const prev = pts[i - 1];
+    const corner = pts[i];
+    const next = pts[i + 1];
+    const inLen = Math.hypot(corner.x - prev.x, corner.y - prev.y);
+    const outLen = Math.hypot(next.x - corner.x, next.y - corner.y);
+    const r = Math.min(radius, inLen / 2, outLen / 2);
+    if (r < 0.75 || inLen === 0 || outLen === 0) {
+      d += ` L ${corner.x} ${corner.y}`;
+      continue;
+    }
+    const inX = corner.x - ((corner.x - prev.x) / inLen) * r;
+    const inY = corner.y - ((corner.y - prev.y) / inLen) * r;
+    const outX = corner.x + ((next.x - corner.x) / outLen) * r;
+    const outY = corner.y + ((next.y - corner.y) / outLen) * r;
+    d += ` L ${inX} ${inY} Q ${corner.x} ${corner.y} ${outX} ${outY}`;
+  }
+  const last = pts[pts.length - 1];
+  d += ` L ${last.x} ${last.y}`;
+  return d;
+}
+
+/**
+ * Generate the SVG path for a wire: expand the stored points into the
+ * orthogonal polyline, drop degenerate geometry (duplicates, collinear
+ * runs, U-turns that render the wire on top of itself), then emit rounded
+ * bends. The cleanup runs at render time so wires saved with degenerate
+ * waypoints display correctly without touching the stored data.
  */
 export function generateOrthogonalPath(
   start: Point,
@@ -69,31 +169,25 @@ export function generateOrthogonalPath(
 ): string {
   const points: Point[] = [start, ...(waypoints ?? []), end];
   if (points.length < 2) return '';
-
-  let d = `M ${points[0].x} ${points[0].y}`;
-
-  for (let i = 1; i < points.length; i++) {
-    const prev = points[i - 1];
-    const curr = points[i];
-    const dx = curr.x - prev.x;
-    const dy = curr.y - prev.y;
-
-    if (dx === 0 || dy === 0) {
-      // Already axis-aligned: straight line
-      d += ` L ${curr.x} ${curr.y}`;
-    } else {
-      // L-shape: go horizontal first, then vertical
-      d += ` L ${curr.x} ${prev.y} L ${curr.x} ${curr.y}`;
-    }
-  }
-
-  return d;
+  return roundedPathFromPoints(simplifyOrthogonalPath(expandOrthogonalPoints(points)));
 }
 
 /**
- * Same as generateOrthogonalPath but for live preview:
- * the last segment (to mouse cursor) adapts its elbow orientation
- * based on whether the horizontal or vertical distance is larger.
+ * Elbow point for a leg between `from` and a free point (mouse cursor or
+ * the just-clicked destination pin): the longer axis goes first. Returns
+ * null when the leg is already axis-aligned (no elbow needed).
+ */
+export function previewElbow(from: Point, x: number, y: number): Point | null {
+  const dx = Math.abs(x - from.x);
+  const dy = Math.abs(y - from.y);
+  if (dx === 0 || dy === 0) return null;
+  return dx >= dy ? { x, y: from.y } : { x: from.x, y };
+}
+
+/**
+ * Live preview while drawing: fixed waypoints render like a committed wire;
+ * the last leg (to the mouse cursor) adapts its elbow orientation based on
+ * whether the horizontal or vertical distance is larger.
  */
 export function generatePreviewPath(
   start: Point,
@@ -101,42 +195,24 @@ export function generatePreviewPath(
   mouseX: number,
   mouseY: number,
 ): string {
-  const fixed: Point[] = [start, ...waypoints];
+  const fixed = expandOrthogonalPoints([start, ...waypoints]);
   const last = fixed[fixed.length - 1];
-  const mouse: Point = { x: mouseX, y: mouseY };
+  const elbow = previewElbow(last, mouseX, mouseY);
+  const pts = simplifyOrthogonalPath([
+    ...fixed,
+    ...(elbow ? [elbow] : []),
+    { x: mouseX, y: mouseY },
+  ]);
+  return roundedPathFromPoints(pts);
+}
 
-  const dx = Math.abs(mouseX - last.x);
-  const dy = Math.abs(mouseY - last.y);
-
-  // Choose elbow orientation based on distance: longer axis goes first
-  let elbowX: number;
-  let elbowY: number;
-  if (dx >= dy) {
-    // Horizontal-first
-    elbowX = mouseX;
-    elbowY = last.y;
-  } else {
-    // Vertical-first
-    elbowX = last.x;
-    elbowY = mouseY;
-  }
-
-  // Build the fixed segments
-  let d = '';
-  if (fixed.length >= 2) {
-    d = generateOrthogonalPath(fixed[0], fixed.slice(1), fixed[fixed.length - 1]);
-  } else {
-    d = `M ${last.x} ${last.y}`;
-  }
-
-  // Append the live preview segment
-  if (dx === 0 && dy === 0) return d;
-
-  if (dx === 0 || dy === 0) {
-    d += ` L ${mouse.x} ${mouse.y}`;
-  } else {
-    d += ` L ${elbowX} ${elbowY} L ${mouse.x} ${mouse.y}`;
-  }
-
-  return d;
+/**
+ * Canonical stored waypoints for a wire: every interior corner of the
+ * simplified orthogonal polyline, so the stored data matches exactly what
+ * is rendered. Call with the final endpoint positions (creation and drag
+ * commits) — not with stale/unresolved pins.
+ */
+export function normalizeWireWaypoints(start: Point, waypoints: Point[], end: Point): Point[] {
+  const simplified = simplifyOrthogonalPath(expandOrthogonalPoints([start, ...waypoints, end]));
+  return simplified.slice(1, -1).map((p) => ({ x: p.x, y: p.y }));
 }

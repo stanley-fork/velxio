@@ -4,6 +4,15 @@
  */
 
 import type { Wire } from '../types/wire';
+import {
+  expandOrthogonalPoints,
+  simplifyOrthogonalPath,
+  roundedPathFromPoints,
+} from './wireUtils';
+
+// Re-exported for existing consumers (SimulatorCanvas) — the implementation
+// moved to wireUtils so the renderer can share it without an import cycle.
+export { simplifyOrthogonalPath };
 
 export interface RenderedSegment {
   x1: number;
@@ -20,25 +29,11 @@ export interface RenderedSegment {
  * Between each consecutive stored pair, a corner point is inserted if they are not axis-aligned.
  */
 export function getRenderedPoints(wire: Wire): { x: number; y: number }[] {
-  const stored = [
+  return expandOrthogonalPoints([
     { x: wire.start.x, y: wire.start.y },
     ...(wire.waypoints ?? []),
     { x: wire.end.x, y: wire.end.y },
-  ];
-
-  if (stored.length < 2) return stored;
-
-  const result: { x: number; y: number }[] = [stored[0]];
-  for (let i = 1; i < stored.length; i++) {
-    const prev = stored[i - 1];
-    const curr = stored[i];
-    if (prev.x !== curr.x && prev.y !== curr.y) {
-      // L-shape: horizontal-first corner
-      result.push({ x: curr.x, y: prev.y });
-    }
-    result.push(curr);
-  }
-  return result;
+  ]);
 }
 
 /**
@@ -284,48 +279,6 @@ export function moveSegment(
 }
 
 /**
- * Simplify an orthogonal path by removing duplicate points and collapsing
- * collinear/U-turn triples.
- *
- * Three consecutive points sharing the same x (or same y) make the middle
- * one redundant — whether the path goes straight through (collinear) or
- * doubles back over itself (U-turn). Dropping the middle point handles
- * both, which is what eliminates the visible overlapping bumps that
- * accumulate after segment drags.
- */
-export function simplifyOrthogonalPath(
-  pts: { x: number; y: number }[],
-): { x: number; y: number }[] {
-  if (pts.length <= 2) return pts.map((p) => ({ ...p }));
-
-  // Drop consecutive duplicates first
-  const dedup: { x: number; y: number }[] = [];
-  for (const p of pts) {
-    const last = dedup[dedup.length - 1];
-    if (!last || last.x !== p.x || last.y !== p.y) dedup.push({ ...p });
-  }
-
-  // Iteratively collapse three-in-a-row on the same axis until stable
-  let result = dedup;
-  let changed = true;
-  while (changed && result.length > 2) {
-    changed = false;
-    for (let i = 1; i < result.length - 1; i++) {
-      const prev = result[i - 1];
-      const curr = result[i];
-      const next = result[i + 1];
-      if ((prev.x === curr.x && curr.x === next.x) || (prev.y === curr.y && curr.y === next.y)) {
-        result = [...result.slice(0, i), ...result.slice(i + 1)];
-        changed = true;
-        break;
-      }
-    }
-  }
-
-  return result;
-}
-
-/**
  * Convert a list of rendered (expanded) points back to wire waypoints.
  * Waypoints are the interior corner/bend points (excludes start and end).
  * The path is first simplified to drop collinear runs and U-turn bumps;
@@ -341,15 +294,11 @@ export function renderedToWaypoints(
 }
 
 /**
- * Build an SVG path string from an ordered list of rendered points (straight segments).
+ * Build an SVG path string from an ordered list of rendered points.
+ * Bends are rounded with the same radius as committed wires so segment
+ * and waypoint drag previews look identical to the final result.
  */
 export function renderedPointsToPath(pts: { x: number; y: number }[]): string {
   if (pts.length < 2) return '';
-  return (
-    `M ${pts[0].x} ${pts[0].y}` +
-    pts
-      .slice(1)
-      .map((p) => ` L ${p.x} ${p.y}`)
-      .join('')
-  );
+  return roundedPathFromPoints(pts);
 }

@@ -28,7 +28,7 @@ import { isSpiceMapped } from '../../simulation/spice/componentToSpice';
 import { PinOverlay } from './PinOverlay';
 import { calculatePinPosition } from '../../utils/pinPositionCalculator';
 import { isBoardComponent, boardPinToNumber } from '../../utils/boardPinMapping';
-import { autoWireColor, WIRE_KEY_COLORS } from '../../utils/wireUtils';
+import { autoWireColor, WIRE_KEY_COLORS, expandOrthogonalPoints } from '../../utils/wireUtils';
 import {
   findWireNearPoint,
   findSegmentNearPoint,
@@ -1451,20 +1451,11 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
         );
         setWaypointDragPreview({ wireId: wd.wireId, waypoints: newWaypoints });
         // Reflect the moved bend point in the rendered path live
-        const stored = [
+        const expanded = expandOrthogonalPoints([
           { x: wire.start.x, y: wire.start.y },
           ...newWaypoints,
           { x: wire.end.x, y: wire.end.y },
-        ];
-        const expanded: { x: number; y: number }[] = [stored[0]];
-        for (let i = 1; i < stored.length; i++) {
-          const prev = stored[i - 1];
-          const curr = stored[i];
-          if (prev.x !== curr.x && prev.y !== curr.y) {
-            expanded.push({ x: curr.x, y: prev.y });
-          }
-          expanded.push(curr);
-        }
+        ]);
         const overridePath = renderedPointsToPath(simplifyOrthogonalPath(expanded));
         setSegmentDragPreview({ wireId: wd.wireId, overridePath });
       }
@@ -1533,20 +1524,11 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
             i === wd.waypointIndex ? { x: snappedX, y: snappedY } : { ...wp },
           );
           // Run through expand → simplify so collinear waypoints get cleaned up
-          const stored = [
+          const expanded = expandOrthogonalPoints([
             { x: wire.start.x, y: wire.start.y },
             ...newWaypoints,
             { x: wire.end.x, y: wire.end.y },
-          ];
-          const expanded: { x: number; y: number }[] = [stored[0]];
-          for (let i = 1; i < stored.length; i++) {
-            const prev = stored[i - 1];
-            const curr = stored[i];
-            if (prev.x !== curr.x && prev.y !== curr.y) {
-              expanded.push({ x: curr.x, y: prev.y });
-            }
-            expanded.push(curr);
-          }
+          ]);
           updateWire(wd.wireId, { waypoints: renderedToWaypoints(expanded) });
         }
       }
