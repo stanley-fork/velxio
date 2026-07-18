@@ -101,6 +101,7 @@ export function findWireNearPoint(
 ): Wire | null {
   for (let i = wires.length - 1; i >= 0; i--) {
     const wire = wires[i];
+    if (wire.bb) continue; // breadboard seating wires are not interactive
     const segments = getRenderedSegments(wire);
     for (const seg of segments) {
       if (distToSegment(wx, wy, seg.x1, seg.y1, seg.x2, seg.y2) <= threshold) {

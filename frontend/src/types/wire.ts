@@ -36,6 +36,13 @@ export interface Wire {
    * resolved against board pin metadata.
    */
   signalType?: WireSignalType;
+  /**
+   * Breadboard seating wire: auto-created zero-length connection from a
+   * part pin to the hole it is plugged into (Wokwi's `["$bb"]` entries).
+   * Electrically a normal wire; never rendered, never hit-testable, and
+   * re-generated whenever the part moves.
+   */
+  bb?: boolean;
 }
 
 export interface WireInProgress {

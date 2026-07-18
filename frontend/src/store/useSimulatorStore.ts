@@ -37,6 +37,8 @@ import {
   previewElbow,
 } from '../utils/wireUtils';
 import { routeAroundObstacles, collectComponentObstacles } from '../utils/wireAutoRoute';
+import { isBreadboard } from '../utils/breadboardNets';
+import { computeSeating } from '../utils/breadboardSnap';
 import { createSerialBatcher } from './serialBatcher';
 import {
   bindBoard as icBindBoard,
@@ -894,6 +896,8 @@ interface SimulatorState {
   addComponent: (component: Component) => void;
   removeComponent: (id: string) => void;
   updateComponent: (id: string, updates: Partial<Component>) => void;
+  /** Recompute the breadboard seating wires (bb: true) of one component. */
+  reseatComponentOnBreadboard: (id: string) => void;
   updateComponentState: (id: string, state: boolean) => void;
   handleComponentEvent: (componentId: string, eventName: string, data?: unknown) => void;
   setComponents: (components: Component[]) => void;
@@ -2457,6 +2461,13 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       })),
 
     updateComponent: (id, updates) => {
+      const before = get().components.find((c) => c.id === id);
+      const isBbMove =
+        !!before && isBreadboard(before.metadataId) &&
+        (updates.x !== undefined || updates.y !== undefined);
+      const dx = isBbMove ? (updates.x ?? before.x) - before.x : 0;
+      const dy = isBbMove ? (updates.y ?? before.y) - before.y : 0;
+
       set((state) => ({
         components: state.components.map((c) => (c.id === id ? { ...c, ...updates } : c)),
       }));
@@ -2468,7 +2479,49 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         updates.properties && 'rotation' in updates.properties;
       if (updates.x !== undefined || updates.y !== undefined || rotationChanged) {
         get().updateWirePositions(id);
+        get().reseatComponentOnBreadboard(id);
       }
+
+      // A moving breadboard carries its seated parts: shift every part
+      // plugged into it (bb wires) by the same delta AFTER the board has
+      // moved, so each rider's own reseat re-lands on the same holes at
+      // their new location regardless of how fast the drag is.
+      if (isBbMove && (dx !== 0 || dy !== 0)) {
+        const riders = new Set<string>();
+        for (const w of get().wires) {
+          if (!w.bb) continue;
+          if (w.start.componentId === id) riders.add(w.end.componentId);
+          if (w.end.componentId === id) riders.add(w.start.componentId);
+        }
+        riders.delete(id);
+        for (const rid of riders) {
+          const rc = get().components.find((c) => c.id === rid);
+          if (rc) get().updateComponent(rid, { x: rc.x + dx, y: rc.y + dy });
+        }
+      }
+    },
+
+    reseatComponentOnBreadboard: (id) => {
+      const comp = get().components.find((c) => c.id === id);
+      if (!comp || isBreadboard(comp.metadataId)) return;
+      const seating = computeSeating(comp, get().components);
+      // null = geometry unmeasurable (unmounted DOM) — keep whatever
+      // seating exists rather than tearing out live connections.
+      if (seating === null) return;
+      set((state) => {
+        const kept = state.wires.filter(
+          (w) => !(w.bb && (w.start.componentId === id || w.end.componentId === id)),
+        );
+        const seated: Wire[] = seating.map((s, i) => ({
+          id: `bbwire-${id}-${i}-${s.holeName}`,
+          start: { componentId: id, pinName: s.pinName, x: s.pinX, y: s.pinY },
+          end: { componentId: s.bbId, pinName: s.holeName, x: s.holeX, y: s.holeY },
+          waypoints: [],
+          color: '#000000',
+          bb: true,
+        }));
+        return { wires: [...kept, ...seated] };
+      });
     },
 
     updateComponentState: (id, state) => {

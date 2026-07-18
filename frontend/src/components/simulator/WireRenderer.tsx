@@ -24,6 +24,10 @@ export const WireRenderer: React.FC<WireRendererProps> = ({
   previewWaypoints,
   overridePath,
 }) => {
+  // Breadboard seating wires are pure connectivity — the part visually
+  // sits in the holes, so there is nothing to draw.
+  if (wire.bb) return null;
+
   const waypoints = previewWaypoints ?? wire.waypoints;
   const path = overridePath ?? generateOrthogonalPath(wire.start, waypoints, wire.end);
 

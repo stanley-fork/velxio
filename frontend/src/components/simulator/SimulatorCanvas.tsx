@@ -30,6 +30,11 @@ import { calculatePinPosition } from '../../utils/pinPositionCalculator';
 import { isBoardComponent, boardPinToNumber } from '../../utils/boardPinMapping';
 import { autoWireColor, WIRE_KEY_COLORS, expandOrthogonalPoints } from '../../utils/wireUtils';
 import {
+  AUTO_VERTICAL_PARTS,
+  isOverBreadboard,
+  snapPositionToBreadboard,
+} from '../../utils/breadboardSnap';
+import {
   findWireNearPoint,
   findSegmentNearPoint,
   getRenderedPoints,
@@ -819,9 +824,35 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
             y: world.y - touchDragOffsetRef.current.y,
           });
         } else {
+          let nx = world.x - touchDragOffsetRef.current.x;
+          let ny = world.y - touchDragOffsetRef.current.y;
+          const simState = useSimulatorStore.getState();
+          const dragged = simState.components.find(
+            (c) => c.id === touchDraggedComponentIdRef.current,
+          );
+          if (dragged) {
+            if (
+              AUTO_VERTICAL_PARTS.has(dragged.metadataId) &&
+              (Number(dragged.properties?.rotation) || 0) === 0 &&
+              isOverBreadboard(dragged, nx, ny, simState.components)
+            ) {
+              updateComponent(touchDraggedComponentIdRef.current!, {
+                properties: { ...dragged.properties, rotation: 90 },
+              } as any);
+            }
+            const cur = useSimulatorStore
+              .getState()
+              .components.find((c) => c.id === touchDraggedComponentIdRef.current);
+            const snapped =
+              cur && snapPositionToBreadboard(cur, nx, ny, simState.components);
+            if (snapped) {
+              nx = snapped.x;
+              ny = snapped.y;
+            }
+          }
           updateComponent(touchDraggedComponentIdRef.current!, {
-            x: world.x - touchDragOffsetRef.current.x,
-            y: world.y - touchDragOffsetRef.current.y,
+            x: nx,
+            y: ny,
           } as any);
         }
       }
@@ -1385,10 +1416,33 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
         // legacy fallback
         setBoardPosition({ x: world.x - dragOffset.x, y: world.y - dragOffset.y });
       } else {
-        updateComponent(draggedComponentId, {
-          x: world.x - dragOffset.x,
-          y: world.y - dragOffset.y,
-        } as any);
+        let nx = world.x - dragOffset.x;
+        let ny = world.y - dragOffset.y;
+        const simState = useSimulatorStore.getState();
+        const dragged = simState.components.find((c) => c.id === draggedComponentId);
+        if (dragged) {
+          // Axial parts entering a breadboard flip to vertical so they
+          // bridge the trench columns like on a real board.
+          if (
+            AUTO_VERTICAL_PARTS.has(dragged.metadataId) &&
+            (Number(dragged.properties?.rotation) || 0) === 0 &&
+            isOverBreadboard(dragged, nx, ny, simState.components)
+          ) {
+            updateComponent(draggedComponentId, {
+              properties: { ...dragged.properties, rotation: 90 },
+            } as any);
+          }
+          const cur = useSimulatorStore
+            .getState()
+            .components.find((c) => c.id === draggedComponentId);
+          const snapped =
+            cur && snapPositionToBreadboard(cur, nx, ny, simState.components);
+          if (snapped) {
+            nx = snapped.x;
+            ny = snapped.y;
+          }
+        }
+        updateComponent(draggedComponentId, { x: nx, y: ny } as any);
       }
     }
 
