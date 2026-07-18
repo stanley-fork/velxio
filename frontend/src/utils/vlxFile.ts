@@ -34,6 +34,7 @@ import type { Component } from '../types/component';
 import type { Wire } from '../types/wire';
 import { useEditorStore, chipFileGroupId } from '../store/useEditorStore';
 import { useSimulatorStore } from '../store/useSimulatorStore';
+import { useProjectStore } from '../store/useProjectStore';
 
 const VLX_FORMAT = 'velxio-project';
 const VLX_VERSION = 1;
@@ -228,6 +229,12 @@ export async function parseVlxFile(file: File): Promise<VlxPayload> {
  */
 export async function importVlxFile(file: File): Promise<VlxPayload> {
   const payload = await parseVlxFile(file);
+  // CRITICAL — sever the current project identity BEFORE mutating any store
+  // (same guard as loadExample.ts). With a saved project open, the auto-save
+  // hook would otherwise see the imported content as dirty edits on the OLD
+  // projectId and silently PUT the .vlx contents over the user's saved
+  // project (and push the clobber to GitHub when the project is linked).
+  useProjectStore.getState().clearCurrentProject();
   useSimulatorStore.getState().loadProjectState({
     boards: payload.boards as unknown as BoardInstance[],
     fileGroups: payload.fileGroups,
