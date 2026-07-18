@@ -37,7 +37,14 @@ function isTypingTarget(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null;
   if (!el || !el.tagName) return false;
   const tag = el.tagName;
-  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable) {
+    return true;
+  }
+  // Monaco's focus sink is a plain <div> (.native-edit-context with the
+  // EditContext API, .inputarea textarea otherwise) — neither an input tag
+  // nor contentEditable, so the checks above miss it. Treat any keydown
+  // originating inside the editor widget as typing.
+  return typeof el.closest === 'function' && el.closest('.monaco-editor') !== null;
 }
 
 export function useButtonKeyBindings(components: BoundComponent[]): void {
