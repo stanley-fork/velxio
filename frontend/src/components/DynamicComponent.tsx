@@ -122,7 +122,7 @@ type TraceState = ReturnType<typeof useSimulatorStore.getState>;
 // Lifted to module scope (was inside getArduinoPin) so that getPinResolver
 // can call it too — the previous nested-scope version caused a runtime
 // ReferenceError "traceDetailed is not defined" on the simulator page.
-function traceDetailed(
+export function traceDetailed(
   state: TraceState,
   fromId: string,
   fromPin: string,
@@ -146,10 +146,16 @@ function traceDetailed(
       w.start.componentId === fromId && w.start.pinName === fromPin ? w.start : w.end;
     const otherEp = selfEp === w.start ? w.end : w.start;
 
-    if (isBoardComponent(otherEp.componentId)) {
-      const boardKind =
-        state.boards.find((b) => b.id === otherEp.componentId)?.boardKind ??
-        otherEp.componentId;
+    // A board endpoint is recognised by the LIVE boards list first.
+    // `isBoardComponent` matches static id prefixes ('arduino-uno', …), which
+    // only covers the default board — every board added at runtime (the agent
+    // mints UUID ids) failed the check, so tracing treated it as an unknown
+    // component and returned null. Symptom: an ESP32 clock whose QEMU was
+    // emitting hundreds of GPIO edges/second at a display that stayed dark,
+    // because no resolver ever attached.
+    const boardEp = state.boards.find((b) => b.id === otherEp.componentId);
+    if (boardEp || isBoardComponent(otherEp.componentId)) {
+      const boardKind = boardEp?.boardKind ?? otherEp.componentId;
       const pin = boardPinToNumber(boardKind, otherEp.pinName);
       if (pin !== null) return { arduinoPin: pin, crossedActiveDevice: activeSeen };
     } else {
@@ -176,14 +182,22 @@ function traceDetailed(
       // Breadboards join N holes per internal group (5-hole strip / power
       // rail), which the 2-terminal PASSIVE_PIN_PAIRS map can't express.
       // Continue the trace from every OTHER wired hole in the same group.
+      //
+      // Exclusion is by INCOMING WIRE, not by hole name: two wires may
+      // legitimately share one hole (a seated pin plus a jumper landing in
+      // that same hole — the agent bridges strips straight into the seat
+      // hole). Excluding the arrival hole made those stacked connections
+      // invisible: an ESP32 clock with QEMU firing hundreds of GPIO edges
+      // per second sat dark because every segment's bridge landed on its
+      // resistor's own seat hole and the trace dead-ended there.
       const bbGroup = comp && breadboardGroupKey(comp.metadataId, otherEp.pinName);
       if (bbGroup && comp) {
         const groupPins = new Set<string>();
         for (const gw of state.wires) {
+          if (gw.id === w.id) continue; // never bounce back on the same wire
           for (const ep of [gw.start, gw.end]) {
             if (
               ep.componentId === comp.id &&
-              ep.pinName !== otherEp.pinName &&
               breadboardGroupKey(comp.metadataId, ep.pinName) === bbGroup
             ) {
               groupPins.add(ep.pinName);

@@ -1153,11 +1153,15 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
           const selfEndpoint = isStartSelf ? wire.start : wire.end;
           const otherEndpoint = isStartSelf ? wire.end : wire.start;
 
-          if (isBoardComponent(otherEndpoint.componentId)) {
+          // Recognise board endpoints from the LIVE boards list first —
+          // isBoardComponent only matches static id prefixes, so every
+          // runtime-added board (agent-minted UUID ids) failed it and its
+          // directly-wired components were never subscribed.
+          const boardInstance = boards.find((b) => b.id === otherEndpoint.componentId);
+          if (boardInstance || isBoardComponent(otherEndpoint.componentId)) {
             // Use the board's actual boardKind (not just its instance ID) so that
             // a board whose ID is 'arduino-uno' but whose kind is 'esp32' gets the
             // correct GPIO mapping ('GPIO4' → 4, not null).
-            const boardInstance = boards.find((b) => b.id === otherEndpoint.componentId);
             const lookupKey = boardInstance ? boardInstance.boardKind : otherEndpoint.componentId;
             const pin = boardPinToNumber(lookupKey, otherEndpoint.pinName);
             if (pin !== null && pin >= 0) {
