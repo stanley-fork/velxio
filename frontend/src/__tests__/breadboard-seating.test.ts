@@ -258,3 +258,53 @@ describe('resolveSeatPosition', () => {
     expect(bbWires.map((w) => w.end.pinName).sort()).toEqual(['11t.a', '5t.a']);
   });
 });
+
+/**
+ * The run-before-seating race: a part can land in the store at its final
+ * position BEFORE its element mounts (the agent streams add_component and the
+ * seating move in one batch). The reseat inside updateComponent then finds no
+ * DOM and keeps an empty seating — and nothing re-derived it, so a simulation
+ * started in that window ran against a part with no bb wires, while reloading
+ * the project (bb wires are persisted) worked. DynamicComponent now reseats
+ * at mount, as soon as pinInfo is measurable; these tests cover the store
+ * half of that contract.
+ */
+describe('reseat after late element mount', () => {
+  beforeEach(() => {
+    document.getElementById('res1')?.remove();
+    const s = useSimulatorStore.getState();
+    s.setComponents([
+      { id: 'bb1', metadataId: 'breadboard', x: 0, y: 0, properties: {} },
+      { id: 'res1', metadataId: 'resistor', x: 900, y: 900, properties: {} },
+    ] as never);
+    s.setWires([]);
+  });
+
+  it('a seating move with NO mounted element creates no bb wires (the race)', () => {
+    // Element deliberately NOT mounted — this is the agent-batch window.
+    useSimulatorStore.getState().updateComponent('res1', resistorPosFor('5t.a', 0, 0));
+    expect(useSimulatorStore.getState().wires.filter((w) => w.bb)).toHaveLength(0);
+  });
+
+  it('reseating once the element mounts creates the missing bb wires', () => {
+    useSimulatorStore.getState().updateComponent('res1', resistorPosFor('5t.a', 0, 0));
+    expect(useSimulatorStore.getState().wires.filter((w) => w.bb)).toHaveLength(0);
+
+    // Element appears (custom-element upgrade) — the mount-time effect fires:
+    mountFakeElement('res1', RES_PIN_INFO);
+    useSimulatorStore.getState().reseatComponentOnBreadboard('res1');
+
+    const bbWires = useSimulatorStore.getState().wires.filter((w) => w.bb);
+    expect(bbWires).toHaveLength(2);
+    expect(bbWires.map((w) => w.end.pinName).sort()).toEqual(['11t.a', '5t.a']);
+  });
+
+  it('mount-reseat of an off-board part is a no-op that keeps array identity', () => {
+    // Every component reseats at mount now — a project load must not churn
+    // the wires array once per off-board part.
+    mountFakeElement('res1', RES_PIN_INFO); // far from the board at (900,900)
+    const before = useSimulatorStore.getState().wires;
+    useSimulatorStore.getState().reseatComponentOnBreadboard('res1');
+    expect(useSimulatorStore.getState().wires).toBe(before);
+  });
+});

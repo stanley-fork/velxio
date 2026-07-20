@@ -347,6 +347,46 @@ export const DynamicComponent: React.FC<DynamicComponentProps> = ({
   }, [id, metadata.tagName]);
 
   /**
+   * Reseat once the element's geometry first becomes measurable.
+   *
+   * A part can land in the store at its FINAL position before its element
+   * mounts — the agent streams add_component + a seating move in one batch,
+   * and `updateComponent`'s reseat then finds no DOM (computeSeating null)
+   * and keeps the (empty) seating. Nothing re-derived it afterwards: the
+   * seat-correction skips when the position needs no nudge, and
+   * 'pininfo-change' only fires on pin-SET swaps, not on plain init. So the
+   * part had no bb wires until the user dragged it or reloaded — a clock
+   * started by the agent in that window ran against a dead display, while
+   * reload+run worked (bb wires are persisted). Deriving the seating at
+   * mount closes that hole for every path (agent, load, undo).
+   */
+  useEffect(() => {
+    const tryReseat = () => {
+      try {
+        const pinInfo = (elementRef.current as any)?.pinInfo;
+        if (pinInfo && Array.isArray(pinInfo) && pinInfo.length > 0) {
+          useSimulatorStore.getState().reseatComponentOnBreadboard(id);
+          return true;
+        }
+      } catch {
+        // element not ready yet / headless tests
+      }
+      return false;
+    };
+    if (tryReseat()) return;
+    // Same cadence as the pinInfo-ready poll above: the custom element may
+    // upgrade a few frames after React commits.
+    const interval = setInterval(() => {
+      if (tryReseat()) clearInterval(interval);
+    }, 100);
+    const timeout = setTimeout(() => clearInterval(interval), 2000);
+    return () => {
+      clearInterval(interval);
+      clearTimeout(timeout);
+    };
+  }, [id, metadata.tagName]);
+
+  /**
    * Extract pinInfo from web component after it initializes
    */
   useEffect(() => {

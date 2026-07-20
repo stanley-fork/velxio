@@ -2515,6 +2515,16 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       // null = geometry unmeasurable (unmounted DOM) — keep whatever
       // seating exists rather than tearing out live connections.
       if (seating === null) return;
+      // Nothing seated and nothing to clear: skip the store write. The
+      // mount-time reseat (DynamicComponent) calls this for EVERY part as
+      // its element becomes measurable — on a project load that would churn
+      // the wires array identity once per off-board component for no change.
+      if (
+        seating.length === 0 &&
+        !get().wires.some((w) => w.bb && (w.start.componentId === id || w.end.componentId === id))
+      ) {
+        return;
+      }
       set((state) => {
         const kept = state.wires.filter(
           (w) => !(w.bb && (w.start.componentId === id || w.end.componentId === id)),
