@@ -909,7 +909,7 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
             const world = toWorld(changed.clientX, changed.clientY);
             const newValue = sd.axis === 'horizontal' ? world.y : world.x;
             const newPts = moveSegment(sd.renderedPts, sd.segIndex, sd.axis, newValue);
-            updateWire(sd.wireId, { waypoints: renderedToWaypoints(newPts) });
+            updateWire(sd.wireId, { waypoints: renderedToWaypoints(newPts), autoRouted: false });
           }
         }
         segmentDragRef.current = null;
@@ -1033,7 +1033,7 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
               world.x,
               world.y,
             );
-            useSimulatorStore.getState().updateWire(wire.id, { waypoints: newWaypoints });
+            useSimulatorStore.getState().updateWire(wire.id, { waypoints: newWaypoints, autoRouted: false });
             useSimulatorStore.getState().setSelectedWire(wire.id);
           }
           lastTapTimeRef.current = 0;
@@ -1599,7 +1599,7 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
         );
         if (snap) newValue = snap.snapped;
         const newPts = moveSegment(sd.renderedPts, sd.segIndex, sd.axis, newValue);
-        updateWire(sd.wireId, { waypoints: renderedToWaypoints(newPts) });
+        updateWire(sd.wireId, { waypoints: renderedToWaypoints(newPts), autoRouted: false });
       }
       segmentDragRef.current = null;
       setSegmentDragPreview(null);
@@ -1641,7 +1641,7 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
             ...newWaypoints,
             { x: wire.end.x, y: wire.end.y },
           ]);
-          updateWire(wd.wireId, { waypoints: renderedToWaypoints(expanded) });
+          updateWire(wd.wireId, { waypoints: renderedToWaypoints(expanded), autoRouted: false });
         }
       }
       waypointDragRef.current = null;
@@ -2661,7 +2661,7 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
               world.x,
               world.y,
             );
-            updateWire(wire.id, { waypoints: newWaypoints });
+            updateWire(wire.id, { waypoints: newWaypoints, autoRouted: false });
             setSelectedWire(wire.id);
           }}
           style={{

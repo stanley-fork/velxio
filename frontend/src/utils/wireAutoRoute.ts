@@ -1,20 +1,30 @@
 /**
- * First-time wire auto-routing: find an orthogonal route from pin to pin
- * that avoids crossing other components on the canvas.
+ * Wire auto-routing: find an orthogonal route from pin to pin that avoids
+ * crossing other components AND avoids riding on top of existing wires.
  *
- * This runs ONLY when a wire is first created with no user-placed
- * waypoints (a direct pin-to-pin click). Manual edits are never re-routed:
- * the routed corners are stored as ordinary waypoints, so from that moment
- * on the wire behaves exactly like a hand-drawn one and goes wherever the
- * user drags it.
+ * This runs only for SYSTEM-owned wire shapes (`autoRouted` wires): first
+ * pin-to-pin creation, agent-created wires, and the post-move re-route
+ * pass. Manual edits are never re-routed — dragging a segment clears the
+ * flag and the wire goes exactly where the user puts it.
  *
  * Algorithm: A* over the compressed orthogonal grid spanned by the pin
- * coordinates and the inflated obstacle edges, with a per-bend cost so
- * straighter routes win. Canvases hold at most a few dozen components, so
- * the grid stays tiny (2N+2 coordinates per axis).
+ * coordinates, the inflated obstacle edges, and "corridor" lines offset
+ * SEPARATION px to each side of existing wire segments (so the router has
+ * lanes to run BESIDE a wire instead of on it). Costs are soft where the
+ * physics is soft:
+ *
+ *   - component bodies       -> hard blocked (never cross)
+ *   - parallel run over a wire -> heavy cost per px (the ugly case)
+ *   - perpendicular crossing  -> small fixed cost (often unavoidable)
+ *   - each 90-degree bend     -> medium cost (straighter routes win)
+ *
+ * A crossing must stay possible: dense boards would otherwise become
+ * unroutable and everything degrades to the default elbow. Wires that
+ * share an endpoint with the route are exempt from wire costs entirely —
+ * two wires meeting on one pin necessarily touch there.
  */
 
-import { previewElbow, simplifyOrthogonalPath } from './wireUtils';
+import { expandOrthogonalPoints, previewElbow, simplifyOrthogonalPath } from './wireUtils';
 
 export interface ObstacleRect {
   x: number;
@@ -28,11 +38,37 @@ interface Point {
   y: number;
 }
 
+/** An axis-aligned piece of an existing wire's rendered polyline. */
+export interface WireSegment {
+  a: Point;
+  b: Point;
+}
+
 /** Clearance kept between a routed wire and component bounding boxes. */
 export const ROUTE_MARGIN = 8;
 
 /** Extra path cost per 90-degree bend, in world px. */
 const BEND_PENALTY = 40;
+
+/** Lane spacing beside existing wires — also the distance under which a
+ * parallel run counts as "riding on" a wire. Slightly wider than the
+ * rendered stroke + outline (~6px) so side-by-side wires stay legible. */
+export const WIRE_SEPARATION = 8;
+
+/** Cost per px of running parallel on top of / hugging an existing wire.
+ * Calibrated against BEND_PENALTY: dodging sideways costs 2 bends (~80)
+ * plus ~2*SEPARATION of extra length, so any overlap longer than ~50px
+ * prefers the detour. */
+const OVERLAP_PENALTY_PER_PX = 2;
+
+/** Fixed cost for crossing an existing wire perpendicularly. Small on
+ * purpose: crossings are often unavoidable and are visually fine. */
+const CROSS_PENALTY = 12;
+
+/** Only wires within this margin of the route's bounding box participate,
+ * both as costs and as corridor coordinates — keeps the grid tiny on
+ * wire-dense canvases. */
+const WIRE_WINDOW_MARGIN = 120;
 
 /** Hard cap on grid size, beyond which routing silently degrades to the
  * direct elbow. Far above any realistic canvas. */
@@ -72,6 +108,54 @@ function pathClear(pts: Point[], rects: ObstacleRect[]): boolean {
     }
   }
   return true;
+}
+
+/** 1D interval overlap length (0 when disjoint). */
+function overlap1d(a1: number, a2: number, b1: number, b2: number): number {
+  const lo = Math.max(Math.min(a1, a2), Math.min(b1, b2));
+  const hi = Math.min(Math.max(a1, a2), Math.max(b1, b2));
+  return Math.max(0, hi - lo);
+}
+
+/**
+ * Soft cost of one candidate edge against the existing wire segments:
+ * parallel proximity (< WIRE_SEPARATION) is charged per overlapping px,
+ * perpendicular crossings a small fixed amount. Both endpoints of the
+ * candidate edge are axis-aligned by construction.
+ */
+function wireCostOfEdge(a: Point, b: Point, segs: WireSegment[]): number {
+  let cost = 0;
+  const horizontal = a.y === b.y;
+  for (const s of segs) {
+    const sHorizontal = s.a.y === s.b.y;
+    if (horizontal === sHorizontal) {
+      // Parallel: charge when running inside the separation corridor.
+      const gap = horizontal ? Math.abs(a.y - s.a.y) : Math.abs(a.x - s.a.x);
+      if (gap < WIRE_SEPARATION) {
+        const len = horizontal
+          ? overlap1d(a.x, b.x, s.a.x, s.b.x)
+          : overlap1d(a.y, b.y, s.a.y, s.b.y);
+        cost += OVERLAP_PENALTY_PER_PX * len;
+      }
+    } else {
+      // Perpendicular: charge each strict crossing.
+      const h = horizontal ? { a, b } : { a: s.a, b: s.b };
+      const v = horizontal ? { a: s.a, b: s.b } : { a, b };
+      const crosses =
+        v.a.x > Math.min(h.a.x, h.b.x) &&
+        v.a.x < Math.max(h.a.x, h.b.x) &&
+        h.a.y > Math.min(v.a.y, v.b.y) &&
+        h.a.y < Math.max(v.a.y, v.b.y);
+      if (crosses) cost += CROSS_PENALTY;
+    }
+  }
+  return cost;
+}
+
+function pathWireCost(pts: Point[], segs: WireSegment[]): number {
+  let cost = 0;
+  for (let i = 1; i < pts.length; i++) cost += wireCostOfEdge(pts[i - 1], pts[i], segs);
+  return cost;
 }
 
 /** Minimal binary min-heap keyed on `f`. */
@@ -126,25 +210,44 @@ export function routeAroundObstacles(
   start: Point,
   end: Point,
   rawRects: ObstacleRect[],
+  wireSegments: WireSegment[] = [],
 ): Point[] | null {
-  if (rawRects.length === 0) return null;
-
   // Rects that contain an endpoint can never be avoided (the wire must
   // leave the pin); drop them rather than making routing impossible.
   const rects = rawRects
     .map((r) => inflate(r, ROUTE_MARGIN))
     .filter((r) => !rectContains(r, start) && !rectContains(r, end));
-  if (rects.length === 0) return null;
 
-  // Preferred direct route: the same elbow the live preview drew.
+  // Wires participate only inside a window around the route, and never
+  // when they share an endpoint with it (wires meeting on one pin must
+  // touch there — charging for that would just distort every route).
+  const winX0 = Math.min(start.x, end.x) - WIRE_WINDOW_MARGIN;
+  const winX1 = Math.max(start.x, end.x) + WIRE_WINDOW_MARGIN;
+  const winY0 = Math.min(start.y, end.y) - WIRE_WINDOW_MARGIN;
+  const winY1 = Math.max(start.y, end.y) + WIRE_WINDOW_MARGIN;
+  const near = (p: Point, q: Point) => Math.abs(p.x - q.x) < 1 && Math.abs(p.y - q.y) < 1;
+  const segs = wireSegments.filter((s) => {
+    if (near(s.a, start) || near(s.b, start) || near(s.a, end) || near(s.b, end)) return false;
+    const sx0 = Math.min(s.a.x, s.b.x);
+    const sx1 = Math.max(s.a.x, s.b.x);
+    const sy0 = Math.min(s.a.y, s.b.y);
+    const sy1 = Math.max(s.a.y, s.b.y);
+    return sx1 >= winX0 && sx0 <= winX1 && sy1 >= winY0 && sy0 <= winY1;
+  });
+
+  if (rects.length === 0 && segs.length === 0) return null;
+
+  // Preferred direct route: the same elbow the live preview drew. Only
+  // accepted early when it is BOTH obstacle-clear and wire-cost-free.
   const elbow = previewElbow(start, end.x, end.y);
   const direct = elbow ? [start, elbow, end] : [start, end];
-  if (pathClear(direct, rects)) return null;
+  if (pathClear(direct, rects) && pathWireCost(direct, segs) === 0) return null;
 
   // The other elbow orientation costs nothing extra — try it before A*.
   if (elbow) {
     const alt = elbow.x === end.x ? { x: start.x, y: end.y } : { x: end.x, y: start.y };
-    if (pathClear([start, alt, end], rects)) return [alt];
+    const altPath = [start, alt, end];
+    if (pathClear(altPath, rects) && pathWireCost(altPath, segs) === 0) return [alt];
   }
 
   // ── A* over the compressed grid ─────────────────────────────────────
@@ -155,6 +258,18 @@ export function routeAroundObstacles(
     xsSet.add(r.x + r.w);
     ysSet.add(r.y);
     ysSet.add(r.y + r.h);
+  }
+  // Corridor lanes beside each wire segment, so the router can run NEXT TO
+  // a wire instead of on it. Without these coordinates the compressed grid
+  // simply has no lane there to choose.
+  for (const s of segs) {
+    if (s.a.y === s.b.y) {
+      ysSet.add(s.a.y - WIRE_SEPARATION);
+      ysSet.add(s.a.y + WIRE_SEPARATION);
+    } else {
+      xsSet.add(s.a.x - WIRE_SEPARATION);
+      xsSet.add(s.a.x + WIRE_SEPARATION);
+    }
   }
   const xs = [...xsSet].sort((a, b) => a - b);
   const ys = [...ysSet].sort((a, b) => a - b);
@@ -208,7 +323,8 @@ export function routeAroundObstacles(
       const b = { x: xs[nx], y: ys[ny] };
       if (!stepClear(a, b)) continue;
       const bend = dir !== 0 && dir !== ndir ? BEND_PENALTY : 0;
-      const nd = d + Math.abs(b.x - a.x) + Math.abs(b.y - a.y) + bend;
+      const nd =
+        d + Math.abs(b.x - a.x) + Math.abs(b.y - a.y) + bend + wireCostOfEdge(a, b, segs);
       const ns = nodeId(nx, ny, ndir);
       if (nd < (dist.get(ns) ?? Infinity)) {
         dist.set(ns, nd);
@@ -243,11 +359,23 @@ export function collectComponentObstacles(
   components: Array<{ id: string; x: number; y: number }>,
   excludeIds: Array<string | undefined>,
 ): ObstacleRect[] {
-  if (typeof document === 'undefined') return [];
   const skip = new Set(excludeIds.filter(Boolean));
-  const rects: ObstacleRect[] = [];
+  return collectComponentRects(components)
+    .filter((r) => !skip.has(r.id))
+    .map((r) => r.rect);
+}
+
+/**
+ * Same measurement as collectComponentObstacles but keeping the component
+ * id, so a caller routing MANY wires can measure the DOM once and filter
+ * each wire's endpoint components in memory instead of re-querying.
+ */
+export function collectComponentRects(
+  components: Array<{ id: string; x: number; y: number }>,
+): Array<{ id: string; rect: ObstacleRect }> {
+  if (typeof document === 'undefined') return [];
+  const out: Array<{ id: string; rect: ObstacleRect }> = [];
   for (const c of components) {
-    if (skip.has(c.id)) continue;
     const esc = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(c.id) : c.id;
     const el = document.querySelector(
       `.dynamic-component-wrapper[data-component-id="${esc}"]`,
@@ -256,7 +384,42 @@ export function collectComponentObstacles(
     const w = el.offsetWidth;
     const hh = el.offsetHeight;
     if (!w || !hh) continue;
-    rects.push({ x: c.x, y: c.y, w, h: hh });
+    out.push({ id: c.id, rect: { x: c.x, y: c.y, w, h: hh } });
   }
-  return rects;
+  return out;
+}
+
+/**
+ * Every rendered segment of the given wires, as axis-aligned obstacles for
+ * the router. Skips invisible breadboard seating wires (`bb`) and the wire
+ * being routed itself. Uses the same expansion the renderer uses, so the
+ * costs see exactly what the user sees.
+ */
+export function collectWireSegments(
+  wires: Array<{
+    id: string;
+    bb?: boolean;
+    start: Point;
+    end: Point;
+    waypoints?: Point[];
+  }>,
+  excludeWireId?: string,
+): WireSegment[] {
+  const segs: WireSegment[] = [];
+  for (const w of wires) {
+    if (w.bb || w.id === excludeWireId) continue;
+    const pts = simplifyOrthogonalPath(
+      expandOrthogonalPoints([
+        { x: w.start.x, y: w.start.y },
+        ...(w.waypoints ?? []),
+        { x: w.end.x, y: w.end.y },
+      ]),
+    );
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1];
+      const b = pts[i];
+      if (a.x === b.x || a.y === b.y) segs.push({ a, b });
+    }
+  }
+  return segs;
 }
