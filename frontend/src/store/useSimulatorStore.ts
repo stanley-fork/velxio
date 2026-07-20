@@ -2810,11 +2810,25 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
             rects,
             collectWireSegments(updatedWires, wire.id),
           );
+          // routed === null means the PREVIEW elbow (longer-axis-first) is
+          // clear — so that exact elbow must be materialised. Storing []
+          // instead renders the implicit horizontal-first corner, a
+          // DIFFERENT elbow the router never checked: three agent wires
+          // shipped crossing a display that way while their checked route
+          // was clean.
+          const elbow =
+            routed === null
+              ? previewElbow(
+                  { x: wire.start.x, y: wire.start.y },
+                  wire.end.x,
+                  wire.end.y,
+                )
+              : null;
           updatedWires[i] = {
             ...wire,
             waypoints: normalizeWireWaypoints(
               { x: wire.start.x, y: wire.start.y },
-              routed ?? [],
+              routed ?? (elbow ? [elbow] : []),
               { x: wire.end.x, y: wire.end.y },
             ),
           };

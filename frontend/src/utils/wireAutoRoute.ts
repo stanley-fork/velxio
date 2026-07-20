@@ -83,6 +83,90 @@ function rectContains(r: ObstacleRect, p: Point): boolean {
 }
 
 /**
+ * A rect that contains an endpoint cannot be blocked whole (the wire must
+ * leave the pin) — but dropping it entirely let routes cross the WHOLE
+ * body. Seen live: strips under a seated 4-digit display start inside its
+ * inflated bbox, so the display stopped being an obstacle for every wire
+ * leaving those strips and 15 wires ran straight across it.
+ *
+ * Instead, carve an ESCAPE CORRIDOR from the endpoint to the rect's
+ * nearest edge and keep the rest blocked: the far side of the body stays
+ * an obstacle, and the route exits through the corridor like a real
+ * jumper leaving from under a chip.
+ *
+ * Returns the still-blocked sub-rects (0-3 of them).
+ */
+type EscapeDir = 'left' | 'right' | 'up' | 'down';
+
+/**
+ * Escape direction for a point inside ONE OR MORE overlapping rects: the
+ * direction with the shortest run until the point clears ALL of them.
+ *
+ * Every containing rect must then carve its corridor in this SAME
+ * direction. Seated resistors overlap heavily (19px pitch, ~66px inflated
+ * boxes), and when each rect picked its own nearest edge the corridors
+ * pointed different ways and walled each other off — A* found no exit,
+ * fell back to the direct elbow, and the wire crossed a display.
+ */
+function unionEscapeDir(rects: ObstacleRect[], p: Point): EscapeDir {
+  const containing = rects.filter((r) => rectContains(r, p));
+  if (containing.length === 0) return 'down';
+  const dLeft = Math.max(...containing.map((r) => p.x - r.x));
+  const dRight = Math.max(...containing.map((r) => r.x + r.w - p.x));
+  const dTop = Math.max(...containing.map((r) => p.y - r.y));
+  const dBottom = Math.max(...containing.map((r) => r.y + r.h - p.y));
+  const min = Math.min(dLeft, dRight, dTop, dBottom);
+  if (min === dBottom) return 'down';
+  if (min === dTop) return 'up';
+  if (min === dRight) return 'right';
+  return 'left';
+}
+
+function carveEscape(r: ObstacleRect, p: Point, dir?: EscapeDir): ObstacleRect[] {
+  if (!rectContains(r, p)) return [r];
+  const dLeft = p.x - r.x;
+  const dRight = r.x + r.w - p.x;
+  const dTop = p.y - r.y;
+  const dBottom = r.y + r.h - p.y;
+  let d: EscapeDir;
+  if (dir) {
+    d = dir;
+  } else {
+    const min = Math.min(dLeft, dRight, dTop, dBottom);
+    d = min === dBottom ? 'down' : min === dTop ? 'up' : min === dRight ? 'right' : 'left';
+  }
+  const C = ROUTE_MARGIN; // corridor half-width
+  const out: ObstacleRect[] = [];
+  const push = (x: number, y: number, w: number, h: number) => {
+    if (w > 1 && h > 1) out.push({ x, y, w, h });
+  };
+  // Side blocks OVERLAP the endpoint's row/column by 1px: segment-vs-rect
+  // hits are strict, so without the overlap the endpoint's row is a free
+  // seam between the far block and the side bands and the route rides it
+  // straight across the body.
+  if (d === 'down' || d === 'up') {
+    // Vertical corridor at p.x, opening toward the chosen horizontal edge.
+    const corridorY = (d === 'down' ? p.y : r.y) - (d === 'down' ? 1 : 0);
+    const corridorEnd = d === 'down' ? r.y + r.h : p.y + 1;
+    // Everything on the OTHER side of the endpoint stays fully blocked.
+    if (d === 'down') push(r.x, r.y, r.w, dTop);
+    else push(r.x, p.y, r.w, dBottom);
+    // Beside the corridor, still blocked.
+    push(r.x, corridorY, p.x - C - r.x, corridorEnd - corridorY);
+    push(p.x + C, corridorY, r.x + r.w - (p.x + C), corridorEnd - corridorY);
+  } else {
+    // Horizontal corridor at p.y, opening toward the chosen vertical edge.
+    const corridorX = (d === 'right' ? p.x : r.x) - (d === 'right' ? 1 : 0);
+    const corridorEnd = d === 'right' ? r.x + r.w : p.x + 1;
+    if (d === 'right') push(r.x, r.y, dLeft, r.h);
+    else push(p.x, r.y, dRight, r.h);
+    push(corridorX, r.y, corridorEnd - corridorX, p.y - C - r.y);
+    push(corridorX, p.y + C, corridorEnd - corridorX, r.y + r.h - (p.y + C));
+  }
+  return out;
+}
+
+/**
  * Axis-aligned segment vs rect overlap. Touching an edge exactly does not
  * count as a hit, so routes may run along the inflated boundary.
  */
@@ -212,11 +296,17 @@ export function routeAroundObstacles(
   rawRects: ObstacleRect[],
   wireSegments: WireSegment[] = [],
 ): Point[] | null {
-  // Rects that contain an endpoint can never be avoided (the wire must
-  // leave the pin); drop them rather than making routing impossible.
-  const rects = rawRects
-    .map((r) => inflate(r, ROUTE_MARGIN))
-    .filter((r) => !rectContains(r, start) && !rectContains(r, end));
+  // Rects that contain an endpoint can never be blocked whole (the wire
+  // must leave the pin) — carve an escape corridor instead of dropping the
+  // obstacle, so the rest of the body still repels the route. All rects
+  // containing one endpoint carve in the SAME union-chosen direction, so
+  // the corridors of overlapping rects chain into one continuous exit.
+  const inflated = rawRects.map((r) => inflate(r, ROUTE_MARGIN));
+  const startDir = unionEscapeDir(inflated, start);
+  const endDir = unionEscapeDir(inflated, end);
+  const rects = inflated
+    .flatMap((r) => carveEscape(r, start, startDir))
+    .flatMap((r) => carveEscape(r, end, endDir));
 
   // Wires participate only inside a window around the route, and never
   // when they share an endpoint with it (wires meeting on one pin must

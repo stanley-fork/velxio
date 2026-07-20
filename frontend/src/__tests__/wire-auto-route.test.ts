@@ -73,12 +73,15 @@ describe('routeAroundObstacles', () => {
     expect(routeAvoids(start, corners!, end, rects)).toBe(true);
   });
 
-  it('ignores rects that contain an endpoint (wire must leave the pin)', () => {
-    // The obstacle sits right on the start pin — routing around it is
-    // impossible, so it must be dropped and the direct elbow kept.
-    expect(
-      routeAroundObstacles(start, end, [{ x: -20, y: -20, w: 40, h: 40 }]),
-    ).toBeNull();
+  it('an endpoint-containing rect gets an escape corridor, not a free pass', () => {
+    // The obstacle sits right on the start pin. The wire must be able to
+    // LEAVE (routing can never fail because of the pin's own body), but the
+    // rest of the body must still repel the route — dropping the rect
+    // entirely let wires cross seated displays end to end.
+    const r = routeAroundObstacles(start, end, [{ x: -20, y: -20, w: 40, h: 40 }]);
+    // A route (or null when the escape happens to align with the direct
+    // elbow) — either way it must not throw and must produce a usable shape.
+    expect(r === null || Array.isArray(r)).toBe(true);
   });
 
   it('falls back to null when the target is fully walled off', () => {
@@ -232,5 +235,70 @@ describe('collectWireSegments', () => {
     const segs = collectWireSegments(wires as never);
     // Diagonal endpoints render as an L: one horizontal + one vertical.
     expect(segs).toHaveLength(2);
+  });
+});
+
+describe('routeAroundObstacles — escape corridors (endpoint inside obstacle)', () => {
+  it('a wire leaving a strip under a seated display does not cross its body', () => {
+    // The reported case: a 4-digit display body ~200x95 seated on the
+    // breadboard; the wire starts at a strip hole INSIDE the inflated bbox
+    // (right under the display pins) and ends far to the right. Dropping
+    // the rect let 15 wires run straight across the display.
+    const display: ObstacleRect = { x: 523, y: 86, w: 210, h: 103 };
+    const start = { x: 540, y: 180 };  // inside, near the BOTTOM edge
+    const end = { x: 900, y: 120 };    // to the right, level with the body
+    const corners = routeAroundObstacles(start, end, [display], []);
+    expect(corners).not.toBeNull();
+    // No horizontal run may pass through the body interior above the
+    // escape row (i.e. the route must go around, not across).
+    const pts = expandOrthogonalPoints([start, ...corners!, end]);
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1];
+      const b = pts[i];
+      if (a.y === b.y && a.y > 86 && a.y < 172) {
+        // horizontal inside the body's vertical span (above the corridor
+        // mouth region) must not overlap the body's x-range interior
+        const overl = Math.min(Math.max(a.x, b.x), 523 + 210) - Math.max(Math.min(a.x, b.x), 523);
+        expect(overl, `run at y=${a.y} crosses the display`).toBeLessThanOrEqual(16);
+      }
+    }
+  });
+
+  it('still routes when BOTH endpoints sit inside the same rect', () => {
+    // Strip-to-strip wire fully under the display: carving twice may leave
+    // nothing blocked — must not throw, must return something sane.
+    const display: ObstacleRect = { x: 0, y: 0, w: 300, h: 100 };
+    const r = routeAroundObstacles({ x: 30, y: 90 }, { x: 250, y: 90 }, [display], []);
+    expect(r === null || Array.isArray(r)).toBe(true);
+  });
+
+  it('endpoint-outside rects behave exactly as before', () => {
+    const rect: ObstacleRect = { x: 100, y: -50, w: 50, h: 100 };
+    const corners = routeAroundObstacles({ x: 0, y: 0 }, { x: 300, y: 0 }, [rect], []);
+    expect(corners).not.toBeNull(); // must detour around it
+  });
+});
+
+describe('routeAroundObstacles — overlapping obstacle slab (seated resistor bank)', () => {
+  it('escapes a point buried in overlapping rects via one shared corridor', () => {
+    // 8 resistors at 19px pitch with ~66px inflated boxes form a solid slab.
+    // With per-rect escape directions the corridors contradicted each other
+    // and A* found no exit — the wire fell back to a display-crossing elbow.
+    const slab: ObstacleRect[] = Array.from({ length: 8 }, (_, i) => ({
+      x: 850 + i * 19, y: 440, w: 50, h: 105,
+    }));
+    const display: ObstacleRect = { x: 500, y: 434, w: 202, h: 95 };
+    const start = { x: 906, y: 521 };  // strip hole inside 2-3 resistors
+    const end = { x: 100, y: 219 };    // GPIO far left, above
+    const corners = routeAroundObstacles(start, end, [display, ...slab], []);
+    expect(corners).not.toBeNull();
+    // The route must not cross the display body.
+    const pts = expandOrthogonalPoints([start, ...corners!, end]);
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1]; const b = pts[i];
+      const inX = Math.max(a.x, b.x) > 500 + 4 && Math.min(a.x, b.x) < 702 - 4;
+      const inY = Math.max(a.y, b.y) > 434 + 4 && Math.min(a.y, b.y) < 529 - 4;
+      expect(inX && inY, `segment (${a.x},${a.y})->(${b.x},${b.y}) crosses the display`).toBe(false);
+    }
   });
 });

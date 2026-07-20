@@ -153,3 +153,43 @@ describe('recalculateAllWirePositions — auto-route pass', () => {
     expect(useSimulatorStore.getState().wires[0].waypoints).toEqual([]);
   });
 });
+
+describe('re-route pass — null route materialises the CHECKED elbow', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    const s = useSimulatorStore.getState();
+    // Diagonal pair with dy >> dx: previewElbow is vertical-first, while an
+    // empty waypoints array renders horizontal-first — a DIFFERENT corner
+    // the router never validated. Three live agent wires crossed a display
+    // exactly this way.
+    s.setComponents([
+      { id: 'p1', metadataId: 'resistor', x: 300, y: 500, properties: {} },
+      { id: 'p2', metadataId: 'resistor', x: 0, y: 100, properties: {} },
+      // A blocker placed so ONLY the horizontal-first corner would cross it:
+      // it sits left of p1 at p1's row.
+      { id: 'blk', metadataId: 'chip', x: 100, y: 470, properties: {} },
+    ] as never);
+    mountComponent('p1'); mountComponent('p2');
+    mountComponent('blk', 60, 80); // y 470..550 — covers p1's row (~506)
+    s.setWires([]);
+  });
+
+  it('stores the longer-axis-first elbow instead of empty waypoints', () => {
+    const s = useSimulatorStore.getState();
+    s.setWires([wireBetween('w', 'p1', 'p2', { autoRouted: true })] as never);
+    s.recalculateAllWirePositions();
+    const w = useSimulatorStore.getState().wires[0];
+    // Whatever shape came out, the RENDERED expansion must not cross blk.
+    const pts = expandOrthogonalPoints([
+      { x: w.start.x, y: w.start.y }, ...w.waypoints, { x: w.end.x, y: w.end.y },
+    ]);
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1]; const b = pts[i];
+      const inX = Math.max(a.x, b.x) > 100 + 4 && Math.min(a.x, b.x) < 160 - 4;
+      const inY = Math.max(a.y, b.y) > 470 + 4 && Math.min(a.y, b.y) < 550 - 4;
+      const aIn = a.x > 100 && a.x < 160 && a.y > 470 && a.y < 550;
+      const bIn = b.x > 100 && b.x < 160 && b.y > 470 && b.y < 550;
+      expect(inX && inY && !aIn && !bIn, `segment (${a.x},${a.y})->(${b.x},${b.y}) crosses blk`).toBe(false);
+    }
+  });
+});
