@@ -29,6 +29,7 @@ import { PinOverlay } from './PinOverlay';
 import { SeatedPinMarkers } from './SeatedPinMarkers';
 import { calculatePinPosition } from '../../utils/pinPositionCalculator';
 import { isBoardComponent, boardPinToNumber } from '../../utils/boardPinMapping';
+import { isBreadboard } from '../../utils/breadboardNets';
 import { autoWireColor, WIRE_KEY_COLORS, expandOrthogonalPoints } from '../../utils/wireUtils';
 import {
   isAutoVerticalPart,
@@ -1112,7 +1113,13 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
       // current and future SPICE mapper immune to that feedback loop.
       const logic = PartSimulationRegistry.get(component.metadataId);
       const spiceOwned = isSpiceMapped(component.metadataId);
-      const hasSelfManagedVisuals = !!(logic && logic.attachEvents) || spiceOwned;
+      // Breadboards have no visual on/off state, but they ARE direct-wired to
+      // many board pins (one wire per strip → GPIO). Writing properties.state
+      // per edge minted a new components array thousands of times per second
+      // on multiplexed sketches — pure churn that re-rendered the whole
+      // editor. Treat them as self-managed: skip the generic state echo.
+      const hasSelfManagedVisuals =
+        !!(logic && logic.attachEvents) || spiceOwned || isBreadboard(component.metadataId);
 
       // Generic GND check: for wire-connected output components that don't manage
       // their own state, require at least one GND wire before activating.

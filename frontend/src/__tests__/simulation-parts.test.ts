@@ -556,6 +556,33 @@ describe('7segment — attachEvents', () => {
     cleanup();
     expect(unsubMock).toHaveBeenCalledTimes(8);
   });
+
+  it('CLN pin drives colon + colonValue (attachEvents and onPinStateChange)', () => {
+    const logic = PartSimulationRegistry.get('7segment')!;
+
+    // attachEvents path (a clock face wired to a local-sim board).
+    const el = makeElement({ values: new Array(8).fill(0), colon: false, colonValue: false });
+    const sim = makeSimulator();
+    let clnCallback!: (pin: number, state: boolean) => void;
+    sim.pinManager.onPinChange.mockImplementation(
+      (pin: number, cb: (pin: number, state: boolean) => void) => {
+        if (pin === 10) clnCallback = cb;
+        return () => {};
+      },
+    );
+    logic.attachEvents!(el, sim as any, pinMap({ A: 2, CLN: 10 }));
+    clnCallback(10, true);
+    expect((el as any).colon).toBe(true);
+    expect((el as any).colonValue).toBe(true);
+    clnCallback(10, false);
+    expect((el as any).colonValue).toBe(false);
+
+    // onPinStateChange path (QEMU-backed boards dispatch by pin name).
+    const el2 = makeElement({ values: new Array(8).fill(0), colon: false, colonValue: false });
+    logic.onPinStateChange!('CLN', true, el2);
+    expect((el2 as any).colon).toBe(true);
+    expect((el2 as any).colonValue).toBe(true);
+  });
 });
 
 // ─── RGB LED ──────────────────────────────────────────────────────────────────

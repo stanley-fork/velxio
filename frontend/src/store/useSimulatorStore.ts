@@ -2547,11 +2547,22 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
     },
 
     updateComponentState: (id, state) => {
-      set((prevState) => ({
-        components: prevState.components.map((c) =>
-          c.id === id ? { ...c, properties: { ...c.properties, state, value: state } } : c,
-        ),
-      }));
+      set((prevState) => {
+        // No-op guard: this runs per GPIO edge for wire-connected components.
+        // Unconditionally minting a new components array re-rendered every
+        // subscriber (canvas, editor page, console) thousands of times per
+        // second on a fast-toggling sketch — the main cause of the frozen
+        // browser on the ESP32 multiplexed-clock projects.
+        const comp = prevState.components.find((c) => c.id === id);
+        if (!comp || (comp.properties.state === state && comp.properties.value === state)) {
+          return prevState;
+        }
+        return {
+          components: prevState.components.map((c) =>
+            c.id === id ? { ...c, properties: { ...c.properties, state, value: state } } : c,
+          ),
+        };
+      });
     },
 
     handleComponentEvent: (_componentId, _eventName, _data) => {},
