@@ -343,17 +343,53 @@ const PASSIVE_TAGS = new Set([
   'wokwi-inductor',
 ]);
 
+// Static illustrations for the Pi Linux family. A live velxio-raspberry-pi-*
+// custom element at natural size + CSS scale keeps its unscaled layout box,
+// so the 100px thumbnail clips it to a sliver — images render fully instead.
+// Keyed by tagName because the registry's Pi Zero/1/2 entries deliberately
+// reuse the Pi 3 board art.
+const PI_BOARD_ART: Record<string, string> = {
+  'velxio-raspberry-pi-3': raspberryPi3Svg,
+  'velxio-raspberry-pi-4': raspberryPi4Png,
+  'velxio-raspberry-pi-5': raspberryPi5Png,
+};
+
+/** Gold PRO pill shown on cards for paid-gated boards (Pi Linux + STM32). */
+const ProBadge: React.FC = () => (
+  <span
+    title="Pro feature — paid plan or Velxio Desktop"
+    style={{
+      position: 'absolute',
+      top: 8,
+      right: 8,
+      zIndex: 1,
+      padding: '3px 10px',
+      borderRadius: 999,
+      fontSize: 11,
+      fontWeight: 700,
+      letterSpacing: 0.6,
+      color: '#1a1205',
+      background: 'linear-gradient(180deg,#ffd566,#f5a623)',
+      boxShadow: '0 1px 4px rgba(0,0,0,0.35)',
+    }}
+  >
+    PRO
+  </span>
+);
+
 const ComponentCard: React.FC<ComponentCardProps> = ({ component, onSelect }) => {
   const thumbnailRef = React.useRef<HTMLDivElement>(null);
   const usePresetSvg =
     PASSIVE_TAGS.has(component.tagName) &&
     typeof component.thumbnail === 'string' &&
     component.thumbnail.trim().startsWith('<svg');
+  const boardArt = PI_BOARD_ART[component.tagName];
 
   // Render actual web component as thumbnail
   React.useEffect(() => {
     if (!thumbnailRef.current) return;
     if (usePresetSvg) return; // SVG is rendered via dangerouslySetInnerHTML below
+    if (boardArt) return; // static illustration rendered below
 
     // Create the actual wokwi element
     const element = document.createElement(component.tagName);
@@ -397,12 +433,19 @@ const ComponentCard: React.FC<ComponentCardProps> = ({ component, onSelect }) =>
         thumbnailRef.current.innerHTML = '';
       }
     };
-  }, [component.tagName, component.defaultValues, usePresetSvg]);
+  }, [component.tagName, component.defaultValues, usePresetSvg, boardArt]);
 
   return (
-    <button className="component-card" onClick={onSelect}>
+    <button className="component-card" onClick={onSelect} style={{ position: 'relative' }}>
+      {isProBoardKind(component.id) && <ProBadge />}
       <div className="card-thumbnail">
-        {usePresetSvg ? (
+        {boardArt ? (
+          <img
+            src={boardArt}
+            alt={component.name}
+            style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+          />
+        ) : usePresetSvg ? (
           <div
             className="component-preview"
             dangerouslySetInnerHTML={{ __html: component.thumbnail }}
@@ -517,27 +560,7 @@ const BoardCard: React.FC<BoardCardProps> = ({ kind, onSelect }) => {
 
   return (
     <button className="component-card" onClick={onSelect} style={{ position: 'relative' }}>
-      {isProBoardKind(kind) && (
-        <span
-          title="Pro feature — paid plan or Velxio Desktop"
-          style={{
-            position: 'absolute',
-            top: 8,
-            right: 8,
-            zIndex: 1,
-            padding: '3px 10px',
-            borderRadius: 999,
-            fontSize: 11,
-            fontWeight: 700,
-            letterSpacing: 0.6,
-            color: '#1a1205',
-            background: 'linear-gradient(180deg,#ffd566,#f5a623)',
-            boxShadow: '0 1px 4px rgba(0,0,0,0.35)',
-          }}
-        >
-          PRO
-        </span>
-      )}
+      {isProBoardKind(kind) && <ProBadge />}
       <div className="card-thumbnail">
         {reactThumbnail ? reactThumbnail : <div ref={thumbnailRef} className="component-preview" />}
       </div>
