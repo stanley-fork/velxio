@@ -26,6 +26,7 @@ import { PROPERTY_CHANGE_EVENT, type PropertyChangeDetail } from '../../simulati
 import { mountDigitalGateEngine } from '../../simulation/digital/digitalGateController';
 import { isSpiceMapped } from '../../simulation/spice/componentToSpice';
 import { PinOverlay } from './PinOverlay';
+import { SeatedPinMarkers } from './SeatedPinMarkers';
 import { calculatePinPosition } from '../../utils/pinPositionCalculator';
 import { isBoardComponent, boardPinToNumber } from '../../utils/boardPinMapping';
 import { autoWireColor, WIRE_KEY_COLORS, expandOrthogonalPoints } from '../../utils/wireUtils';
@@ -2044,6 +2045,20 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
     return () => clearTimeout(timer);
   }, [components.length]);
 
+  // Which pins of each component are plugged into a breadboard hole. Seating
+  // is an invisible `bb` wire (component pin = start, hole = end), so one pass
+  // over the wires gives every part its seated-pin names for the green markers.
+  const seatedPinsByComponent = React.useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const w of wires) {
+      if (!w.bb) continue;
+      const arr = map.get(w.start.componentId);
+      if (arr) arr.push(w.start.pinName);
+      else map.set(w.start.componentId, [w.start.pinName]);
+    }
+    return map;
+  }, [wires]);
+
   // Render component using dynamic renderer
   const renderComponent = (component: any) => {
     // SPICE probes are React components, not web components — render them
@@ -2166,6 +2181,16 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
             onMouseDown={(e) => {
               handleComponentMouseDown(component.id, e);
             }}
+          />
+
+          {/* Green dots on pins plugged into a breadboard — always visible so
+              "seated & connected" is legible without hovering. */}
+          <SeatedPinMarkers
+            componentId={component.id}
+            componentX={component.x}
+            componentY={component.y}
+            seatedPins={seatedPinsByComponent.get(component.id) ?? []}
+            rotation={Number(component.properties?.rotation) || 0}
           />
 
           {/* Pin overlay for wire creation - hide while interacting/running */}
