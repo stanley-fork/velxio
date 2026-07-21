@@ -94,8 +94,20 @@ function getDigitsCount(element: HTMLElement): number {
 
 function get7SegState(element: HTMLElement): SevenSegState {
   let s = sevenSegState.get(element);
+  const digits = getDigitsCount(element);
+  // Rebuild when the digit count CHANGED since the state was created. The
+  // agent adds the display with the default digits=1 and only then sets
+  // digits=4 — the stale 1-digit state made every later attachEvents
+  // subscribe COM.1/COM.2 (which don't exist on a 4-digit part) instead of
+  // DIG1..DIG4, and since those resolvers "attached", the all-digits-on
+  // fallback never kicked in either: the display stayed permanently blank
+  // in-session and only a page reload (fresh element, digits already 4)
+  // fixed it.
+  if (s && s.digits !== digits) {
+    if (s.flushTimer !== null) clearTimeout(s.flushTimer);
+    s = undefined;
+  }
   if (!s) {
-    const digits = getDigitsCount(element);
     s = {
       digits,
       segments: [0, 0, 0, 0, 0, 0, 0, 0],
