@@ -83,6 +83,16 @@ import './SimulatorCanvas.css';
 /** World-units of tolerance for alignment snap (scales with zoom). */
 const ALIGN_SNAP_PX = 6;
 
+/**
+ * Large-bodied display parts whose face should occlude wires when the part is
+ * seated on a breadboard — the flat canvas has no depth, so bridge wires
+ * routed to holes UNDER the body would otherwise paint over the readout.
+ * Matches both the metadata ids (`7segment`, `ssd1306`, …) and the `wokwi-`/
+ * `velxio-` element-name variants. Thin two-pin parts are deliberately absent.
+ */
+const DISPLAY_BODY_METADATA_RE =
+  /(7segment|led-matrix|max7219|neopixel-matrix|ssd1306|oled|ili9341|lcd1602|lcd2004|led-ring)/i;
+
 /** Long-press duration for touch context menu (ms). */
 const LONG_PRESS_MS = 500;
 
@@ -2240,7 +2250,26 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
     // them — so they always sit at the very back: below boards (z 0), other
     // components (z 1/2) and wires (z 35). Selection doesn't raise them.
     const isBreadboard = String(component.metadataId).startsWith('breadboard');
-    const groupZIndex = isBreadboard ? -1 : isSelected ? 2 : 1;
+    // A large-bodied display seated on a breadboard physically sits ON the
+    // board, so wires routed to holes UNDERNEATH it pass behind its body in
+    // real life. On the flat canvas those bridge wires (segment strips whose
+    // holes are literally under the display) otherwise paint OVER the digits
+    // — the reported "los cables se ven superpuestos y casi ni se ven los
+    // dígitos". Raise a seated display above the wire layer (z 35) so its
+    // face occludes the wires crossing it, exactly as the real part would.
+    // Scoped to occluding display bodies + only when actually seated, so
+    // thin parts (resistors, LEDs) and free-floating displays are untouched.
+    const isSeated = (seatedPinsByComponent.get(component.id)?.length ?? 0) > 0;
+    const occludesWhenSeated = DISPLAY_BODY_METADATA_RE.test(String(component.metadataId));
+    const groupZIndex = isBreadboard
+      ? -1
+      : isSeated && occludesWhenSeated
+        ? isSelected
+          ? 37
+          : 36
+        : isSelected
+          ? 2
+          : 1;
 
     return (
       <React.Fragment key={component.id}>
