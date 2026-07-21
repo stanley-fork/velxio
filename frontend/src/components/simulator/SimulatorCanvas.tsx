@@ -30,7 +30,14 @@ import { SeatedPinMarkers } from './SeatedPinMarkers';
 import { calculatePinPosition } from '../../utils/pinPositionCalculator';
 import { isBoardComponent, boardPinToNumber } from '../../utils/boardPinMapping';
 import { isBreadboard } from '../../utils/breadboardNets';
-import { autoWireColor, WIRE_KEY_COLORS, expandOrthogonalPoints } from '../../utils/wireUtils';
+import {
+  autoWireColor,
+  railWireColor,
+  WIRE_JUMPER_PALETTE,
+  WIRE_KEY_COLORS,
+  expandOrthogonalPoints,
+} from '../../utils/wireUtils';
+import { findWireAtHole, resolveFreeHole } from '../../utils/breadboardOccupancy';
 import {
   isAutoVerticalPart,
   isOverBreadboard,
@@ -358,6 +365,10 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
   const [alignmentGuides, setAlignmentGuides] = useState<AlignmentGuide[]>([]);
   /** Set to true during mouseup if a segment/waypoint drag committed, so onClick can skip selection. */
   const segmentDragJustCommittedRef = useRef(false);
+  // Set when the mouse-up handler already resolved this click into a wire
+  // selection (click on the breadboard body over a wire) — the bubbled
+  // canvas onClick must not re-toggle that selection.
+  const wireSelectJustHandledRef = useRef(false);
   const wiresRef = useRef(wires);
   wiresRef.current = wires;
 
@@ -1686,6 +1697,32 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
             } else if (component.metadataId === 'custom-chip') {
               // Custom Chips have their own designer (C editor + chip.json + Compile).
               setCustomChipComponentId(draggedComponentId);
+            } else if (
+              isBreadboard(component.metadataId) &&
+              (() => {
+                // A wire crossing the breadboard body sits visually ON TOP of
+                // it — clicking the wire must select the wire, not bury it
+                // under the breadboard's full-pin-list property dialog
+                // (reported: bb→bb wires were unselectable, the hole list
+                // popped over everything instead).
+                const world = toWorld(e.clientX, e.clientY);
+                const nearWire = findWireNearPoint(
+                  wiresRef.current,
+                  world.x,
+                  world.y,
+                  8 / zoomRef.current,
+                );
+                if (nearWire) {
+                  setSelectedWire(nearWire.id);
+                  // The subsequent canvas onClick would re-hit the same wire
+                  // and toggle it back OFF — suppress that one click.
+                  wireSelectJustHandledRef.current = true;
+                  return true;
+                }
+                return false;
+              })()
+            ) {
+              // handled — wire selected instead of opening the dialog
             } else {
               setPropertyDialogComponentId(draggedComponentId);
               setPropertyDialogPosition({
@@ -1880,6 +1917,46 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
       setShowPropertyDialog(false);
     }
 
+    // ── Breadboard hole rules: one hole, one wire ──────────────────────
+    // A hole already holding a visible wire end can't start another wire —
+    // clicking it SELECTS that wire instead. (Without this, a wire whose
+    // endpoints sit in holes is impossible to select: the hole overlays
+    // swallow every click and silently start a new wire.) When a new end
+    // does land in an occupied hole (seated leg or another wire), it
+    // shifts to the nearest free hole of the same 5-hole strip / rail —
+    // electrically identical, visually untangled.
+    const bbComp = componentsRef.current.find((c) => c.id === componentId);
+    const isBBHole = !!bbComp && isBreadboard(bbComp.metadataId);
+    if (isBBHole) {
+      if (!wireInProgress) {
+        const occupying = findWireAtHole(wiresRef.current, componentId, pinName);
+        if (occupying) {
+          setSelectedWire(occupying.id);
+          return;
+        }
+      }
+      const el = document.getElementById(componentId) as
+        | (HTMLElement & { pinInfo?: Array<{ name: string }> })
+        | null;
+      const allNames = (el?.pinInfo ?? []).map((p) => p.name);
+      const free = resolveFreeHole(
+        bbComp.metadataId,
+        componentId,
+        pinName,
+        wiresRef.current,
+        allNames,
+      );
+      if (free !== pinName) {
+        const rot = Number(bbComp.properties?.rotation) || 0;
+        const pos = calculatePinPosition(componentId, free, bbComp.x + 6, bbComp.y + 6, rot);
+        if (pos) {
+          pinName = free;
+          x = pos.x;
+          y = pos.y;
+        }
+      }
+    }
+
     if (wireInProgress) {
       // Finish wire: the store atomically appends the new wire and clears
       // `wireInProgress`. Once that's done, we look up the wire it just
@@ -1900,8 +1977,15 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
         );
       }
     } else {
-      // Start wire: auto-detect color from pin name
-      startWireCreation({ componentId, pinName, x, y }, autoWireColor(pinName));
+      // Start wire: rails mandate red (+) / black (−); other breadboard
+      // holes pick a random jumper color (like a real jumper kit — a board
+      // full of identical green wires is unreadable); component pins keep
+      // the name-based auto color (GND → black, VCC → red, else green).
+      const color = isBBHole
+        ? (railWireColor(pinName) ??
+          WIRE_JUMPER_PALETTE[Math.floor(Math.random() * WIRE_JUMPER_PALETTE.length)])
+        : autoWireColor(pinName);
+      startWireCreation({ componentId, pinName, x, y }, color);
     }
   };
 
@@ -2635,6 +2719,12 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
             // If a segment handle drag just finished, don't also select
             if (segmentDragJustCommittedRef.current) {
               segmentDragJustCommittedRef.current = false;
+              return;
+            }
+            // Mouse-up already selected a wire under this click (breadboard
+            // body case) — don't let this bubbled click toggle it back off.
+            if (wireSelectJustHandledRef.current) {
+              wireSelectJustHandledRef.current = false;
               return;
             }
             // While the simulation runs the canvas is interact-only: a click on
