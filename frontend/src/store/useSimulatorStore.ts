@@ -18,7 +18,7 @@ import type { I2CDevice } from '../simulation/I2CBusManager';
 import type { RP2040I2CDevice } from '../simulation/RP2040Simulator';
 import type { Wire, WireInProgress, WireEndpoint } from '../types/wire';
 import type { BoardKind, BoardInstance, LanguageMode, WifiStatus } from '../types/board';
-import { BOARD_SUPPORTS_MICROPYTHON, isPiBoardKind, isStm32BoardKind } from '../types/board';
+import { BOARD_SUPPORTS_ESPIDF, BOARD_SUPPORTS_MICROPYTHON, isPiBoardKind, isStm32BoardKind } from '../types/board';
 import { boardGateDecision, proBoardFeatureName, triggerProUpgradePrompt } from '../lib/proBoardGate';
 import { calculatePinPosition } from '../utils/pinPositionCalculator';
 import { useOscilloscopeStore } from './useOscilloscopeStore';
@@ -1701,8 +1701,9 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       const board = get().boards.find((b) => b.id === boardId);
       if (!board) return;
 
-      // Only allow MicroPython for supported boards
+      // Only allow MicroPython / ESP-IDF for supported boards
       if (mode === 'micropython' && !BOARD_SUPPORTS_MICROPYTHON.has(board.boardKind)) return;
+      if (mode === 'espidf' && !BOARD_SUPPORTS_ESPIDF.has(board.boardKind)) return;
 
       // Stop any running simulation
       if (board.running) get().stopBoard(boardId);

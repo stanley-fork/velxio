@@ -62,6 +62,7 @@ def _job_key(
     spiffs_files: list[dict] | None = None,
     libraries: list[str] | None = None,
     owner_id: str | None = None,
+    language: str | None = None,
 ) -> str:
     """Stable content hash of (files, board, options, spiffs, libraries, owner)
     used as the deduplication key.
@@ -110,6 +111,13 @@ def _job_key(
         # index-only case.
         h.update(b"owner:")
         h.update(owner_id.encode())
+        h.update(b"\0")
+    if language and language != "arduino":
+        # Pure ESP-IDF mode produces a different binary from the same bytes —
+        # never dedup across language modes. Guarded so 'arduino' (explicit or
+        # omitted) keeps the historical key.
+        h.update(b"lang:")
+        h.update(language.encode())
         h.update(b"\0")
     return h.hexdigest()
 
@@ -168,6 +176,11 @@ class CompileRequest(BaseModel):
     # merged only if it's declared here, so a sketch never picks up an unrelated
     # library from the shared dir. None / omitted = legacy scan-all (unchanged).
     libraries: list[str] | None = None
+    # Pure ESP-IDF language mode (issue #139). 'espidf' compiles the files as
+    # a pure ESP-IDF project: the user provides app_main() and IDF APIs, and
+    # the arduino-esp32 component is left out of the build entirely. None /
+    # 'arduino' = classic Arduino sketch compile. ESP32 boards only.
+    language: str | None = None
 
 
 class CompileResponse(BaseModel):
@@ -298,8 +311,27 @@ async def _run_compile(
     else:
         allowed_libraries, owner_id = scope
 
+    pure_idf = request.language == "espidf"
+    if pure_idf and not request.board_fqbn.startswith("esp32:"):
+        return CompileResponse(
+            success=False,
+            stdout="",
+            stderr="",
+            error="ESP-IDF language mode is only supported on ESP32 boards.",
+        )
+    if pure_idf and not espidf_compiler.available:
+        return CompileResponse(
+            success=False,
+            stdout="",
+            stderr="",
+            error="ESP-IDF toolchain is not available on this server.",
+        )
+
     if request.board_fqbn.startswith("esp32:") and espidf_compiler.available:
-        logger.info(f"[compile] Using ESP-IDF for {request.board_fqbn}")
+        logger.info(
+            f"[compile] Using ESP-IDF for {request.board_fqbn}"
+            + (" (pure ESP-IDF mode)" if pure_idf else "")
+        )
         spiffs_dicts = (
             [f.model_dump() for f in request.spiffs_files]
             if request.spiffs_files else None
@@ -311,6 +343,7 @@ async def _run_compile(
             spiffs_files=spiffs_dicts,
             allowed_libraries=allowed_libraries,
             owner_id=owner_id,
+            pure_idf=pure_idf,
         )
         return CompileResponse(
             success=result["success"],
@@ -608,6 +641,7 @@ async def compile_start(
         files, request.board_fqbn, request.board_options, spiffs_dicts,
         sorted(allowed_libraries) if allowed_libraries else None,
         owner_id if allowed_libraries else None,
+        language=request.language,
     )
     existing_id = JOB_BY_KEY.get(key)
     if existing_id is not None:

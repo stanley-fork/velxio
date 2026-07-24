@@ -339,6 +339,36 @@ class ESPIDFCompiler:
         """Check if sketch uses WiFi."""
         return bool(re.search(r'#include\s*[<"]WiFi\.h[">]|WiFi\.begin\(', code))
 
+    def _detect_idf_wifi_usage(self, code: str) -> bool:
+        """Pure ESP-IDF mode: does the project use the esp_wifi stack?"""
+        return bool(re.search(r'#include\s*[<"]esp_wifi\.h[">]|esp_wifi_init\s*\(', code))
+
+    def _normalize_wifi_for_qemu_idf(self, code: str) -> str:
+        """
+        Pure ESP-IDF variant of _normalize_wifi_for_qemu. IDF projects set
+        credentials via `#define WIFI_SSID "..."` or wifi_config_t designated
+        initializers (`.ssid = "..."`, `.password = "..."`). Rewrite the
+        common literal forms so the firmware associates with the open AP the
+        QEMU fork broadcasts (_QEMU_WIFI_SSID); anything more dynamic
+        (strcpy into the struct at runtime) is left alone and simply won't
+        connect.
+        """
+        code = re.sub(
+            r'(#define\s+\w*SSID\w*\s+)"[^"]*"',
+            rf'\1"{_QEMU_WIFI_SSID}"',
+            code,
+            flags=re.IGNORECASE,
+        )
+        code = re.sub(
+            r'(#define\s+\w*(?:PASS|PASSWORD|PSK)\w*\s+)"[^"]*"',
+            r'\1""',
+            code,
+            flags=re.IGNORECASE,
+        )
+        code = re.sub(r'(\.ssid\s*=\s*)"[^"]*"', rf'\1"{_QEMU_WIFI_SSID}"', code)
+        code = re.sub(r'(\.password\s*=\s*)"[^"]*"', r'\1""', code)
+        return code
+
     def _detect_webserver_usage(self, code: str) -> bool:
         """Check if sketch uses WebServer."""
         return bool(re.search(
@@ -1211,13 +1241,22 @@ class ESPIDFCompiler:
         )
         return safe_name
 
-    def _build_env(self, idf_target: str) -> dict:
-        """Build environment dict for ESP-IDF subprocess."""
+    def _build_env(self, idf_target: str, pure_idf: bool = False) -> dict:
+        """Build environment dict for ESP-IDF subprocess.
+
+        pure_idf: omit ARDUINO_ESP32_PATH (the template CMake only pulls the
+        arduino-esp32 component when that var is set) and raise
+        VELXIO_PURE_SKETCH so main/CMakeLists.txt compiles the user's own
+        app_main() sources instead of the Arduino sketch wrapper.
+        """
         env = os.environ.copy()
         env['IDF_PATH'] = self.idf_path
         env['IDF_TARGET'] = idf_target
 
-        if self.has_arduino:
+        if pure_idf:
+            env.pop('ARDUINO_ESP32_PATH', None)
+            env['VELXIO_PURE_SKETCH'] = '1'
+        elif self.has_arduino:
             env['ARDUINO_ESP32_PATH'] = self.arduino_path
 
         # On Windows, ESP-IDF uses its own Python venv
@@ -1745,6 +1784,7 @@ class ESPIDFCompiler:
         spiffs_files: list[dict] | None = None,
         allowed_libraries: set[str] | None = None,
         owner_id: str | None = None,
+        pure_idf: bool = False,
     ) -> dict:
         """
         Compile Arduino sketch using ESP-IDF.
@@ -1777,6 +1817,12 @@ class ESPIDFCompiler:
         only sdkconfig-affecting options are — because the SPIFFS image is
         rebuilt on every compile anyway and folding it in would burn the
         C/C++ ninja cache on every file edit.
+
+        pure_idf: pure ESP-IDF language mode (issue #139). The user's files
+        ARE the IDF main component sources (they provide app_main()); the
+        arduino-esp32 component is left out of the build entirely and
+        Arduino library resolution is skipped. Gets its own persistent
+        build-dir variant via the eff_hash fold below.
         """
         if not self.available:
             return {
@@ -1842,8 +1888,12 @@ class ESPIDFCompiler:
                 ('m:' + ','.join(sorted(allowed)) + ('|s:' + scope_token if scope_token else ''))
                 if allowed is not None else 'scanall'
             )
+            # Pure ESP-IDF mode gets its own build-dir variant: same bytes
+            # compiled with vs without the arduino-esp32 component produce
+            # entirely different cmake graphs + objects.
+            _lang_token = '|lang:pure' if pure_idf else ''
             eff_hash = hashlib.sha256(
-                (options_hash + '|' + _libs_token + '|i:' + _ext_inc_token).encode()
+                (options_hash + '|' + _libs_token + '|i:' + _ext_inc_token + _lang_token).encode()
             ).hexdigest()[:12]
             try:
                 if _USE_PERSISTENT_DIR:
@@ -1853,6 +1903,7 @@ class ESPIDFCompiler:
                         project_dir, files, idf_target, is_c3,
                         progress_callback, normalized_opts, spiffs_files,
                         allowed_libraries=allowed, libraries_dir=scope_dir,
+                        pure_idf=pure_idf,
                     )
                 with tempfile.TemporaryDirectory(prefix='espidf_') as temp_dir:
                     project_dir = Path(temp_dir) / 'project'
@@ -1862,6 +1913,7 @@ class ESPIDFCompiler:
                         project_dir, files, idf_target, is_c3,
                         progress_callback, normalized_opts, spiffs_files,
                         allowed_libraries=allowed, libraries_dir=scope_dir,
+                        pure_idf=pure_idf,
                     )
             finally:
                 if scope_dir is not None:
@@ -1882,7 +1934,10 @@ class ESPIDFCompiler:
                     return r2
             return r
 
-        result = await _attempt_safe(allowed_libraries)
+        # Pure ESP-IDF mode never resolves Arduino libraries — force the
+        # no-manifest path (the manifest names Arduino libs, which don't
+        # exist in a pure IDF build).
+        result = await _attempt_safe(None if pure_idf else allowed_libraries)
 
         # Graceful fallback (P2). A manifest-scoped compile that fails because a
         # header isn't in the manifest (an undeclared / transitive dependency)
@@ -1891,7 +1946,7 @@ class ESPIDFCompiler:
         # manifest can be auto-completed (P2.4) or the user prompted to add the
         # missing library. The caller holds the per-target lock for this whole
         # method, so the retry safely reuses the same build dir.
-        if allowed_libraries is not None and not result.get('success'):
+        if allowed_libraries is not None and not pure_idf and not result.get('success'):
             missing = self._missing_library_headers(result)
             if missing:
                 logger.warning(
@@ -1919,11 +1974,17 @@ class ESPIDFCompiler:
         spiffs_files: list[dict] | None = None,
         allowed_libraries: set[str] | None = None,
         libraries_dir: Path | None = None,
+        pure_idf: bool = False,
     ) -> dict:
         """Inner compile body: writes sketch + libs into `project_dir`,
         runs cmake + ninja, merges binaries. Caller is responsible for
         creating `project_dir` (with the template tree already copied in)
         and for managing its lifecycle (persistent vs tempfile).
+
+        pure_idf: the user's files are the IDF main component sources
+        (app_main entry point) — no Arduino wrap, no Arduino libraries.
+        The template's main/CMakeLists.txt picks its pure branch via the
+        VELXIO_PURE_SKETCH env var set in _build_env.
         """
         # board_options is already normalised by compile() — defensive in
         # case _compile_in_dir is called directly from a test path.
@@ -1935,6 +1996,15 @@ class ESPIDFCompiler:
         # template tree. Doing this BEFORE cmake configure means the new
         # CONFIG_* lines reach kconfig on its first read.
         rendered_sdkconfig = self._render_sdkconfig(board_options, _TEMPLATE_DIR)
+        if pure_idf:
+            # Without the arduino-esp32 component the CONFIG_ARDUINO_* /
+            # CONFIG_AUTOSTART_ARDUINO symbols don't exist. kconfig only
+            # warns on unknown symbols, but strip them so the generated
+            # sdkconfig stays honest about what the build contains.
+            rendered_sdkconfig = '\n'.join(
+                line for line in rendered_sdkconfig.splitlines()
+                if not line.startswith(('CONFIG_ARDUINO', 'CONFIG_AUTOSTART_ARDUINO'))
+            ) + '\n'
         defaults_path = project_dir / 'sdkconfig.defaults'
         prev_defaults = (
             defaults_path.read_text(encoding='utf-8') if defaults_path.exists() else None
@@ -1969,10 +2039,44 @@ class ESPIDFCompiler:
         # We normalize ANY user SSID → "Velxio-GUEST", enforce channel 6,
         # and use open auth (empty password) so the connection always works.
         # Detect WiFi BEFORE normalization so the flag reflects the original sketch.
-        has_wifi = self._detect_wifi_usage(main_content)
-        main_content = self._normalize_wifi_for_qemu(main_content)
+        if pure_idf:
+            _all_text = '\n'.join(f.get('content', '') for f in files)
+            has_wifi = self._detect_idf_wifi_usage(_all_text)
+        else:
+            has_wifi = self._detect_wifi_usage(main_content)
+            main_content = self._normalize_wifi_for_qemu(main_content)
 
-        if self.has_arduino:
+        if pure_idf:
+            # Pure ESP-IDF mode (issue #139): the user's files ARE the main
+            # component sources — app_main() entry point, IDF APIs, compiled
+            # by the template CMake's VELXIO_PURE_SKETCH glob branch. No
+            # Arduino wrap, no velxio_compat.h, no Arduino libraries.
+            main_dir = project_dir / 'main'
+            # Template / other-mode leftovers must not reach the pure glob
+            # (main.cpp would drag in setup()/loop() references; a stale
+            # sketch.ino.cpp would redefine symbols). Deleted BEFORE writing
+            # so a user file with the same name wins.
+            for leftover in ('main.c', 'main.cpp', 'sketch.ino.cpp', 'sketch_translated.c'):
+                (main_dir / leftover).unlink(missing_ok=True)
+            wrote_any = False
+            for f in files:
+                # basename() the client-supplied name so it can't escape main/
+                name = PurePosixPath(str(f.get('name') or '').replace('\\', '/')).name
+                if not name:
+                    continue
+                content = f.get('content', '')
+                if has_wifi:
+                    content = self._normalize_wifi_for_qemu_idf(content)
+                (main_dir / name).write_text(content, encoding='utf-8')
+                wrote_any = True
+            if not wrote_any:
+                return {
+                    'success': False,
+                    'error': 'No source files provided.',
+                    'stdout': '',
+                    'stderr': '',
+                }
+        elif self.has_arduino:
             # Arduino-as-component mode: copy sketch as .cpp
             sketch_cpp = project_dir / 'main' / 'sketch.ino.cpp'
             # Prepend Arduino.h + velxio_compat.h if not already included.
@@ -2088,7 +2192,7 @@ class ESPIDFCompiler:
         build_dir = project_dir / 'build'
         build_dir.mkdir(exist_ok=True)
 
-        env = self._build_env(idf_target)
+        env = self._build_env(idf_target, pure_idf=pure_idf)
 
         # Step 1: cmake configure
         cmake_cmd = [

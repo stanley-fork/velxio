@@ -20,6 +20,10 @@ export interface CompileExtras {
   // Sent as the ESP-IDF resolution SCOPE; null/omitted = legacy scan-all.
   // Ignored by the backend for non-ESP32 (arduino-cli) boards.
   libraries?: string[] | null;
+  // Pure ESP-IDF mode (issue #139): 'espidf' compiles the files as a pure
+  // ESP-IDF project (user app_main, no arduino-esp32 component). Omitted /
+  // undefined = classic Arduino sketch compile. ESP32 boards only.
+  language?: 'espidf';
 }
 
 export interface CompileResult {
@@ -113,6 +117,7 @@ export async function compileCode(
         board_options,
         spiffs_files,
         libraries,
+        language: extras?.language ?? null,
       },
       { withCredentials: true, timeout: 30000 },
     );
