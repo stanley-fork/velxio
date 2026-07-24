@@ -7,7 +7,7 @@ import { type VerificationResult } from '../../simulation/verify/circuitVerifier
 import { verifyCircuitFromStore } from '../../simulation/verify/verifyFromStore';
 import { CircuitVerificationModal } from '../simulator/CircuitVerificationModal';
 import type { BoardKind, LanguageMode } from '../../types/board';
-import { BOARD_KIND_FQBN, BOARD_SUPPORTS_MICROPYTHON, isPiBoardKind, boardDisplayName } from '../../types/board';
+import { BOARD_KIND_FQBN, BOARD_SUPPORTS_ESPIDF, BOARD_SUPPORTS_MICROPYTHON, isPiBoardKind, boardDisplayName } from '../../types/board';
 import { compileCode } from '../../services/compilation';
 import {
   compileRom,
@@ -588,6 +588,9 @@ export const EditorToolbar = ({
           // P2.4 — THIS board's declared manifest (compile scope). Per-board so
           // two boards can use different libraries without clashing.
           libraries: activeBoard?.libraries?.length ? activeBoard.libraries : null,
+          // Pure ESP-IDF mode (issue #139): tell the backend to compile the
+          // user's app_main() sources without the arduino-esp32 component.
+          language: activeBoard?.languageMode === 'espidf' ? 'espidf' : undefined,
         },
       );
 
@@ -1050,7 +1053,7 @@ export const EditorToolbar = ({
               })),
             ]);
           },
-          { boardOptions: board.boardOptions, spiffsFiles: board.spiffsFiles, libraries: board.libraries?.length ? board.libraries : null },
+          { boardOptions: board.boardOptions, spiffsFiles: board.spiffsFiles, libraries: board.libraries?.length ? board.libraries : null, language: board.languageMode === 'espidf' ? 'espidf' : undefined },
         );
 
         const resultLogs = parseCompileResult(result, label, boardTarget);
@@ -1354,9 +1357,11 @@ export const EditorToolbar = ({
     <>
       <div className="editor-toolbar-wrapper" style={{ position: 'relative' }}>
         <div className="editor-toolbar" ref={toolbarRef}>
-          {/* MicroPython language selector — only when active board supports it.
-              The board context pill that used to live here was removed: it
-              duplicated the BoardSelector dropdown elsewhere in the toolbar. */}
+          {/* Language selector — only when active board supports an
+              alternative to Arduino C++ (MicroPython on Pico/ESP32 boards,
+              pure ESP-IDF on the ESP32 family — issue #139). The board
+              context pill that used to live here was removed: it duplicated
+              the BoardSelector dropdown elsewhere in the toolbar. */}
           {activeBoard && BOARD_SUPPORTS_MICROPYTHON.has(activeBoard.boardKind) && (
             <select
               className="tb-lang-select"
@@ -1380,6 +1385,9 @@ export const EditorToolbar = ({
             >
               <option value="arduino">Arduino C++</option>
               <option value="micropython">MicroPython</option>
+              {BOARD_SUPPORTS_ESPIDF.has(activeBoard.boardKind) && (
+                <option value="espidf">ESP-IDF</option>
+              )}
             </select>
           )}
 
