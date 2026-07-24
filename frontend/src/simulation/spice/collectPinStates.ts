@@ -18,16 +18,23 @@ import { BOARD_PIN_GROUPS } from './boardPinGroups';
  * Convert a board pin name (e.g. "9", "A0", "GP26", "GPIO32") to the
  * Arduino-style pin number that PinManager uses internally.
  * Returns -1 if the name doesn't map to a GPIO pin.
+ *
+ * Exported so connectMcuEdgesToService can subscribe its MCU-edge
+ * listeners under the SAME name→pin mapping the netlist collector uses —
+ * a reverse mapping that disagrees (e.g. "GPIO2" vs the wire's "2")
+ * detaches every listener on resubscription and freezes LEDs mid-run.
  */
-function pinNameToArduinoPin(pinName: string, boardKind: BoardKind): number {
+export function pinNameToArduinoPin(pinName: string, boardKind: BoardKind): number {
   const group = BOARD_PIN_GROUPS[boardKind] ?? BOARD_PIN_GROUPS.default;
   if (group.gnd.includes(pinName) || group.vcc_pins.includes(pinName)) return -1;
-  if (pinName.startsWith('GP')) {
-    const n = parseInt(pinName.slice(2), 10);
-    return Number.isFinite(n) ? n : -1;
-  }
+  // 'GPIO' must be tested BEFORE 'GP': the GP branch used to shadow it,
+  // turning 'GPIO32' into parseInt('IO32') = NaN → -1 (dead branch).
   if (pinName.startsWith('GPIO')) {
     const n = parseInt(pinName.slice(4), 10);
+    return Number.isFinite(n) ? n : -1;
+  }
+  if (pinName.startsWith('GP')) {
+    const n = parseInt(pinName.slice(2), 10);
     return Number.isFinite(n) ? n : -1;
   }
   if (/^A\d+$/.test(pinName)) {
