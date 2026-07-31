@@ -212,11 +212,26 @@ class Esp32BridgeShim {
    * ESP32 ADC1: GPIO 36-39 → CH0-3, GPIO 32-35 → CH4-7
    * Returns true if the pin is a valid ADC pin.
    */
+  /** GPIO -> ADC channel for the bridge's board family. Classic ESP32:
+   * ADC1 on GPIO 36-39 (CH0-3) + 32-35 (CH4-7). ESP32-S3 family (incl.
+   * xiao-esp32-s3 and the S3-based arduino-nano-esp32): ADC1 = GPIO 1-10
+   * (CH0-9), ADC2 = GPIO 11-20 (stored at channel index 10-19, matching
+   * the machine's SENS stub). Without the S3 branch analogRead always saw
+   * 0 there (2026-07 emulation-gaps audit, F1). */
+  private adcChannelForPin(pin: number): number {
+    const kind = this.bridge.boardKind as string;
+    if (kind === 'esp32-s3' || kind === 'xiao-esp32-s3' || kind === 'arduino-nano-esp32') {
+      if (pin >= 1 && pin <= 10) return pin - 1;
+      if (pin >= 11 && pin <= 20) return 10 + (pin - 11);
+      return -1;
+    }
+    if (pin >= 36 && pin <= 39) return pin - 36; // GPIO 36→CH0 … 39→CH3
+    if (pin >= 32 && pin <= 35) return pin - 28; // GPIO 32→CH4 … 35→CH7
+    return -1;
+  }
+
   setAdcVoltage(pin: number, voltage: number): boolean {
-    let channel = -1;
-    if (pin >= 36 && pin <= 39)
-      channel = pin - 36; // GPIO 36→CH0, 37→CH1, 38→CH2, 39→CH3
-    else if (pin >= 32 && pin <= 35) channel = pin - 28; // GPIO 32→CH4, 33→CH5, 34→CH6, 35→CH7
+    const channel = this.adcChannelForPin(pin);
     if (channel < 0) return false;
     const millivolts = Math.round(voltage * 1000);
     this.bridge.setAdc(channel, millivolts);
@@ -232,9 +247,7 @@ class Esp32BridgeShim {
    * `samples` are 12-bit raw values (0-4095) aligned on a uniform grid.
    */
   setAdcWaveform(pin: number, samples: Uint16Array, periodNs: number): boolean {
-    let channel = -1;
-    if (pin >= 36 && pin <= 39) channel = pin - 36;
-    else if (pin >= 32 && pin <= 35) channel = pin - 28;
+    const channel = this.adcChannelForPin(pin);
     if (channel < 0) return false;
     this.bridge.setAdcWaveform(channel, samples, periodNs);
     return true;
