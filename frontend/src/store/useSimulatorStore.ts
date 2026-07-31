@@ -202,6 +202,17 @@ class Esp32BridgeShim {
   serialWrite(text: string): void {
     this.bridge.sendSerialBytes(Array.from(new TextEncoder().encode(text)));
   }
+  /**
+   * Feed bytes into a hardware UART's RX from an external part (GPS module,
+   * a wired peer board via Interconnect, …). Uniform seam across simulators
+   * (`sim.feedUart(uart, data)`). The backend QEMU worker routes the bytes
+   * into the requested UART (0 = Serial / GPIO3, 2 = Serial2 / GPIO16 on
+   * the classic ESP32 pinout).
+   */
+  feedUart(uart: number, data: string): boolean {
+    this.bridge.sendSerialBytes(Array.from(new TextEncoder().encode(data)), uart);
+    return true;
+  }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   getADC(): any {
     return null;
@@ -224,6 +235,12 @@ class Esp32BridgeShim {
       if (pin >= 1 && pin <= 10) return pin - 1;
       if (pin >= 11 && pin <= 20) return 10 + (pin - 11);
       return -1;
+    }
+    if (kind === 'esp32-c3' || kind === 'xiao-esp32-c3' || kind === 'aitewinrobot-esp32c3-supermini') {
+      // C3: ADC1 = GPIO0-4 -> CH0-4, GPIO5 (ADC2_CH0) -> index 5.
+      // Verified against the qemu SARADC: esp32_adc_set{channel:3} is what
+      // analogRead(3) returns (emulation-gaps harness, 2026-07-31).
+      return pin >= 0 && pin <= 5 ? pin : -1;
     }
     if (pin >= 36 && pin <= 39) return pin - 36; // GPIO 36→CH0 … 39→CH3
     if (pin >= 32 && pin <= 35) return pin - 28; // GPIO 32→CH4 … 35→CH7
@@ -606,12 +623,24 @@ function makeGpioRoutingClearHandler(boardId: string) {
 function makePinPullHandler(boardId: string) {
   return (gpio: number, pull: 0 | 1 | 2) => {
     // Record the internal pull so the netlist stamps a weak resistor
-    // (vcc_rail for pull-up, GND for pull-down) and request a re-solve. The
-    // digital read itself is driven from the solved circuit by
-    // connectDigitalInputsToMcu — we deliberately do NOT seed the pin directly
-    // here, because that would bypass the real wiring and re-introduce the
-    // "mis-wired button still works" bug.
-    pinManagerMap.get(boardId)?.setPinPull(gpio, pull);
+    // (vcc_rail for pull-up, GND for pull-down) and request a re-solve.
+    const pm = pinManagerMap.get(boardId);
+    pm?.setPinPull(gpio, pull);
+    // Seed the guest input to the pull's RESTING level immediately (real
+    // silicon raises the pad in nanoseconds). Two failure modes this
+    // closes (2026-07 audit): (a) the boot window before the first SPICE
+    // solve where INPUT_PULLUP read LOW and phantom-triggered buttons,
+    // and (b) an INPUT_PULLUP pin with NOTHING wired — no net in
+    // pinNetMap, so connectDigitalInputsToMcu never drives it and the
+    // guest read 0 forever. On wired+sourced nets the connector overrides
+    // with the solved level right after, so the "mis-wired button still
+    // works" bug does NOT come back: the solve remains authoritative.
+    if (pull !== 0 && !(pm?.getOutputPins().has(gpio))) {
+      const sim = simulatorMap.get(boardId) as
+        | { setPinState?: (pin: number, state: boolean) => void }
+        | undefined;
+      sim?.setPinState?.(gpio, pull === 1);
+    }
     requestElectricalResolve();
   };
 }
@@ -659,6 +688,16 @@ class Stm32BridgeShim {
   /** Drive a GPIO input from a part. `pin` is the linear pin (port*16+pin). */
   setPinState(pin: number, state: boolean): void {
     this.bridge.sendPinEvent(pin, state);
+  }
+
+  /**
+   * Feed bytes into a hardware USART's RX from an external part (GPS module,
+   * a wired peer board via Interconnect, …). Uniform seam across simulators
+   * (`sim.feedUart(uart, data)`). uart 0 = USART1 (PA10 RX), 1 = USART2 (PA3).
+   */
+  feedUart(uart: number, data: string): boolean {
+    this.bridge.sendSerialBytes(Array.from(new TextEncoder().encode(data)), uart);
+    return true;
   }
 
   // ── Generic sensor registration (delegated to the backend QEMU worker) ──

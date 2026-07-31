@@ -766,7 +766,10 @@ class ESPIDFCompiler:
         if not arch:
             return True
         arches = {a.strip().lower() for a in arch.split(',') if a.strip()}
-        return '*' in arches or self._ESP32_LIB_ARCH in arches
+        # 'all' is a common non-spec synonym for '*' (e.g. LiquidCrystal_I2C
+        # 2.0.0 declares architectures=all) — treating it as unknown skipped
+        # the most popular I2C LCD library on every ESP32 build (issue #257).
+        return '*' in arches or 'all' in arches or self._ESP32_LIB_ARCH in arches
 
     @staticmethod
     def _norm_lib_name(name: str) -> str:
@@ -928,6 +931,14 @@ class ESPIDFCompiler:
         found_any = False
 
         headers_to_resolve: list[str] = list(ext_headers)
+        # Headers the SKETCH itself includes (vs transitive pulls found by
+        # re-scanning copied library headers). The architecture guard is
+        # advisory for these: the user explicitly asked for the library, and
+        # many AVR-declared libs are pure Wire/SPI code that compiles fine on
+        # ESP32 — skipping them produced a bare "No such file or directory"
+        # (issue #257). Transitive pulls keep the HARD guard: that is the
+        # path that dragged SAMD-only Adafruit_ZeroDMA into ESP32 builds.
+        direct_headers: set[str] = set(ext_headers)
         resolved_headers: set[str] = set()
 
         while headers_to_resolve:
@@ -974,11 +985,20 @@ class ESPIDFCompiler:
             if src_root is not None:
                 _lib_root = src_root.parent if src_root.name == 'src' else src_root
                 if not self._library_supports_esp32(_lib_root):
-                    logger.warning(
-                        f'[espidf] <{header}> resolved to "{_lib_root.name}" but its '
-                        f'library.properties architectures exclude esp32 — skipping'
-                    )
-                    src_root = None
+                    if header in direct_headers:
+                        logger.warning(
+                            f'[espidf] <{header}> resolved to "{_lib_root.name}" whose '
+                            f'library.properties architectures exclude esp32 — merging '
+                            f'anyway because the sketch includes it directly (a real '
+                            f'compile error beats "No such file")'
+                        )
+                    else:
+                        logger.warning(
+                            f'[espidf] <{header}> resolved to "{_lib_root.name}" but its '
+                            f'library.properties architectures exclude esp32 — skipping '
+                            f'(transitive pull, not included by the sketch)'
+                        )
+                        src_root = None
 
             # Tracks the "resolved to a core lib that's already compiled into
             # the arduino-esp32 component" case, so we don't fall through to

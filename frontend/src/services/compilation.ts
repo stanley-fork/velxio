@@ -24,6 +24,9 @@ export interface CompileExtras {
   // ESP-IDF project (user app_main, no arduino-esp32 component). Omitted /
   // undefined = classic Arduino sketch compile. ESP32 boards only.
   language?: 'espidf';
+  // Who triggered the compile — 'agent' when the AI assistant's tool did.
+  // Threads through to backend metrics; omitted = manual user action.
+  initiatedBy?: 'agent';
 }
 
 export interface CompileResult {
@@ -118,6 +121,7 @@ export async function compileCode(
         spiffs_files,
         libraries,
         language: extras?.language ?? null,
+        initiated_by: extras?.initiatedBy ?? null,
       },
       { withCredentials: true, timeout: 30000 },
     );

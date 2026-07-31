@@ -181,6 +181,10 @@ class CompileRequest(BaseModel):
     # the arduino-esp32 component is left out of the build entirely. None /
     # 'arduino' = classic Arduino sketch compile. ESP32 boards only.
     language: str | None = None
+    # Who triggered this compile: None/'user' = manual UI action,
+    # 'agent' = the AI assistant's compile_sketch tool. Metrics overlays
+    # use it to keep agent activity distinguishable from the user's own.
+    initiated_by: str | None = None
 
 
 class CompileResponse(BaseModel):
@@ -509,6 +513,7 @@ async def _compile_job(
                 "file_count": len(files),
                 "has_wifi": response.has_wifi,
                 "async": True,
+                "initiated_by": request.initiated_by,
                 "partition_scheme": (request.board_options or {}).get("partitionScheme"),
                 "spiffs_file_count": len(request.spiffs_files or []),
             },
@@ -530,7 +535,7 @@ async def _compile_job(
             success=False,
             duration_ms=int((time.monotonic() - started) * 1000),
             error_kind="exception",
-            extra={"file_count": len(files), "exception": str(exc)[:200], "async": True},
+            extra={"file_count": len(files), "exception": str(exc)[:200], "async": True, "initiated_by": request.initiated_by},
         )
 
 
@@ -563,7 +568,7 @@ async def compile_sketch(
             success=False,
             duration_ms=int((time.monotonic() - started) * 1000),
             error_kind="exception",
-            extra={"file_count": len(files), "exception": str(e)[:200]},
+            extra={"file_count": len(files), "exception": str(e)[:200], "initiated_by": request.initiated_by},
             request=http_request,
         )
         raise HTTPException(status_code=500, detail=str(e))
@@ -579,6 +584,7 @@ async def compile_sketch(
         extra={
             "file_count": len(files),
             "has_wifi": response.has_wifi,
+            "initiated_by": request.initiated_by,
             "partition_scheme": (request.board_options or {}).get("partitionScheme"),
             "spiffs_file_count": len(request.spiffs_files or []),
         },

@@ -19,7 +19,10 @@ export async function verifyCircuitFromStore(): Promise<VerificationResult | nul
     const sim = useSimulatorStore.getState();
     // Skip if the circuit hasn't got anything analysable on it yet.
     const hasSource = sim.components.some(
-      (c) => c.metadataId.startsWith('signal-generator') || c.metadataId.startsWith('battery'),
+      (c) =>
+        c.metadataId.startsWith('signal-generator') ||
+        c.metadataId.startsWith('battery') ||
+        c.metadataId.startsWith('power-supply'),
     );
     if (!hasSource && sim.boards.length === 0) return null;
 

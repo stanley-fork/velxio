@@ -185,9 +185,19 @@ export class PinManager {
    * IO_MUX / pad config): 0 = none, 1 = pull-up, 2 = pull-down. The SPICE
    * collector reads this back via `getPinPull` to stamp a weak resistor.
    */
+  /** Fired on pull-state TRANSITIONS (not repeats). Simulators use it to
+   * seed the pin input to the pull's resting level the moment the firmware
+   * enables it — closing the boot window where INPUT_PULLUP read LOW until
+   * the first SPICE solve (~400 ms): 8/8 setup() reads plus the first two
+   * loop() passes returned 0 in the deterministic repro, which is exactly
+   * the phantom emergency-stop latch of the 2026-07 audit. */
+  onPullChange: ((pin: number, pull: 0 | 1 | 2) => void) | null = null;
+
   setPinPull(pin: number, pull: 0 | 1 | 2): void {
+    const prev = this.pinPulls.get(pin) ?? 0;
     if (pull === 0) this.pinPulls.delete(pin);
     else this.pinPulls.set(pin, pull);
+    if (prev !== pull) this.onPullChange?.(pin, pull);
   }
 
   /** Internal pull config for a pin: 0 = none, 1 = pull-up, 2 = pull-down. */
