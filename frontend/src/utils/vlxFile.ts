@@ -53,6 +53,8 @@ export interface VlxPayload {
     activeFileGroupId: string;
     languageMode?: string;
     serialBaudRate?: number;
+    /** Declared library manifest (compile scope). Absent in old files. */
+    libraries?: string[];
   }>;
   fileGroups: Record<string, Array<{ name: string; content: string }>>;
   components: Component[];
@@ -70,6 +72,10 @@ function serialisableBoard(b: BoardInstance) {
     activeFileGroupId: b.activeFileGroupId,
     languageMode: b.languageMode,
     serialBaudRate: b.serialBaudRate,
+    // The declared manifest must survive the .vlx round-trip: dropping it
+    // silently reverted re-imported projects to scan-all resolution
+    // (2026-08 library-contamination investigation).
+    libraries: b.libraries,
   };
 }
 

@@ -39,6 +39,11 @@ export interface CompileResult {
   stderr: string;
   error?: string;
   core_install_log?: string;
+  /** P2.4 — the manifest is missing libraries the build really used. */
+  manifest_incomplete?: boolean;
+  /** { header: [candidate library display names] } — single-candidate
+   * entries are safe to auto-declare (see utils/libraryManifest.ts). */
+  manifest_suggested_libraries?: Record<string, string[]> | null;
 }
 
 interface CompileStartResponse {

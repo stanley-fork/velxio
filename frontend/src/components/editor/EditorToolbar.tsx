@@ -22,6 +22,7 @@ import { reportRunEvent } from '../../services/metricsService';
 import { useProjectStore } from '../../store/useProjectStore';
 import { LibraryManagerModal } from '../simulator/LibraryManagerModal';
 import { InstallLibrariesModal } from '../simulator/InstallLibrariesModal';
+import { mergeSuggestedLibraries } from '../../utils/libraryManifest';
 import { parseCompileResult } from '../../utils/compilationLogger';
 import type { CompilationLog, CompileTarget } from '../../utils/compilationLogger';
 import { exportToWokwiZip } from '../../utils/wokwiZip';
@@ -607,6 +608,18 @@ export const EditorToolbar = ({
           compileBoardProgram(activeBoardId, program);
           if (result.has_wifi !== undefined) {
             updateBoard(activeBoardId, { hasWifi: result.has_wifi });
+          }
+          // P2.4 auto-migration: a green build reports the libraries it
+          // really used; fold single-candidate ones into this board's
+          // declared manifest so the NEXT compile runs scoped instead of
+          // scan-all (the mode where unrelated libraries could leak in).
+          const mergedLibs = mergeSuggestedLibraries(
+            activeBoard?.libraries,
+            result.manifest_suggested_libraries,
+          );
+          if (mergedLibs) {
+            updateBoard(activeBoardId, { libraries: mergedLibs });
+            console.log('[manifest] auto-declared from build:', mergedLibs);
           }
         }
         setMessage({ type: 'success', text: 'Compiled successfully' });

@@ -171,3 +171,43 @@ class TestManifestScope(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestGenericHeaderCollision(unittest.TestCase):
+    """Issue reported 2026-08-03 (nikas79): ESPAsyncWebServer includes
+    <Hash.h> (an ESP8266-core header) and the global scan resolved it to a
+    hexapod-robot library that happens to ship src/Hash.h. The whole library
+    was merged and its unrelated sources broke every ESP32 build with
+    'fatal error: SoftwareSerial.h' and friends."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_generic_platform_header_never_resolves_to_a_user_lib(self):
+        ulibs = self.tmp / "Arduino" / "libraries"
+        # A library with a generic Hash.h, exactly like stemi-hexapod.
+        _mk(ulibs / "stemihexapod" / "library.properties",
+            "name=stemi-hexapod\narchitectures=esp32\n")
+        _mk(ulibs / "stemihexapod" / "src" / "Hash.h")
+        _mk(ulibs / "stemihexapod" / "src" / "Serial.cpp",
+            '#include <SoftwareSerial.h>\n')
+
+        c = ESPIDFCompiler()
+        c.arduino_path = ""
+        c._core_headers_cache = None
+        out = self.tmp / "project" / "user_libs"
+        out.mkdir(parents=True)
+
+        _names, hdr2comp = c._resolve_library_components(
+            ["Hash.h", "Server.h", "Serial.h"],
+            arduino_libs=ulibs, esp32_libs=None,
+            arduino_comp_name="arduino-esp32", user_libs_dir=out,
+        )
+        for header in ("Hash.h", "Server.h", "Serial.h"):
+            self.assertNotIn(header, hdr2comp, f"{header} must stay core-provided")
+        copied = [p.name for p in out.rglob("*") if p.is_file()]
+        self.assertNotIn("Serial.cpp", copied,
+                         "the unrelated library must NOT be merged")

@@ -693,6 +693,20 @@ class ESPIDFCompiler:
         'Udp.h', 'IPAddress.h', 'Client.h', 'Server.h', 'Stream.h',
         'Print.h', 'Printable.h', 'WiFiUdp.h', 'WiFiClient.h',
         'WiFiServer.h', 'WiFiType.h', 'esp_wifi.h',
+        # Platform headers that do NOT exist in the arduino-esp32 core, so
+        # the core-tree scan can't discover them, yet carry names generic
+        # enough that some random installed library owns a file by that
+        # name. Resolving one drags that whole library into user_libs_all
+        # and its sources then fail on THEIR own missing includes.
+        #
+        # Reported 2026-08-03 (nikas79): ESPAsyncWebServer includes <Hash.h>
+        # (an ESP8266-core header, guarded for that platform) and the global
+        # scan resolved it to `stemihexapod/src/Hash.h` — a hexapod-robot
+        # library — whose Serial.cpp / Hash.cpp / Server.cpp /
+        # BluetoothLowEnergy.cpp / ExpansionDriver.cpp then broke every
+        # ESP32 build with errors naming libraries the user never installed.
+        'Hash.h', 'Serial.h', 'HardwareSerial.h', 'WString.h',
+        'WCharacter.h', 'binary.h', 'pins_arduino.h', 'Esp.h',
     })
 
     # arduino-esp32 uses a single library architecture id ("esp32") across
@@ -880,6 +894,7 @@ class ESPIDFCompiler:
         arduino_comp_name: str,
         user_libs_dir: Path,
         allowed_libraries: set[str] | None = None,
+        merged_libs: dict[str, str] | None = None,
     ) -> tuple[list[str], dict[str, str]]:
         """
         BFS over ext_headers (and transitive includes) to discover all external
@@ -1025,6 +1040,14 @@ class ESPIDFCompiler:
                 logger.info(f'[espidf] Merging "{lib_dir_name}" into user_libs_all for <{header}>')
                 found_any = True
                 header_to_comp[header] = 'user_libs_all'
+                if merged_libs is not None:
+                    # Report the DISPLAY name (library.properties name=, the
+                    # one the Library Manager shows) so the frontend can
+                    # auto-declare it in the project manifest. Cache folder
+                    # names carry a @version-hash suffix — strip it.
+                    _lib_root = src_root.parent if src_root.name == 'src' else src_root
+                    _props_name = self._parse_library_properties(_lib_root).get('name', '')
+                    merged_libs[header] = _props_name or lib_dir_name.split('@', 1)[0]
 
                 # Preserve directory structure while merging libraries.
                 # Skip non-buildable directories like examples, tests, docs.
@@ -1123,10 +1146,104 @@ class ESPIDFCompiler:
         )
         return ['user_libs_all'], header_to_comp
 
+    # Platform macros we can decide with certainty when scanning a source
+    # for #include directives. Everything NOT listed here is unknown, and an
+    # expression mentioning an unknown identifier is treated as LIVE — the
+    # scanner must never hide a header the compiler will really need.
+    _PP_TRUE = frozenset({
+        'ESP32', 'ESP_PLATFORM', 'ARDUINO_ARCH_ESP32',
+    })
+    _PP_FALSE = frozenset({
+        'ESP8266', 'ARDUINO_ARCH_ESP8266', '__AVR__', 'ARDUINO_ARCH_AVR',
+        'ARDUINO_ARCH_SAMD', 'ARDUINO_ARCH_SAM', 'ARDUINO_ARCH_STM32',
+        'ARDUINO_ARCH_RENESAS', 'ARDUINO_ARCH_RP2040', 'ARDUINO_ARCH_MBED',
+        'TARGET_RP2040', 'TARGET_RP2350', 'PICO_RP2040', 'PICO_RP2350',
+        'CORE_TEENSY', '__MBED__', '__SAMD51__', '__SAM3X8E__',
+        'ARDUINO_ARCH_NRF52', 'NRF52', 'TARGET_ESP8266',
+    })
+    _PP_IDENT_RE = re.compile(r'[A-Za-z_][A-Za-z_0-9]*')
+    _PP_COMMENT_BLOCK_RE = re.compile(r'/\*.*?\*/', re.DOTALL)
+    _PP_COMMENT_LINE_RE = re.compile(r'//[^\n]*')
+
+    def _pp_branch_is_live(self, expr: str) -> bool:
+        """Best-effort evaluation of a #if / #elif condition.
+
+        Returns False ONLY when every identifier in the expression is a
+        platform macro we know is undefined on ESP32 (so the branch is
+        provably dead here). Anything else — unknown macros, arithmetic,
+        version checks — is reported LIVE. Being wrong in the LIVE
+        direction only costs us the old behaviour; being wrong the other
+        way would hide a genuinely needed library.
+        """
+        idents = [
+            i for i in self._PP_IDENT_RE.findall(expr)
+            if i not in ('defined', 'ifdef', 'ifndef')
+        ]
+        if not idents:
+            return True
+        if any(i in self._PP_TRUE for i in idents):
+            return True
+        # Dead only when we recognise EVERY identifier as false-on-ESP32.
+        return not all(i in self._PP_FALSE for i in idents)
+
     def _detect_external_includes(self, code: str) -> list[str]:
-        """Return library header names that are likely from external libraries."""
-        headers = []
-        for m in re.finditer(r'#\s*include\s*<([^>]+)>', code):
+        """Library header names an ESP32 build could really need.
+
+        Preprocessor-aware: includes that only exist inside a branch which
+        is provably dead on ESP32 are skipped. Without this, the scanner
+        reported headers the compiler never sees, and each one was resolved
+        against the ~1000 installed libraries — dragging an unrelated
+        library (and ALL of its sources) into user_libs_all.
+
+        The canonical break, reported 2026-08-03: ESPAsyncWebServer has
+        `#if defined(ESP8266) ... #include <Hash.h> ... #endif`. Hash.h was
+        resolved to stemi-hexapod's src/Hash.h (a hexapod-robot library),
+        whose Serial.cpp / Server.cpp / BluetoothLowEnergy.cpp then failed
+        on their own missing includes, breaking every ESP32 build in that
+        project with errors naming libraries the user never installed.
+        """
+        # Comments first: a commented-out include is not an include.
+        code = self._PP_COMMENT_BLOCK_RE.sub(' ', code)
+        code = self._PP_COMMENT_LINE_RE.sub(' ', code)
+
+        headers: list[str] = []
+        # Stack of (this_branch_live, any_branch_taken_yet) per #if nesting.
+        stack: list[tuple[bool, bool]] = []
+        for raw in code.splitlines():
+            line = raw.strip()
+            if line.startswith('#'):
+                dtv = line[1:].lstrip()
+                if dtv.startswith(('ifdef', 'ifndef', 'if ', 'if(')):
+                    if dtv.startswith('ifdef'):
+                        live = self._pp_branch_is_live(dtv[5:])
+                    elif dtv.startswith('ifndef'):
+                        # #ifndef X is live unless X is known-defined here.
+                        idents = self._PP_IDENT_RE.findall(dtv[6:])
+                        live = not any(i in self._PP_TRUE for i in idents)
+                    else:
+                        live = self._pp_branch_is_live(dtv[2:])
+                    stack.append((live, live))
+                    continue
+                if dtv.startswith('elif'):
+                    if stack:
+                        _cur, taken = stack[-1]
+                        live = (not taken) and self._pp_branch_is_live(dtv[4:])
+                        stack[-1] = (live, taken or live)
+                    continue
+                if dtv.startswith('else'):
+                    if stack:
+                        _cur, taken = stack[-1]
+                        stack[-1] = (not taken, True)
+                    continue
+                if dtv.startswith('endif'):
+                    if stack:
+                        stack.pop()
+                    continue
+            if not all(live for live, _ in stack):
+                continue  # inside a branch that is dead on ESP32
+            m = re.search(r'#\s*include\s*<([^>]+)>', line)
+            if not m:
+                continue
             h = m.group(1)
             if h in self._BUILTIN_HEADERS:
                 continue
@@ -1141,16 +1258,56 @@ class ESPIDFCompiler:
 
     def _find_library_for_header(self, header: str, libs_dir: Path) -> Path | None:
         """
-        Search libs_dir for a library that provides `header`.
-        Returns the source root of the library (root or src/ subdirectory).
+        Search libs_dir for a library that provides `header`, preferring the
+        best-named candidate instead of the first alphabetical one.
+
+        First-alphabetical was how <Servo.h> (6 providers in the live cache)
+        could resolve to a random lib that merely ships a same-named file,
+        and how generic headers landed on unrelated libraries. Scoring:
+
+          +100  normalized library name == normalized header stem
+                ("Servo.h" -> the lib actually named Servo/ESP32Servo...)
+           +40  library.properties architectures lists esp32 explicitly
+                (purpose-built beats a wildcard/absent declaration)
+           +20  library name CONTAINS the header stem, minus a length
+                penalty so "servo" outranks "simpleservoesp32"
+
+        Alphabetical remains the final tie-break so resolution stays
+        deterministic. Libraries with score 0 still resolve (legacy
+        behaviour) — this only changes WHICH provider wins when several
+        exist.
         """
+        stem = self._norm_lib_name(Path(header).stem)
+        best: tuple[float, str, Path] | None = None
         for lib_dir in sorted(libs_dir.iterdir()):
             if not lib_dir.is_dir():
                 continue
-            for src_root in [lib_dir, lib_dir / 'src']:
-                if (src_root / header).exists():
-                    return src_root
-        return None
+            src_root = None
+            for cand in (lib_dir, lib_dir / 'src'):
+                if (cand / header).exists():
+                    src_root = cand
+                    break
+            if src_root is None:
+                continue
+            # Folder names in the shared cache look like "esp32servo@3.2.1-<hash>"
+            # — strip the version suffix before comparing.
+            folder = lib_dir.name.split('@', 1)[0]
+            props = self._parse_library_properties(lib_dir)
+            names = {self._norm_lib_name(folder)}
+            if props.get('name'):
+                names.add(self._norm_lib_name(props['name']))
+            score = 0.0
+            if stem and stem in names:
+                score += 100
+            arch = {a.strip().lower() for a in props.get('architectures', '').split(',') if a.strip()}
+            if self._ESP32_LIB_ARCH in arch:
+                score += 40
+            if stem and score < 100 and any(stem in n for n in names if n):
+                shortest = min((len(n) for n in names if stem in n), default=0)
+                score += max(5.0, 20.0 - (shortest - len(stem)) * 0.5)
+            if best is None or score > best[0]:
+                best = (score, lib_dir.name, src_root)
+        return best[2] if best else None
 
     def _create_idf_component(
         self,
@@ -2155,6 +2312,12 @@ class ESPIDFCompiler:
                     )
             ext_headers = list(ext_headers_set)
             component_names: list[str] = []
+            # header -> display name of the library the resolver merged for
+            # it. Fed back to the client on scan-all success so the project
+            # manifest can be auto-completed (79% of projects compile with an
+            # empty manifest today; this migrates them one green build at a
+            # time instead of ever breaking them).
+            merged_libs_report: dict[str, str] = {}
             # arduino-esp32 component name (directory basename of ARDUINO_ESP32_PATH)
             arduino_comp_name = Path(self.arduino_path).name if self.arduino_path else 'arduino-esp32'
 
@@ -2174,6 +2337,7 @@ class ESPIDFCompiler:
                     ext_headers, arduino_libs, esp32_libs,
                     arduino_comp_name, user_libs_dir,
                     allowed_libraries=allowed_libraries,
+                    merged_libs=merged_libs_report,
                 )
 
             # Patch main/CMakeLists.txt — REQUIRES and INCLUDE_DIRS for user_libs_all.
@@ -2414,7 +2578,7 @@ class ESPIDFCompiler:
         binary_b64 = base64.b64encode(merged_path.read_bytes()).decode('ascii')
         logger.info(f'[espidf] Compilation successful — {len(binary_b64) // 1024} KB (base64), has_wifi={has_wifi}')
 
-        return {
+        result_ok: dict = {
             'success': True,
             'hex_content': None,
             'binary_content': binary_b64,
@@ -2423,6 +2587,16 @@ class ESPIDFCompiler:
             'stdout': all_stdout,
             'stderr': all_stderr,
         }
+        # Scan-all build (no manifest): tell the client exactly which
+        # libraries the build really used, shaped like the existing
+        # manifest_suggested_libraries ({header: [candidates]}) so one
+        # consumer handles both this and the incomplete-manifest retry.
+        if allowed_libraries is None and merged_libs_report:
+            result_ok['manifest_incomplete'] = True
+            result_ok['manifest_suggested_libraries'] = {
+                h: [name] for h, name in merged_libs_report.items()
+            }
+        return result_ok
 
 
 # Singleton instance
