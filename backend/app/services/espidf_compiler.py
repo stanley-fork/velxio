@@ -2216,6 +2216,12 @@ class ESPIDFCompiler:
         # We normalize ANY user SSID → "Velxio-GUEST", enforce channel 6,
         # and use open auth (empty password) so the connection always works.
         # Detect WiFi BEFORE normalization so the flag reflects the original sketch.
+        # header -> display name of the library the resolver merged for it.
+        # Declared at function scope: the success return reads it for EVERY
+        # build mode, but only the Arduino-sketch branch fills it. Declaring
+        # it inside that branch broke pure ESP-IDF compiles with
+        # UnboundLocalError at the result step (2026-08-05 regression).
+        merged_libs_report: dict[str, str] = {}
         if pure_idf:
             _all_text = '\n'.join(f.get('content', '') for f in files)
             has_wifi = self._detect_idf_wifi_usage(_all_text)
@@ -2312,12 +2318,10 @@ class ESPIDFCompiler:
                     )
             ext_headers = list(ext_headers_set)
             component_names: list[str] = []
-            # header -> display name of the library the resolver merged for
-            # it. Fed back to the client on scan-all success so the project
-            # manifest can be auto-completed (79% of projects compile with an
-            # empty manifest today; this migrates them one green build at a
-            # time instead of ever breaking them).
-            merged_libs_report: dict[str, str] = {}
+            # merged_libs_report (function scope) is fed back to the client
+            # on scan-all success so the project manifest can be
+            # auto-completed (79% of projects compile with an empty manifest
+            # today; this migrates them one green build at a time).
             # arduino-esp32 component name (directory basename of ARDUINO_ESP32_PATH)
             arduino_comp_name = Path(self.arduino_path).name if self.arduino_path else 'arduino-esp32'
 
