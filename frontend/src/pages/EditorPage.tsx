@@ -20,7 +20,7 @@ import { Oscilloscope } from '../components/simulator/Oscilloscope';
 import { AppHeader } from '../components/layout/AppHeader';
 import { triggerSaveAction } from '../lib/proSaveAction';
 import { GitHubStarBanner } from '../components/layout/GitHubStarBanner';
-import { NewsModal } from '../components/layout/NewsModal';
+import { NewsAnnouncer } from '../components/layout/NewsAnnouncer';
 import { useSimulatorStore } from '../store/useSimulatorStore';
 import { useEditorStore } from '../store/useEditorStore';
 import { useCompileLogsStore } from '../store/useCompileLogsStore';
@@ -758,7 +758,7 @@ export const EditorPage: React.FC = () => {
           round={starRound}
         />
       )}
-      <NewsModal />
+      <NewsAnnouncer />
       <NewProjectDialog
         isOpen={showNewProjectDialog}
         onClose={() => setShowNewProjectDialog(false)}

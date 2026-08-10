@@ -433,5 +433,11 @@
         "privateHint": "Nur du kannst dieses Projekt sehen."
       }
     }
+  },
+  "news": {
+    "kicker": "Neuigkeiten",
+    "readMore": "Mehr erfahren",
+    "gotIt": "Verstanden",
+    "close": "Schließen"
   }
 }

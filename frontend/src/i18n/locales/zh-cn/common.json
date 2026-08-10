@@ -433,5 +433,11 @@
         "privateHint": "只有你能看到此项目。"
       }
     }
+  },
+  "news": {
+    "kicker": "最新动态",
+    "readMore": "了解更多",
+    "gotIt": "知道了",
+    "close": "关闭"
   }
 }

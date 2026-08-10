@@ -49,7 +49,10 @@ interface NewProjectDialogProps {
 const BOARD_BLURBS: Record<string, string> = {
   'arduino-uno': '8-bit AVR, 32KB flash, 14 digital I/O',
   'arduino-mega': '8-bit AVR, 256KB flash, 54 digital I/O',
+  'arduino-nano': '8-bit AVR, 32KB flash, breadboard-size Uno',
+  'arduino-nano-esp32': 'ESP32-S3 in the Nano footprint, WiFi+BT (QEMU)',
   esp32: 'Xtensa LX6 dual-core, WiFi+BT, 38 GPIO (QEMU)',
+  'esp32-cam': 'ESP32 + OV2640 camera, streams to LCD (QEMU)',
   'xiao-esp32-s3': 'Seeed XIAO tiny form, 8MB flash+PSRAM (QEMU)',
   'xiao-esp32-c3': 'Seeed XIAO ESP32-C3 mini board (QEMU)',
   'stm32-bluepill': 'STM32F103C8 Cortex-M3, 64KB flash, 37 GPIO (QEMU)',
@@ -128,6 +131,10 @@ export function clearWorkspaceForStarter(): void {
 const PREFERRED_BLINK_EXAMPLE: Record<string, string> = {
   'arduino-uno': 'blink-led',
   'arduino-mega': 'mega-blink',
+  'arduino-nano': 'nano-blink',
+  // Camera board: the webcam demo IS its "blink" — the board exists to
+  // show the sensor, a bare LED sketch would be a misleading first run.
+  'esp32-cam': 'esp32cam-webcam-demo',
   esp32: 'esp32-blink-led',
   'esp32-s3': 'esp32s3-blink-led',
   'esp32-c3': 'c3-blink',
@@ -227,13 +234,22 @@ export const NewProjectDialog: React.FC<NewProjectDialogProps> = ({ isOpen, onCl
       return d ? [{ kind: d.kind, blurb: d.description }] : [];
     };
     return [
-      { title: 'Arduino', entries: [oss('arduino-uno'), oss('arduino-mega')] },
+      {
+        title: 'Arduino',
+        entries: [
+          oss('arduino-uno'),
+          oss('arduino-mega'),
+          oss('arduino-nano'),
+          oss('arduino-nano-esp32'),
+        ],
+      },
       // One card per ESP32 chip generation, XIAO variant preferred where
       // Seeed makes one: classic → DevKit V1, S3/C3 → XIAO, C6 → XIAO (overlay).
       {
         title: 'ESP32',
         entries: [
           oss('esp32'),
+          oss('esp32-cam'),
           oss('xiao-esp32-s3'),
           oss('xiao-esp32-c3'),
           ...pro('xiao-esp32c6'),

@@ -286,7 +286,13 @@ export const SerialMonitor: React.FC = () => {
               // ESP32 (QEMU slirp) hands out 192.168.4.x; the Pico W virtual
               // net hands out 10.13.37.x. Both reach their emulated server
               // through the same /api/gateway proxy, so linkify either subnet.
-              const ipRegex = /http:\/\/(?:192\.168\.4|10\.13\.37)\.(\d+)(\/[^\s]*)?/g;
+              // The http:// prefix is OPTIONAL: Arduino sketches tend to print
+              // full URLs, but MicroPython's idiom is the bare ifconfig()[0]
+              // ("Open: 192.168.4.15") — requiring the scheme left exactly
+              // those users with a dead-end IP that is unreachable outside
+              // the emulated network. The trailing dot-check keeps a longer
+              // address like 192.168.4.15.99 from half-matching.
+              const ipRegex = /(?:http:\/\/)?(?:192\.168\.4|10\.13\.37)\.(\d{1,3})(?!\d|\.\d)(\/[^\s]*)?/g;
               const matches = [...text.matchAll(ipRegex)];
 
               if (matches.length > 0) {

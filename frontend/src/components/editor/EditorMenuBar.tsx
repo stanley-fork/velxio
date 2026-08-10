@@ -35,7 +35,20 @@ import {
 import './EditorMenuBar.css';
 
 type Item =
-  | { kind: 'command'; id: EditorCommandId; label: string; shortcut?: string; pro?: boolean }
+  | {
+      kind: 'command';
+      id: EditorCommandId;
+      label: string;
+      shortcut?: string;
+      pro?: boolean;
+      /** Hide the row entirely when no handler is registered, instead of
+       *  the default "render disabled". For account-scoped items the
+       *  absence of a handler is not "temporarily unavailable" but "does
+       *  not apply here": OSS has no accounts at all, and in pro exactly
+       *  one of Sign in / My projects is meaningful at a time. A greyed-out
+       *  "My projects" would read as a broken feature in both. */
+      optional?: boolean;
+    }
   | { kind: 'link'; href: string; label: string }
   | { kind: 'separator' };
 
@@ -90,6 +103,15 @@ export const EditorMenuBar: React.FC = () => {
     { kind: 'command', id: 'project.new', label: t('editor.menu.newProject', 'New workspace') },
     { kind: 'command', id: 'file.new', label: t('editor.menu.newFile', 'New file') },
     { kind: 'separator' },
+    // Third item, and deliberately at the head of the project group rather
+    // than tacked onto the "new …" pair above: it opens the user's saved
+    // work, which is what Open/Save below are about.
+    {
+      kind: 'command',
+      id: 'account.myProjects',
+      label: t('header.auth.myProjects', 'My projects'),
+      optional: true,
+    },
     { kind: 'command', id: 'project.open', label: t('editor.menu.open', 'Open project…') },
     {
       kind: 'command',
@@ -116,7 +138,34 @@ export const EditorMenuBar: React.FC = () => {
     { kind: 'command', id: 'sim.record', label: t('editor.toolbar.recordLabel', 'Record simulation'), pro: true },
   ];
 
+  // Sign in / My projects for the Account menu. The bottom-left account
+  // dropdown gets these from its own (pro) markup; this menubar only ever
+  // hosted the shared `user-menu` slot, which is why the editor's Account
+  // menu had no way in or out of a session.
+  const accountItems: Item[] = [
+    {
+      kind: 'command',
+      id: 'account.myProjects',
+      label: t('header.auth.myProjects', 'My projects'),
+      optional: true,
+    },
+    {
+      kind: 'command',
+      id: 'account.login',
+      label: t('header.auth.signIn', 'Sign in'),
+      optional: true,
+    },
+  ];
+
   const helpItems: Item[] = [
+    // Only present once a post has been delivered — the announcement is a
+    // toast now, and this is how it stays reachable after it retires.
+    {
+      kind: 'command',
+      id: 'help.whatsNew',
+      label: t('news.kicker', "What's new"),
+      optional: true,
+    },
     { kind: 'link', href: `${SITE}/docs`, label: t('header.nav.documentation', 'Documentation') },
     { kind: 'link', href: '/examples', label: t('header.nav.examples', 'Examples') },
     { kind: 'link', href: `${SITE}/pricing`, label: t('header.nav.pricing', 'Pricing') },
@@ -224,6 +273,16 @@ export const EditorMenuBar: React.FC = () => {
           )}
           {which === 'account' && (
             <>
+              {/* Session entry points, above the pro extras. Exactly one of
+                  the two is registered at a time (pro registers by session
+                  state) and neither exists in OSS, so this block renders
+                  nothing in an OSS build. */}
+              {accountItems
+                .filter((item) => item.kind !== 'command' || hasEditorCommand(item.id))
+                .map((item) => (item.kind === 'command' ? renderCommand(item) : null))}
+              {accountItems.some(
+                (item) => item.kind === 'command' && hasEditorCommand(item.id),
+              ) && <div className="emb-separator" />}
               {/* Pro account items (PRO badge, Subscribe / Manage
                   subscription, licenses, history, replays, Privacy) mount
                   here via the SAME user-menu slot the bottom-left account
@@ -291,15 +350,20 @@ export const EditorMenuBar: React.FC = () => {
               </button>
             </>
           )}
-          {items.map((item, i) =>
-            item.kind === 'separator' ? (
-              <div key={`sep-${i}`} className="emb-separator" />
-            ) : item.kind === 'link' ? (
-              renderLink(item)
-            ) : (
-              renderCommand(item)
-            ),
-          )}
+          {items
+            .filter(
+              (item) =>
+                item.kind !== 'command' || !item.optional || hasEditorCommand(item.id),
+            )
+            .map((item, i) =>
+              item.kind === 'separator' ? (
+                <div key={`sep-${i}`} className="emb-separator" />
+              ) : item.kind === 'link' ? (
+                renderLink(item)
+              ) : (
+                renderCommand(item)
+              ),
+            )}
         </div>
       )}
     </div>
