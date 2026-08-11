@@ -25,6 +25,7 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { getNextNews, type NewsPost } from '../../lib/newsSource';
+import { reportNewsEvent } from '../../lib/newsEvents';
 import { NewsMarkdown } from './NewsMarkdown';
 import { registerEditorCommand } from '../../lib/editorCommands';
 import './NewsAnnouncer.css';
@@ -46,6 +47,7 @@ export function NewsAnnouncer() {
         if (cancelled || !p) return;
         setPost(p);
         setToastVisible(true);
+        reportNewsEvent('impression', p.id);
       });
     }, FETCH_DELAY_MS);
     return () => {
@@ -62,6 +64,7 @@ export function NewsAnnouncer() {
     return registerEditorCommand('help.whatsNew', () => {
       setToastVisible(false);
       setExpanded(true);
+      reportNewsEvent('open', post.id, { via: 'menu' });
     });
   }, [post]);
 
@@ -101,7 +104,17 @@ export function NewsAnnouncer() {
             </button>
           </div>
           <div className="velxio-news-body">
-            <NewsMarkdown>{post.body_md}</NewsMarkdown>
+            <NewsMarkdown
+              onInteract={(kind, href) =>
+                reportNewsEvent(
+                  kind === 'video' ? 'video_play' : 'link_click',
+                  post.id,
+                  { href },
+                )
+              }
+            >
+              {post.body_md}
+            </NewsMarkdown>
           </div>
           <div className="velxio-news-footer">
             <button className="velxio-news-ok" onClick={() => setExpanded(false)}>
@@ -136,6 +149,7 @@ export function NewsAnnouncer() {
         className="velxio-news-toast-more"
         onClick={() => {
           setExpanded(true);
+          reportNewsEvent('open', post.id, { via: 'toast' });
         }}
       >
         {t('news.readMore', 'Read more')} →
