@@ -34,7 +34,7 @@ const FIRMWARE_MAP: Record<string, FirmwareConfig> = {
 };
 
 /** Map any ESP32-family board kind to firmware variant key */
-function toFirmwareVariant(boardKind: BoardKind): 'esp32' | 'esp32-s3' | 'esp32-c3' {
+export function toFirmwareVariant(boardKind: BoardKind): 'esp32' | 'esp32-s3' | 'esp32-c3' {
   if (
     boardKind === 'esp32-s3' ||
     boardKind === 'xiao-esp32-s3' ||

@@ -32,6 +32,7 @@ import {
 } from '../components/editor/NewProjectDialog';
 import { useAutoSaveProject } from '../hooks/useAutoSaveProject';
 import { registerEditorCommand } from '../lib/editorCommands';
+import { whenNewsClear } from '../lib/newsGate';
 import { EditorMenuBar } from '../components/editor/EditorMenuBar';
 import type { CompilationLog } from '../utils/compilationLogger';
 import '../App.css';
@@ -120,6 +121,12 @@ export const EditorPage: React.FC = () => {
   // (both leave the stores non-pristine), or twice per page load. Declared
   // AFTER the restoreStashedWorkspace effect — mount order is what makes
   // the pristine check see the restored draft.
+  //
+  // Sequenced BEHIND the news announcement: the canvas is cleared right
+  // away, but the dialog itself waits until NewsAnnouncer reports the
+  // announcement flow is done (nothing to show, or its modal was closed).
+  // The 2.5s bound applies only while the news decision is pending, so a
+  // dead feed can't hold the dialog hostage — see lib/newsGate.ts.
   useEffect(() => {
     if (starterDialogShownThisLoad) return;
     const locale = getLocaleFromPath(window.location.pathname);
@@ -135,7 +142,13 @@ export const EditorPage: React.FC = () => {
     if (!pristine) return;
     starterDialogShownThisLoad = true;
     clearWorkspaceForStarter();
-    setShowNewProjectDialog(true);
+    let cancelled = false;
+    void whenNewsClear(2500).then(() => {
+      if (!cancelled) setShowNewProjectDialog(true);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // ── GitHub star prompt (show twice at most: 2nd visit OR after 3 min) ──────

@@ -105,6 +105,24 @@
   cursor: not-allowed;
 }
 
+/* ── Camera / Microphone toggles ─────────────────────
+   Static layout for the CameraToggle / MicrophoneToggle buttons. It lives
+   in a class (not inline) so the same @container query that collapses the
+   Serial/Scope buttons to icon-only can reach these too — an inline
+   font-size would beat the class and the label could never collapse.
+   State-driven styles (background, border, colour, pulse animation) stay
+   inline on the button. */
+.canvas-cam-mic-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  height: 28px;
+  border-radius: 4px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
 /* ── Serial Monitor button ───────────────────────── */
 .canvas-serial-btn {
   display: flex;
@@ -383,6 +401,12 @@
     height: 18px;
   }
 
+  .canvas-cam-mic-btn {
+    padding: 0 6px;
+    gap: 0;
+    font-size: 0; /* icon-only on narrow viewports too */
+  }
+
   .add-component-btn {
     padding: 0 8px;
     font-size: 0; /* hide text, show icon only */
@@ -426,6 +450,12 @@
    editor toolbar and view-mode toggle collapse at, so the whole bar degrades
    together and nothing overlaps. */
 @container unified-toolbar (max-width: 1010px) {
+  /* Pack the toolbar buttons tighter once the AI chat steals horizontal
+     room, so Serial/Camera/Mic/Scope stop overlapping. */
+  .canvas-header-left,
+  .canvas-header-right {
+    gap: 4px;
+  }
   .canvas-serial-btn {
     padding: 0 8px;
     font-size: 0; /* hide "Serial" / "Scope" text, keep the icon */
@@ -433,6 +463,13 @@
   .canvas-serial-btn svg {
     width: 18px;
     height: 18px;
+  }
+  /* Same collapse as Serial: hide the "Camera" / "Mic" label, keep the icon.
+     gap: 0 drops the now-empty icon-to-label space. */
+  .canvas-cam-mic-btn {
+    padding: 0 8px;
+    gap: 0;
+    font-size: 0;
   }
   .add-component-btn {
     padding: 0 9px;

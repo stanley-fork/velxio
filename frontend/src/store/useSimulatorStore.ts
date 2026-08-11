@@ -28,6 +28,7 @@ import type { Wire, WireInProgress, WireEndpoint } from '../types/wire';
 import type { BoardKind, BoardInstance, LanguageMode, WifiStatus } from '../types/board';
 import { BOARD_SUPPORTS_ESPIDF, BOARD_SUPPORTS_MICROPYTHON, isPiBoardKind, isStm32BoardKind } from '../types/board';
 import { boardGateDecision, proBoardFeatureName, triggerProUpgradePrompt } from '../lib/proBoardGate';
+import { getSerialTxInterceptor } from '../lib/proHardwareSerial';
 import { calculatePinPosition } from '../utils/pinPositionCalculator';
 import { useOscilloscopeStore } from './useOscilloscopeStore';
 import { RaspberryPi3Bridge } from '../simulation/RaspberryPi3Bridge';
@@ -1290,6 +1291,16 @@ const { append: appendSerial } = createSerialBatcher((perBoard) => {
     return { boards, serialOutput: globalOut };
   });
 });
+
+/**
+ * Pro overlay seam: append bytes coming from a REAL board's UART (Web
+ * Serial hardware monitor) into a board's serial output. Goes through the
+ * same per-frame batcher as simulator bytes, so the SerialMonitor needs no
+ * changes and hardware chatter cannot trigger the per-byte set() storm.
+ */
+export function appendHardwareSerial(boardId: string, chunk: string): void {
+  appendSerial(boardId, chunk);
+}
 
 // ── Store ─────────────────────────────────────────────────────────────────
 export const useSimulatorStore = create<SimulatorState>((set, get) => {
@@ -3756,6 +3767,13 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
     serialWriteToBoard: (boardId: string, text: string) => {
       const board = get().boards.find((b) => b.id === boardId);
       if (!board) return;
+      // A connected hardware serial monitor (pro overlay) takes the input
+      // instead of the board's simulator.
+      const hardwareTx = getSerialTxInterceptor(boardId);
+      if (hardwareTx) {
+        hardwareTx(text);
+        return;
+      }
       if (isPiBoardKind(board.boardKind)) {
         const bridge = getBoardBridge(boardId);
         if (bridge) {

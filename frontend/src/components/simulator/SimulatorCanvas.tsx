@@ -79,6 +79,7 @@ import {
 } from '../../lib/proBoardGate';
 import { FlashModal } from './FlashModal';
 import { isTauri as isTauriRuntimeFn } from '../../desktop/tauriBridge';
+import { webFlashAvailable, webFlashMpyAvailable } from '../../lib/proWebFlash';
 import { isEsp32Family } from '../../types/boardOptions';
 import { BoardOptionsModal } from './BoardOptionsModal';
 import { useOscilloscopeStore } from '../../store/useOscilloscopeStore';
@@ -3442,15 +3443,29 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
               },
             });
           }
-          // Flashing needs USB serial, which only the desktop shell has.
-          if (isTauriRuntime) {
+          // Flashing needs USB serial: the desktop shell always has it;
+          // on the web the pro overlay may install a Web Serial flasher
+          // for this board kind (no-op in pure OSS builds).
+          if (isTauriRuntime || webFlashAvailable(board.boardKind)) {
+            // MicroPython boards don't compile to a flash image — the store
+            // keeps the 'micropython-loaded' sentinel. They flash only when
+            // the overlay implements the MicroPython path (firmware install
+            // + raw-REPL file upload); no compile step is required there,
+            // the workspace files are always available.
+            const isMpy = board.languageMode === 'micropython';
+            const mpyWebOk =
+              isMpy && !isTauriRuntime && webFlashMpyAvailable(board.boardKind);
             actions.push({
               id: 'flash',
               label: t('editor.canvas.flashToBoard'),
-              disabled: !board.compiledProgram,
-              title: board.compiledProgram
-                ? 'Flash the compiled sketch to a real USB-attached board'
-                : 'Compile the sketch first',
+              disabled: isMpy ? !mpyWebOk : !board.compiledProgram,
+              title: isMpy
+                ? mpyWebOk
+                  ? 'Install MicroPython (if needed) and upload this project to a real USB-attached board'
+                  : 'MicroPython projects cannot be flashed from here — Arduino sketches only'
+                : board.compiledProgram
+                  ? 'Flash the compiled sketch to a real USB-attached board'
+                  : 'Compile the sketch first',
               onSelect: () => {
                 setFlashModalFor(boardContextMenu.boardId);
                 setBoardContextMenu(null);
@@ -3666,7 +3681,8 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
 
       {/* Hardware flash modal — opens from board context menu when
           the user has compiled the sketch + clicks "Flash to real
-          board". Only present in Tauri (web hides the menu item). */}
+          board". Present in Tauri, and on the web when the pro
+          overlay installed a Web Serial flasher for the board kind. */}
       {flashModalFor &&
         (() => {
           const b = boards.find((x) => x.id === flashModalFor);
