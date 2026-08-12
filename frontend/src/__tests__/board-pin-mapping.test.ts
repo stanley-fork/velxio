@@ -42,3 +42,28 @@ describe('boardPinToNumber — M5 Cardputer ADV header', () => {
     expect(boardPinToNumber('cardputer-adv', '99')).toBeNull();
   });
 });
+
+describe('m5stack-core header pins', () => {
+  // The Core's pads sat unmapped for months: the kind does not start with
+  // 'esp32', so it fell through every branch and each wire from the M-Bus
+  // header resolved to null — a part wired to the header never saw a signal,
+  // silently. These pin the dedicated branch.
+  const CORE_GPIO = ['21', '22', '23', '19', '18', '3', '1', '16', '17', '2', '5', '25', '26', '35', '36', '12', '13', '15', '0', '34'];
+
+  it('maps every M-Bus GPIO pad to its number', () => {
+    for (const name of CORE_GPIO) {
+      expect(boardPinToNumber('m5stack-core', name)).toBe(Number(name));
+    }
+  });
+
+  it('maps the power pads (including BAT) to -1', () => {
+    for (const name of ['5V', 'GND', '3V3', 'BAT']) {
+      expect(boardPinToNumber('m5stack-core', name)).toBe(-1);
+    }
+  });
+
+  it('rejects out-of-range and non-pins', () => {
+    expect(boardPinToNumber('m5stack-core', '40')).toBeNull(); // classic tops out at 39
+    expect(boardPinToNumber('m5stack-core', 'NOPE')).toBeNull();
+  });
+});

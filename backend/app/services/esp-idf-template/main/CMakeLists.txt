@@ -29,7 +29,13 @@ if(DEFINED ENV{VELXIO_PURE_SKETCH})
         -Wno-error=unused-variable
         -Wno-error=unused-but-set-variable
         -Wno-error=format
-        -Wno-error=maybe-uninitialized)
+        -Wno-error=maybe-uninitialized
+        # uninitialized (the non-maybe flavour) fires inside the M5Stack
+        # library itself: MahonyAHRS.cpp's fast inverse square root reads the
+        # float through a long* — deliberate, thirty years old, and fatal
+        # under -Werror. Library code the user cannot edit must not stop
+        # their build.
+        -Wno-error=uninitialized)
 # If Arduino component is available, use C++ main and link Arduino.
 # The component name matches the directory basename of ARDUINO_ESP32_PATH
 # (e.g. "arduino-esp32" when cloned from GitHub).
@@ -143,7 +149,13 @@ elseif(DEFINED ENV{ARDUINO_ESP32_PATH})
         # must compile here, or the emulator looks broken for a sketch that
         # is not.
         -Wno-error=format
-        -Wno-error=maybe-uninitialized)
+        -Wno-error=maybe-uninitialized
+        # uninitialized (the non-maybe flavour) fires inside the M5Stack
+        # library itself: MahonyAHRS.cpp's fast inverse square root reads the
+        # float through a long* — deliberate, thirty years old, and fatal
+        # under -Werror. Library code the user cannot edit must not stop
+        # their build.
+        -Wno-error=uninitialized)
 else()
     # Pure ESP-IDF mode: main.c #includes sketch_translated.c
     idf_component_register(

@@ -696,7 +696,7 @@ class Esp32BridgeShim {
 // race window.
 
 function makeLedcDutyHandler(boardId: string) {
-  return (duty: { channel: number; duty_pct: number }) => {
+  return (duty: { channel: number; duty_pct: number; freq_hz?: number }) => {
     const boardPm = pinManagerMap.get(boardId);
     const router = signalRouterMap.get(boardId);
     if (!boardPm || !router) return;
@@ -707,6 +707,10 @@ function makeLedcDutyHandler(boardId: string) {
     // pins via the GPIO Matrix (rare but documented in TRM). Iterate
     // all of them — each gets its own updatePwm call.
     for (const pin of pins) {
+      // The carrier frequency rides alongside, when the engine knows it: a
+      // speaker listener reads it back with getPwmFreq to play the sketch's
+      // actual note rather than a canned one.
+      if (duty.freq_hz && duty.freq_hz > 0) boardPm.setPwmFreq(pin, duty.freq_hz);
       boardPm.updatePwm(pin, dutyCycle);
     }
   };

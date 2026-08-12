@@ -105,6 +105,15 @@ export interface ProBoardDef {
    *  setMicrophoneSource (I2S RX sample injection): shows the canvas-header
    *  Mic toggle that streams the computer's microphone into it. */
   builtInMicrophone?: boolean;
+  /** Display-controller identity for panel autodetect probes. Vendor
+   *  libraries (M5GFX and friends) identify a board by reading the panel's
+   *  RDDID over SPI with the display's own chip-select — and reject the
+   *  board, or misdetect it as something else entirely, when the answer is
+   *  the bus's idle 0xFF. A bridge that supports this answers `idByte` on
+   *  MISO while `csPin` is low. Board DATA, not bridge code: the M5Stack
+   *  Core is `{ csPin: 14, idByte: 0xE3 }` (ILI9342C), the Cardputer ADV
+   *  `{ csPin: 37, idByte: 0x85 }` (ST7789V2). */
+  spiPanelId?: { csPin: number; idByte: number };
   /** Board carries an IMU whose bridge implements setImuAcceleration /
    *  setImuGyro: shows the canvas-header tilt pad. Without it the emulated
    *  part faithfully reports the board lying flat for the whole run. */

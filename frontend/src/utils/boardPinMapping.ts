@@ -361,6 +361,24 @@ export function boardPinToNumber(boardId: string, pinName: string): number | nul
     return null;
   }
 
+  // M5Stack Core: same bare-GPIO-number pads, classic ESP32 range. Without
+  // this branch the kind fell through every one below — the shared ESP32
+  // branch requires boardId.startsWith('esp32') — and every wire from the
+  // M-Bus header resolved to null: a part wired to the header never saw a
+  // signal, with nothing anywhere saying why. BAT joins the power names.
+  if (boardId === 'm5stack-core') {
+    if (
+      pinName.startsWith('GND') ||
+      pinName.startsWith('3V3') ||
+      pinName.startsWith('5V') ||
+      pinName === 'BAT'
+    )
+      return -1;
+    const num = parseInt(pinName, 10);
+    if (!isNaN(num) && num >= 0 && num <= 39) return num;
+    return null;
+  }
+
   // ESP32 / ESP32-S3 / ESP32-C3 — GPIO numbers used directly
   if (boardId === 'esp32' || boardId.startsWith('esp32')) {
     // Power / GND pins (GND, GND.1, 3V3, 3V3.1, 5V, 5V.1, etc.)

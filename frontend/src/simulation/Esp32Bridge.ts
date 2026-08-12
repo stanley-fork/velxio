@@ -91,6 +91,11 @@ export interface Ws2812Pixel {
 export interface LedcDuty {
   channel: number;
   duty_pct: number;
+  /** Carrier frequency in Hz, when the engine knows it. The JS engines derive
+   *  it from the LEDC timer registers; without it a speaker on a PWM pin can
+   *  only ever play one fixed note, which is how the M5Stack Core's piano
+   *  spent months stuck on 660 Hz. */
+  freq_hz?: number;
 }
 /** GPIO Matrix routing event — `gpio_out_sel[gpio]` was set to
  *  `signal_id`.  Maintained by the backend SignalRouter; emitted on
