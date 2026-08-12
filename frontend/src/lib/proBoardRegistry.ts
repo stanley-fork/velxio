@@ -121,6 +121,12 @@ export interface ProBoardDef {
   /** Board reads a battery through its bridge (setBatteryVoltage): shows the
    *  canvas-header charge slider, so low-battery code paths can be reached. */
   builtInBattery?: boolean;
+  /** Power-management IC on the internal I2C bus, when the board carries one
+   *  the vendor library probes. Board DATA like spiPanelId: the bridge that
+   *  supports the type instantiates the model at the given address, and
+   *  setBatteryVoltage drives it. The M5Stack Core is
+   *  { type: 'ip5306', addr: 0x75 }. */
+  i2cPmic?: { type: 'ip5306'; addr?: number };
   /** Built-in peripheral attachment for a RUNNING board (LCD decoder onto the
    *  element's own canvas, speaker, on-board button/keyboard event forwarding).
    *  Called shortly after run start with the board's DOM element plus its
