@@ -144,9 +144,11 @@ export const AppHeader: React.FC<AppHeaderProps> = ({ autoSave, editorMenu, edit
                 <Link to={localize('/')} className={'header-nav-link' + isActive('/')}>
                   {t('header.nav.home')}
                 </Link>
-                <Link to={localize('/docs')} className={'header-nav-link' + isActive('/docs')}>
+                {/* Full-page link: the docs portal is a static Starlight
+                    site served by nginx at /docs/, not a SPA route. */}
+                <a href="/docs/" className="header-nav-link">
                   {t('header.nav.documentation')}
-                </Link>
+                </a>
               </>
             )}
             <Link to={localize('/examples')} className={'header-nav-link' + isActive('/examples')}>
