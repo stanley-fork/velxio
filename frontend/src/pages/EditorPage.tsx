@@ -334,8 +334,20 @@ export const EditorPage: React.FC = () => {
 
     const handleMouseMove = (ev: MouseEvent) => {
       if (!resizingRef.current || !containerRef.current) return;
-      const rect = containerRef.current.getBoundingClientRect();
-      const pct = ((ev.clientX - rect.left) / rect.width) * 100;
+      const el = containerRef.current;
+      const rect = el.getBoundingClientRect();
+      // The panels' percentage widths resolve against the container's CONTENT
+      // box, but getBoundingClientRect() returns the border box — and overlays
+      // may reserve space by padding .app-container (e.g. a docked side panel).
+      // Measuring against the padded box makes the handle jump away from the
+      // cursor, so strip borders and padding first.
+      const cs = getComputedStyle(el);
+      const padLeft = parseFloat(cs.paddingLeft) || 0;
+      const padRight = parseFloat(cs.paddingRight) || 0;
+      const contentLeft = rect.left + el.clientLeft + padLeft;
+      const contentWidth = el.clientWidth - padLeft - padRight;
+      if (contentWidth <= 0) return;
+      const pct = ((ev.clientX - contentLeft) / contentWidth) * 100;
       setEditorWidthPct(Math.max(20, Math.min(80, pct)));
     };
 

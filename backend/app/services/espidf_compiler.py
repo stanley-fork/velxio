@@ -1111,8 +1111,14 @@ class ESPIDFCompiler:
         """Normalise a library name for manifest matching: lowercased, only
         alphanumerics. So "Adafruit GFX Library", "Adafruit_GFX_Library" and
         "adafruitgfxlibrary" all compare equal — the Library Manager display
-        name and the on-disk folder name differ only by separators/case."""
-        return ''.join(ch for ch in (name or '').lower() if ch.isalnum())
+        name and the on-disk folder name differ only by separators/case.
+
+        A manifest entry may carry an install/pin suffix after '@'
+        ("M5GFX@0.2.26-df5ac6900fe7", "Lib@wokwi:hash"); only the base name
+        identifies the library on disk, so the suffix is stripped before
+        normalising — otherwise a pinned entry never matches its own folder
+        and the compiler treats the lib as undeclared."""
+        return ''.join(ch for ch in (name or '').split('@', 1)[0].lower() if ch.isalnum())
 
     def _library_in_manifest(self, lib_root: Path, allowed_norm: set[str]) -> bool:
         """True if this library is in the project's declared manifest.
