@@ -108,6 +108,11 @@ export interface WifiStatus {
   status: string;
   ssid?: string;
   ip?: string;
+  /** True when the board's network stack lives in THIS browser tab (in-browser
+   *  JS engine). The IoT gateway must then open in the in-app iframe: a new
+   *  tab backgrounds this one, the emulation gets timer-throttled, and the
+   *  in-chip HTTP server can't answer. Unset = server runs backend-side. */
+  inBrowser?: boolean;
 }
 export interface BleStatus {
   status: string;

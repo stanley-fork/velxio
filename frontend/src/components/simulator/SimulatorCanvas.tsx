@@ -2806,9 +2806,16 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
                         }
                       ).__velxio_iot_gateway_open_gate__;
                       if (gate && gate()) return;
-                      // Pico W runs in THIS tab — a new tab would background and
-                      // freeze the emulation. Show the page in an in-app iframe.
-                      if (activeBoard.boardKind === 'pi-pico-w') {
+                      // Boards whose network stack lives in THIS tab (Pico W,
+                      // and any ESP32 on the in-browser JS engine — wifiStatus
+                      // carries inBrowser) open in the in-app iframe: a new tab
+                      // backgrounds this one, the emulation gets timer-throttled,
+                      // and the in-chip server times out. QEMU boards run
+                      // backend-side, so a new tab is fine there.
+                      if (
+                        activeBoard.boardKind === 'pi-pico-w' ||
+                        activeBoard.wifiStatus?.inBrowser === true
+                      ) {
                         openDeviceGateway(gatewayUrl);
                       } else {
                         window.open(gatewayUrl, '_blank');
