@@ -17,11 +17,13 @@ import {
   useSimulatorStore,
   getBoardBridge,
   getBoardPinManager,
+  getBoardSimulator,
 } from '../store/useSimulatorStore';
 import { useElectricalStore } from '../store/useElectricalStore';
 import { useEditorStore } from '../store/useEditorStore';
 import { buildProjectSdImage, decodeSdFiles } from '../utils/sdCardFiles';
 import { PartSimulationRegistry } from '../simulation/parts';
+import { dispatchSensorUpdate } from '../simulation/SensorUpdateRegistry';
 import { isBoardComponent, boardPinToNumber } from '../utils/boardPinMapping';
 import { isBoardSeated } from '../utils/socketSnap';
 import { isPiBoardKind } from '../types/board';
@@ -377,9 +379,18 @@ export const DynamicComponent: React.FC<DynamicComponentProps> = ({
    * (`switch (this.digits) { case 4: ... }` -> falls back to the 1-digit
    * pinout), and `'false'` stays truthy for boolean props like colon.
    */
+  // Last property values actually applied to the element. Used to detect
+  // real changes below — the store hands us a NEW properties object on every
+  // update even when the values are identical, and the change-notification
+  // path (dispatch 'input' → part sim → emitPropertyChange → store) would
+  // otherwise echo forever.
+  const appliedPropsRef = useRef<Record<string, unknown>>({});
+
   useEffect(() => {
     if (!elementRef.current) return;
 
+    let changed = false;
+    const numericChanges: Record<string, number> = {};
     Object.entries(properties).forEach(([key, value]) => {
       try {
         // Display framebuffers round-trip through saved projects as strings
@@ -397,11 +408,36 @@ export const DynamicComponent: React.FC<DynamicComponentProps> = ({
           }
         }
         (elementRef.current as any)[key] = coerced;
+        if (appliedPropsRef.current[key] !== coerced) {
+          appliedPropsRef.current[key] = coerced;
+          changed = true;
+          if (typeof coerced === 'number') numericChanges[key] = coerced;
+        }
       } catch (error) {
         console.warn(`Failed to set property ${key} on ${metadata.tagName}:`, error);
       }
     });
-  }, [properties, metadata.tagName]);
+
+    // A bare property assignment is invisible to the part simulators: they
+    // bind to DOM events ('input'/'change' — how the element's own knob
+    // notifies) or to the SensorUpdateRegistry (how the sensor panel
+    // notifies). Programmatic writes — the agent's set_component_property,
+    // values restored from a saved project, the property dialog — used to
+    // reach the ELEMENT but never the running simulation, so a pot "set" to
+    // 800 kept reading ADC 0 until a human touched its knob. Notify both
+    // channels, only on real value changes (see appliedPropsRef above).
+    if (changed) {
+      try {
+        elementRef.current.dispatchEvent(new Event('input'));
+        elementRef.current.dispatchEvent(new Event('change'));
+        if (Object.keys(numericChanges).length) {
+          dispatchSensorUpdate(id, numericChanges);
+        }
+      } catch (error) {
+        console.warn(`Failed to notify simulation of ${metadata.tagName} change:`, error);
+      }
+    }
+  }, [properties, metadata.tagName, id]);
 
   /**
    * Property changes that swap the element's pin SET (7segment digits,
@@ -680,19 +716,22 @@ export const DynamicComponent: React.FC<DynamicComponentProps> = ({
       // bridge of the board this component is actually wired to: `gpio_in`
       // for the guest, the canvas-fed `pin<N>` value the browser engine's
       // shims read, and the PinManager so wires and SPICE see the edge.
-      const piBoardId = (() => {
+      const { piBoardId, wiredBoardId } = (() => {
         const st = useSimulatorStore.getState();
         const ownPins = new Set<string>();
         for (const w of st.wires) {
           if (w.start.componentId === id) ownPins.add(w.start.pinName);
           if (w.end.componentId === id) ownPins.add(w.end.pinName);
         }
+        let anyBoardId: string | null = null;
         for (const pinName of ownPins) {
           const { boardId } = traceDetailed(st, id, pinName, 0);
           const board = boardId ? st.boards.find((b) => b.id === boardId) : undefined;
-          if (board && isPiBoardKind(board.boardKind)) return board.id;
+          if (!board) continue;
+          if (anyBoardId === null) anyBoardId = board.id;
+          if (isPiBoardKind(board.boardKind)) return { piBoardId: board.id, wiredBoardId: board.id };
         }
-        return null;
+        return { piBoardId: null, wiredBoardId: anyBoardId };
       })();
       const piSimulator = piBoardId
         ? ({
@@ -708,8 +747,18 @@ export const DynamicComponent: React.FC<DynamicComponentProps> = ({
           } as any)
         : null;
 
+      // Route the part to the simulator of the board it is actually WIRED
+      // to. The legacy store `simulator` is the shared AVR instance: handing
+      // it to a part on an ESP32 board silently voided every direct analog
+      // injection — setAdcVoltage() hit the AVR branch, GPIO 32-39 fell
+      // outside its 14-19 window, and the part (analog-joystick was the
+      // reported one) read 0 forever while pots survived only via the SPICE
+      // solve. getBoardSimulator() returns the per-board shim (ESP32 bridge
+      // shim, RP2040, AVR) that partUtils' dispatch understands.
+      const wiredSimulator = wiredBoardId ? getBoardSimulator(wiredBoardId) ?? null : null;
       const stubSimulator =
         piSimulator ??
+        wiredSimulator ??
         simulator ??
         ({
           setPinState: () => {},

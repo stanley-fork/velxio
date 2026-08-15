@@ -286,8 +286,10 @@ def test_render_sdkconfig_c6_adapts_to_idf5(compiler: ESPIDFCompiler) -> None:
     assert 'CONFIG_SPIRAM' not in text
     assert 'CONFIG_ESPTOOLPY_FLASHFREQ_26M' not in text
     assert 'CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240' not in text
-    # IDF 5.0 renamed ESP_TASK_WDT → ESP_TASK_WDT_EN.
-    assert 'CONFIG_ESP_TASK_WDT_EN=n' in text
+    # IDF 5.0 split ESP_TASK_WDT into _EN (compile) + _INIT (auto-start):
+    # the API must link (sketches call esp_task_wdt_add) but never auto-run.
+    assert 'CONFIG_ESP_TASK_WDT_EN=y' in text
+    assert 'CONFIG_ESP_TASK_WDT_INIT=n' in text
     assert 'CONFIG_ESP_TASK_WDT=n' not in text
     # The clamped CPU frequency is rendered.
     assert 'CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_160=y' in text
@@ -403,7 +405,8 @@ def test_render_sdkconfig_idf5_arduino_keeps_component_symbols(
     assert 'CONFIG_AUTOSTART_ARDUINO=n' in ard
     assert 'CONFIG_ARDUHAL_LOG_DEFAULT_LEVEL=0' in ard
     assert 'CONFIG_BT_ENABLED=y' in ard
-    assert 'CONFIG_ESP_TASK_WDT_EN=n' in ard  # WDT rename still applies
+    assert 'CONFIG_ESP_TASK_WDT_EN=y' in ard  # WDT split still applies
+    assert 'CONFIG_ESP_TASK_WDT_INIT=n' in ard
 
     pure = compiler._render_sdkconfig(
         opts, _TEMPLATE_DIR, idf_target='esp32', use_idf5=True, arduino_mode=False
@@ -435,7 +438,8 @@ def test_render_sdkconfig_idf5_per_target_drops(compiler: ESPIDFCompiler) -> Non
     assert 'CONFIG_ESPTOOLPY_FLASHFREQ_26M' in text       # kept on esp32
     assert 'CONFIG_ARDUHAL_' not in text                  # no Arduino on v5
     assert 'CONFIG_BT_ENABLED' not in text                # no Bluedroid on v5
-    assert 'CONFIG_ESP_TASK_WDT_EN=n' in text             # renamed in v5
+    assert 'CONFIG_ESP_TASK_WDT_EN=y' in text             # split in v5
+    assert 'CONFIG_ESP_TASK_WDT_INIT=n' in text
 
     s3_text = compiler._render_sdkconfig(
         compiler._normalize_options(None, idf_target='esp32s3'),

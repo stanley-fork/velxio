@@ -14,6 +14,7 @@
 
 import type { ComponentForSpice } from './types';
 import { parseValueWithUnits } from './valueParser';
+import { isAuxRailNet } from './boardPinGroups';
 import { LM358_SUBCKT } from './models/lm358Subckt';
 import { getChipDrivenPins } from '../customChips/chipPinDrives';
 
@@ -116,7 +117,9 @@ const MAPPERS: Record<string, Mapper> = {
     const cards: string[] = [];
     for (const { pin, voltage } of driven) {
       const net = netLookup(pin);
-      if (!net || net === '0' || net === 'vcc_rail') continue;
+      // Never stamp a chip source onto a rail — it would fight the rail's own
+      // ideal source (aux rails included).
+      if (!net || net === '0' || net === 'vcc_rail' || isAuxRailNet(net)) continue;
       const pid = String(pin).replace(/[^A-Za-z0-9_]/g, '_');
       cards.push(`V_${cid}_${pid} ${net} 0 DC ${voltage}`);
     }

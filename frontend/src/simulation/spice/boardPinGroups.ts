@@ -1,6 +1,7 @@
 /**
  * Per-board pin classification: which pin names should be canonicalized
- * to the ground net ("0") or the Vcc rail, plus the default supply voltage.
+ * to the ground net ("0"), the Vcc rail, or a per-voltage aux rail, plus
+ * the default supply voltage.
  *
  * Extend this table as new boards are added.
  */
@@ -13,6 +14,28 @@ export interface BoardPinGroup {
   gnd: string[];
   /** Pin names treated as the Vcc rail. */
   vcc_pins: string[];
+  /**
+   * Supply pins that sit at a DIFFERENT voltage than the main rail — the
+   * VIN / 5V pins of a 3.3 V board, or the 3.3 V pin of a 5 V Arduino.
+   * They get their own per-voltage net (`aux_rail_5` / `aux_rail_3v3`)
+   * driven at `volts`, instead of collapsing onto `vcc_rail` and being
+   * clamped to the board's logic voltage.
+   */
+  aux?: { volts: number; pins: string[] };
+}
+
+/**
+ * SPICE net name for the aux supply rail at a given voltage.
+ * 5 → "aux_rail_5", 3.3 → "aux_rail_3v3". Boards sharing a voltage share
+ * the net, mirroring how all main supply pins share "vcc_rail".
+ */
+export function auxRailNetName(volts: number): string {
+  return `aux_rail_${String(volts).replace('.', 'v')}`;
+}
+
+/** True if a net name is an aux supply rail (see auxRailNetName). */
+export function isAuxRailNet(net: string): boolean {
+  return net.startsWith('aux_rail_');
 }
 
 type AllBoardKinds = BoardKind | 'default';
@@ -26,20 +49,24 @@ const STM32_GROUP: BoardPinGroup = {
 export const BOARD_PIN_GROUPS: Record<AllBoardKinds, BoardPinGroup> = {
   default: { vcc: 5, gnd: ['GND', 'GND.1', 'GND.2'], vcc_pins: ['5V', 'VCC'] },
 
+  // AREF stays on the main 5 V rail — it is VCC-referenced by default.
   'arduino-uno': {
     vcc: 5,
     gnd: ['GND.1', 'GND.2', 'GND.3', 'GND'],
-    vcc_pins: ['5V', 'VCC', '3.3V', 'AREF'],
+    vcc_pins: ['5V', 'VCC', 'AREF'],
+    aux: { volts: 3.3, pins: ['3.3V'] },
   },
   'arduino-nano': {
     vcc: 5,
     gnd: ['GND.1', 'GND.2', 'GND'],
-    vcc_pins: ['5V', 'VCC', '3V3', 'AREF'],
+    vcc_pins: ['5V', 'VCC', 'AREF'],
+    aux: { volts: 3.3, pins: ['3V3'] },
   },
   'arduino-mega': {
     vcc: 5,
     gnd: ['GND.1', 'GND.2', 'GND.3', 'GND.4', 'GND'],
-    vcc_pins: ['5V', 'VCC', '3.3V', 'AREF'],
+    vcc_pins: ['5V', 'VCC', 'AREF'],
+    aux: { volts: 3.3, pins: ['3.3V'] },
   },
   attiny85: { vcc: 5, gnd: ['GND'], vcc_pins: ['VCC'] },
 
@@ -56,24 +83,56 @@ export const BOARD_PIN_GROUPS: Record<AllBoardKinds, BoardPinGroup> = {
   'raspberry-pi-pico': {
     vcc: 3.3,
     gnd: ['GND.1', 'GND.2', 'GND.3', 'GND'],
-    vcc_pins: ['3V3', 'VBUS', 'VSYS'],
+    vcc_pins: ['3V3'],
+    aux: { volts: 5, pins: ['VBUS', 'VSYS'] },
   },
   'pi-pico-w': {
     vcc: 3.3,
     gnd: ['GND.1', 'GND.2', 'GND.3', 'GND'],
-    vcc_pins: ['3V3', 'VBUS', 'VSYS'],
+    vcc_pins: ['3V3'],
+    aux: { volts: 5, pins: ['VBUS', 'VSYS'] },
   },
-  'raspberry-pi-3': { vcc: 5, gnd: ['GND'], vcc_pins: ['5V', '3V3'] },
-  'raspberry-pi-4': { vcc: 5, gnd: ['GND'], vcc_pins: ['5V', '3V3'] },
-  'raspberry-pi-5': { vcc: 5, gnd: ['GND'], vcc_pins: ['5V', '3V3'] },
+  'raspberry-pi-3': { vcc: 5, gnd: ['GND'], vcc_pins: ['5V'], aux: { volts: 3.3, pins: ['3V3'] } },
+  'raspberry-pi-4': { vcc: 5, gnd: ['GND'], vcc_pins: ['5V'], aux: { volts: 3.3, pins: ['3V3'] } },
+  'raspberry-pi-5': { vcc: 5, gnd: ['GND'], vcc_pins: ['5V'], aux: { volts: 3.3, pins: ['3V3'] } },
 
-  esp32: { vcc: 3.3, gnd: ['GND', 'GND.1', 'GND.2'], vcc_pins: ['3V3', 'VIN', '5V'] },
-  'esp32-devkit-c-v4': { vcc: 3.3, gnd: ['GND', 'GND.1', 'GND.2'], vcc_pins: ['3V3', 'VIN', '5V'] },
-  'esp32-cam': { vcc: 3.3, gnd: ['GND'], vcc_pins: ['3V3', '5V', '5V.1', 'VCC'] },
-  'wemos-lolin32-lite': { vcc: 3.3, gnd: ['GND'], vcc_pins: ['3V3', '5V'] },
-  'esp32-s3': { vcc: 3.3, gnd: ['GND', 'GND.1', 'GND.2'], vcc_pins: ['3V3', '3V3.1', '3V3.2', 'VIN', '5V'] },
-  'xiao-esp32-s3': { vcc: 3.3, gnd: ['GND'], vcc_pins: ['3V3', '5V'] },
-  'arduino-nano-esp32': { vcc: 3.3, gnd: ['GND'], vcc_pins: ['3V3', '5V', 'VUSB'] },
+  esp32: {
+    vcc: 3.3,
+    gnd: ['GND', 'GND.1', 'GND.2'],
+    vcc_pins: ['3V3'],
+    aux: { volts: 5, pins: ['VIN', '5V'] },
+  },
+  'esp32-devkit-c-v4': {
+    vcc: 3.3,
+    gnd: ['GND', 'GND.1', 'GND.2'],
+    vcc_pins: ['3V3'],
+    aux: { volts: 5, pins: ['VIN', '5V'] },
+  },
+  'esp32-cam': {
+    vcc: 3.3,
+    gnd: ['GND'],
+    vcc_pins: ['3V3', 'VCC'],
+    aux: { volts: 5, pins: ['5V', '5V.1'] },
+  },
+  'wemos-lolin32-lite': {
+    vcc: 3.3,
+    gnd: ['GND'],
+    vcc_pins: ['3V3'],
+    aux: { volts: 5, pins: ['5V'] },
+  },
+  'esp32-s3': {
+    vcc: 3.3,
+    gnd: ['GND', 'GND.1', 'GND.2'],
+    vcc_pins: ['3V3', '3V3.1', '3V3.2'],
+    aux: { volts: 5, pins: ['VIN', '5V'] },
+  },
+  'xiao-esp32-s3': { vcc: 3.3, gnd: ['GND'], vcc_pins: ['3V3'], aux: { volts: 5, pins: ['5V'] } },
+  'arduino-nano-esp32': {
+    vcc: 3.3,
+    gnd: ['GND'],
+    vcc_pins: ['3V3'],
+    aux: { volts: 5, pins: ['5V', 'VUSB'] },
+  },
   'esp32-c3': {
     vcc: 3.3,
     gnd: ['GND', 'GND.1', 'GND.2'],
@@ -83,8 +142,14 @@ export const BOARD_PIN_GROUPS: Record<AllBoardKinds, BoardPinGroup> = {
     // such branch (a dual motor-supply pin like L293D VCC2 must NOT collapse
     // onto the shared rail), so the numbered supply pins must be listed here
     // explicitly or they float at 0 V and any switch pulled up to 3V3 reads LOW.
-    vcc_pins: ['3V3', '3V3.1', '3V3.2', 'VIN', '5V', '5V.1', '5V.2'],
+    vcc_pins: ['3V3', '3V3.1', '3V3.2'],
+    aux: { volts: 5, pins: ['VIN', '5V', '5V.1', '5V.2'] },
   },
-  'xiao-esp32-c3': { vcc: 3.3, gnd: ['GND'], vcc_pins: ['3V3', '5V'] },
-  'aitewinrobot-esp32c3-supermini': { vcc: 3.3, gnd: ['GND'], vcc_pins: ['3V3', '5V'] },
+  'xiao-esp32-c3': { vcc: 3.3, gnd: ['GND'], vcc_pins: ['3V3'], aux: { volts: 5, pins: ['5V'] } },
+  'aitewinrobot-esp32c3-supermini': {
+    vcc: 3.3,
+    gnd: ['GND'],
+    vcc_pins: ['3V3'],
+    aux: { volts: 5, pins: ['5V'] },
+  },
 };

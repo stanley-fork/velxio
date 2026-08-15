@@ -195,6 +195,147 @@ def _evict_cold_variants(target_dir: Path, keep: int) -> None:
         shutil.rmtree(d, ignore_errors=True)
 
 
+# ── .ino prototype generation ────────────────────────────────────────────────
+# arduino-cli runs ctags over the sketch and injects forward declarations so
+# the classic Arduino idiom — helpers defined AFTER setup()/loop() that use
+# them — compiles. This pipeline writes sketch.ino.cpp itself and never did,
+# so every such sketch died with "'foo' was not declared in this scope".
+# This is a conservative ctags stand-in: it only emits prototypes for
+# top-level, single-signature-line function definitions and skips anything
+# ambiguous (templates, methods, default args, function-pointer params).
+
+_INO_CTRL_KEYWORDS = frozenset((
+    'if', 'else', 'for', 'while', 'switch', 'do', 'return', 'sizeof',
+    'catch', 'case', 'new', 'delete', 'throw', 'goto',
+))
+
+_INO_FUNC_RE = re.compile(
+    r'^[ \t]*([A-Za-z_][A-Za-z0-9_:<>,\*&\s]*?[\s\*&])'   # return type part
+    r'([A-Za-z_]\w*)'                                      # function name
+    r'[ \t]*\(([^;{}()]*)\)'                               # params (no nesting)
+    r'[ \t\r\n]*\{',
+    re.M,
+)
+
+
+def _blank_noncode(source: str) -> str:
+    """Return a same-length copy with comments, string/char literals and
+    preprocessor lines replaced by spaces (newlines preserved), so brace
+    counting and signature matching never trip on their contents."""
+    out = list(source)
+    i, n = 0, len(source)
+    line_start = True
+    while i < n:
+        c = source[i]
+        if line_start and source[i:].lstrip(' \t')[:1] == '#':
+            # blank the whole preprocessor line (incl. continuations)
+            while i < n:
+                if source[i] == '\n' and source[i - 1] != '\\':
+                    break
+                if source[i] != '\n':
+                    out[i] = ' '
+                i += 1
+            line_start = True
+            i += 1
+            continue
+        line_start = c == '\n'
+        if c == '/' and i + 1 < n and source[i + 1] == '/':
+            while i < n and source[i] != '\n':
+                out[i] = ' '
+                i += 1
+            continue
+        if c == '/' and i + 1 < n and source[i + 1] == '*':
+            out[i] = out[i + 1] = ' '
+            i += 2
+            while i < n and not (source[i] == '*' and i + 1 < n and source[i + 1] == '/'):
+                if source[i] != '\n':
+                    out[i] = ' '
+                i += 1
+            if i < n:
+                out[i] = out[i + 1] = ' '
+                i += 2
+            continue
+        if c in ('"', "'"):
+            quote = c
+            i += 1
+            while i < n and source[i] != quote:
+                if source[i] == '\\':
+                    out[i] = ' '
+                    i += 1
+                    if i < n and source[i] != '\n':
+                        out[i] = ' '
+                    i += 1
+                    continue
+                if source[i] != '\n':
+                    out[i] = ' '
+                i += 1
+            i += 1
+            continue
+        i += 1
+    return ''.join(out)
+
+
+def generate_ino_prototypes(source: str) -> str:
+    """Insert forward declarations for top-level function definitions right
+    before the first one, followed by a #line directive so compiler error
+    line numbers keep matching the un-inserted text. Returns the source
+    unchanged when nothing safe to declare is found."""
+    scan = _blank_noncode(source)
+
+    # depth prefix: depth[i] = brace depth just before scan[i]
+    depths = []
+    d = 0
+    for ch in scan:
+        depths.append(d)
+        if ch == '{':
+            d += 1
+        elif ch == '}':
+            d = max(0, d - 1)
+
+    protos: list[str] = []
+    seen: set[str] = set()
+    first_pos: int | None = None
+    for m in _INO_FUNC_RE.finditer(scan):
+        sig_start = m.start()
+        if depths[m.end() - 1] != 0:
+            continue  # method body / nested — the '{' must open at depth 0
+        rtype = ' '.join(m.group(1).split())
+        name = m.group(2)
+        params = ' '.join(m.group(3).split())
+        if not rtype or name in _INO_CTRL_KEYWORDS:
+            continue
+        first_tok = rtype.split()[0] if rtype.split() else ''
+        if first_tok in _INO_CTRL_KEYWORDS:
+            continue
+        if '::' in rtype or '::' in name or 'operator' in rtype:
+            continue  # class methods / operators declare themselves
+        if '<' in rtype or '>' in rtype or 'template' in rtype.split():
+            continue  # templated heads/returns — never guess those
+        if '=' in params or '{' in params:
+            continue  # default args would be re-stated -> hard error
+        # a `template<...>` head on a preceding line makes a bare prototype wrong
+        lookback = scan[max(0, sig_start - 160):sig_start]
+        if re.search(r'template\s*<[^<>]*>\s*$', lookback):
+            continue
+        proto = f'{rtype} {name}({params});'
+        if proto not in seen:
+            seen.add(proto)
+            protos.append(proto)
+        if first_pos is None:
+            first_pos = sig_start
+
+    if not protos or first_pos is None:
+        return source
+
+    insert_line = source.count('\n', 0, first_pos) + 1
+    block = (
+        '// Velxio: auto-generated forward declarations (.ino semantics)\n'
+        + '\n'.join(protos)
+        + f'\n#line {insert_line}\n'
+    )
+    return source[:first_pos] + block + source[first_pos:]
+
+
 def _prepare_persistent_project_dir(
     idf_target: str,
     variant_key: str = 'default',
@@ -2490,11 +2631,18 @@ class ESPIDFCompiler:
         for line in rendered.splitlines():
             if line.startswith(drops):
                 continue
-            # IDF 5.0 renamed ESP_TASK_WDT → ESP_TASK_WDT_EN.
+            # IDF 5.0 split ESP_TASK_WDT into ESP_TASK_WDT_EN (compile the
+            # implementation) and ESP_TASK_WDT_INIT (auto-start at boot).
+            # The v4.4 template's `=n` used to become `EN=n`, which compiles
+            # the API out entirely — every sketch calling esp_task_wdt_add/
+            # reset (Firebase's ESP32 client does internally) died at link
+            # with "undefined reference to esp_task_wdt_*". Keep the intent
+            # (no watchdog running under emulation) while linking the API:
+            # compile it in, never auto-start it.
             if line.startswith('CONFIG_ESP_TASK_WDT='):
-                line = line.replace(
-                    'CONFIG_ESP_TASK_WDT=', 'CONFIG_ESP_TASK_WDT_EN=', 1
-                )
+                lines.append('CONFIG_ESP_TASK_WDT_EN=y')
+                lines.append('CONFIG_ESP_TASK_WDT_INIT=n')
+                continue
             lines.append(line)
         return '\n'.join(lines) + '\n'
 
@@ -3237,6 +3385,10 @@ class ESPIDFCompiler:
                     '#include "Arduino.h"\n' + compat_include.rstrip('\n'),
                     1,
                 )
+            # arduino-cli injects ctags prototypes; this path must too, or
+            # helpers defined after loop() fail with "not declared in this
+            # scope". Applied AFTER the prepends so #line stays accurate.
+            main_content = generate_ino_prototypes(main_content)
             sketch_cpp.write_text(main_content, encoding='utf-8')
 
             # Copy additional files (.h, .cpp)

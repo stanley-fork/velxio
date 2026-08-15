@@ -77,6 +77,11 @@ export const CodeEditor = () => {
           automaticLayout: true,
           scrollBeyondLastLine: false,
           wordWrap: 'on',
+          // Hover/suggest/signature widgets escape the editor's box as
+          // position:fixed overlays. Without this, a marker hover wider
+          // than the editor pane slides UNDER the simulator canvas next
+          // to it (sibling stacking context) and can't be read.
+          fixedOverflowWidgets: true,
         }}
       />
     </div>

@@ -56,8 +56,11 @@ export async function verifyCircuitFromStore(): Promise<VerificationResult | nul
         for (const pinName of wiredPinNames) {
           // Skip GND / power-rail pin names — they belong to the rail
           // groups and don't need to be re-asserted as digital sources.
+          // Aux pins included: without this, "5V" would parseInt to pin 5
+          // below and get driven as a GPIO.
           if (group.gnd.includes(pinName)) continue;
           if (group.vcc_pins.includes(pinName)) continue;
+          if (group.aux?.pins.includes(pinName)) continue;
           const arduinoPin = Number.parseInt(pinName, 10);
           // Skip pins we can't identify as a digital GPIO (e.g.
           // 'AREF', 'RESET', 'TX', 'RX' on some boards). Those are

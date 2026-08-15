@@ -517,11 +517,19 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       const { [groupId]: _a, ...restActive } = s.activeGroupFileId;
       const { [groupId]: _o, ...restOpen } = s.openGroupFileIds;
       const { [groupId]: _f, ...restFolders } = s.folderGroups;
+      // Never leave activeGroupId dangling at the deleted group: Monaco (and
+      // every agent write_file) keeps targeting it, while compile reads the
+      // board's group — two same-named sketch.ino files silently diverge and
+      // the build ships the WRONG one (the "leftover template Blink compiled
+      // instead of my code" class). Re-point at any surviving group.
+      const nextActive =
+        s.activeGroupId === groupId ? Object.keys(rest)[0] ?? '' : s.activeGroupId;
       return {
         fileGroups: rest,
         activeGroupFileId: restActive,
         openGroupFileIds: restOpen,
         folderGroups: restFolders,
+        activeGroupId: nextActive,
       };
     });
   },

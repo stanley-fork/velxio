@@ -529,6 +529,26 @@ export const EditorToolbar = ({
     blog('info', `Starting compilation for ${boardLabel} (${fqbn})...`);
 
     try {
+      // Reconcile the two "active group" pointers before reading sources.
+      // If the editor drifted to another BOARD's group (dangling pointer
+      // after a board delete/add, a restore race), Monaco edits — and the
+      // agent's write_file calls — land in a group this compile silently
+      // ignores, shipping a stale same-named sketch.ino instead of the code
+      // on screen. Re-point the editor at the group being compiled. Chip
+      // program groups are legitimate cross-edits and stay untouched.
+      const edGroup = useEditorStore.getState().activeGroupId;
+      if (
+        activeBoard?.activeFileGroupId &&
+        edGroup !== activeBoard.activeFileGroupId &&
+        !edGroup.startsWith('group-chip-')
+      ) {
+        blog(
+          'warning',
+          `Editor file group (${edGroup}) diverged from the compiled board group ` +
+            `(${activeBoard.activeFileGroupId}) — switching the editor to the compiled group.`,
+        );
+        useEditorStore.getState().setActiveGroup(activeBoard.activeFileGroupId);
+      }
       const groupFiles = activeBoard?.activeFileGroupId
         ? useEditorStore.getState().getGroupFiles(activeBoard.activeFileGroupId)
         : files;

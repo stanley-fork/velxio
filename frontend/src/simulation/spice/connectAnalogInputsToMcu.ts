@@ -145,7 +145,7 @@ export function connectAnalogInputsToMcu(): () => void {
   let replayEpochLatched = false;
 
   function injectVoltagesIntoADC() {
-    const { nodeVoltages, pinNetMap } = useElectricalStore.getState();
+    const { nodeVoltages, pinNetMap, sourcedNets } = useElectricalStore.getState();
     const { boards } = useSimulatorStore.getState();
     for (const board of boards) {
       const adcPins = ADC_PIN_MAP[board.boardKind];
@@ -156,6 +156,12 @@ export function connectAnalogInputsToMcu(): () => void {
       for (const { pinName, channel } of adcPins) {
         const netName = pinNetMap.get(`${board.id}:${pinName}`);
         if (!netName) continue;
+        // Only push nets a real SPICE element drives. A part with no SPICE
+        // model (analog-joystick, sensor modules that inject directly) gets
+        // an auto pull-down, solves to 0 V, and this loop used to stomp the
+        // part's own setAdcVoltage() with that phantom 0 on every solve —
+        // the part read dead no matter what it wrote.
+        if (sourcedNets.size > 0 && !sourcedNets.has(netName)) continue;
         const v = nodeVoltages[netName];
         if (v == null) continue;
         const clamped = Math.max(0, Math.min(vMax, v));

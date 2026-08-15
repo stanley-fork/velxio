@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import {
   searchLibraries,
@@ -279,7 +280,10 @@ export const LibraryManagerModal: React.FC<LibraryManagerModalProps> = ({ isOpen
   if (!isOpen) return null;
   const browsing = !searchQuery.trim();
 
-  return (
+  // Portaled to <body>: the toolbar ancestor has container-type
+  // (container queries), which turns it into the containing block for
+  // position:fixed and shrank the overlay to the toolbar's box.
+  return createPortal(
     <div className="lib-modal-overlay" onClick={onClose}>
       <div className="lib-modal" onClick={(e) => e.stopPropagation()}>
         {/* Header — the pro custom-upload button injects into .lib-modal-header */}
@@ -459,6 +463,7 @@ export const LibraryManagerModal: React.FC<LibraryManagerModalProps> = ({ isOpen
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };
