@@ -82,6 +82,10 @@ export const CodeEditor = () => {
           // than the editor pane slides UNDER the simulator canvas next
           // to it (sibling stacking context) and can't be read.
           fixedOverflowWidgets: true,
+          // Keep quick suggestions alive inside snippet placeholders:
+          // completing `#include <|>` or an if-condition placeholder must
+          // still offer suggestions while the snippet session is active.
+          suggest: { snippetsPreventQuickSuggestions: false },
         }}
       />
     </div>

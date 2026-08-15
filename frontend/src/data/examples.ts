@@ -4484,7 +4484,7 @@ void loop() {
     wires: [
       {
         id: 'w1',
-        start: { componentId: 'arduino-uno', pinName: 'TX' },
+        start: { componentId: 'arduino-uno', pinName: 'GP0' },
         end: { componentId: 'r-led-rx-a', pinName: '1' },
         color: '#ff8800',
       },
