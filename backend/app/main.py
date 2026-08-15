@@ -13,7 +13,7 @@ if sys.platform == 'win32':
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import compile, compile_chip, compile_rom, flash, libraries
+from app.api.routes import compile, compile_chip, compile_rom, flash, intellisense, libraries
 from app.core.config import settings
 from app.core.hooks import run_lifespan_startup
 
@@ -94,6 +94,7 @@ app.include_router(compile.router, prefix="/api/compile", tags=["compilation"])
 app.include_router(compile_chip.router, prefix="/api/compile-chip", tags=["custom-chips"])
 app.include_router(compile_rom.router, prefix="/api/compile-rom", tags=["custom-chips"])
 app.include_router(libraries.router, prefix="/api/libraries", tags=["libraries"])
+app.include_router(intellisense.router, prefix="/api/intellisense", tags=["intellisense"])
 # Hardware flash: subprocesses arduino-cli upload to write a compiled
 # sketch to a real USB-attached board. Desktop-only in practice (the
 # web build has no access to local serial ports without WebSerial),

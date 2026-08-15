@@ -13,6 +13,8 @@ Disallow: /admin
 # Prevent crawling of API endpoints
 Disallow: /api/
 
-# Sitemap (static build-time routes + dynamic public projects)
+# Sitemaps (static build-time routes + dynamic public projects + the docs
+# portal, which is a separate Astro build shipping its own sitemap index)
 Sitemap: https://velxio.dev/sitemap.xml
 Sitemap: https://velxio.dev/sitemap-projects.xml
+Sitemap: https://velxio.dev/docs/sitemap-index.xml

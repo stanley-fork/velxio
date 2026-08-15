@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { registerEditorCommand } from '../../lib/editorCommands';
+import { publishCompileOutput } from '../../lib/intellisenseRegistry';
 import { useEditorStore, chipFileGroupId } from '../../store/useEditorStore';
 import { useSimulatorStore, piRerunScript } from '../../store/useSimulatorStore';
 import { decideEngine } from '../../lib/instantEngine';
@@ -593,6 +594,13 @@ export const EditorToolbar = ({
       // already showed.
       const resultLogs = parseCompileResult(result, boardLabel, boardTarget, lastStreamedLen > 0);
       setCompileLogs((prev: CompilationLog[]) => [...prev, ...resultLogs]);
+
+      // Intellisense seam: hand the raw compiler text to the overlay so it
+      // can paint file:line markers in the editor. Empty string clears the
+      // markers after a successful build. No-op in OSS.
+      publishCompileOutput(
+        result.success ? '' : [result.stderr, result.error].filter(Boolean).join('\n'),
+      );
 
       if (result.success) {
         const program = result.hex_content ?? result.binary_content ?? null;

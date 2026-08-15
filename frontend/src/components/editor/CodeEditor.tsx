@@ -2,6 +2,7 @@ import Editor from '@monaco-editor/react';
 import { useEditorStore } from '../../store/useEditorStore';
 import { useSimulatorStore } from '../../store/useSimulatorStore';
 import { registerRetroAsm, LANGUAGE_ID as RETRO_ASM_ID } from './retroAsmLanguage';
+import { attachIntellisenseMonaco } from '../../lib/intellisenseRegistry';
 
 function getLanguage(filename: string): string {
   const ext = filename.split('.').pop()?.toLowerCase() ?? '';
@@ -62,6 +63,10 @@ export const CodeEditor = () => {
           // Register the 8080/Z80 assembly language once so Monaco knows how
           // to tokenize .s / .asm files when they're opened.
           registerRetroAsm(monaco);
+          // Hand the monaco instance to the intellisense seam. Inert in OSS;
+          // with the pro overlay loaded it registers the completion engine
+          // (idempotent per monaco instance, so per-file remounts are fine).
+          attachIntellisenseMonaco(monaco);
         }}
         onChange={(value) => {
           if (activeFileId) setFileContent(activeFileId, value || '');

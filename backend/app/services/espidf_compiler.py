@@ -1623,6 +1623,24 @@ class ESPIDFCompiler:
         # Dead only when we recognise EVERY identifier as false-on-ESP32.
         return not all(i in self._PP_FALSE for i in idents)
 
+    def _pp_branch_is_provably_true(self, expr: str) -> bool:
+        """True only when EVERY identifier is a macro known-true on ESP32 —
+        the only case where the #elif/#else siblings are provably dead.
+
+        This must stay distinct from _pp_branch_is_live: an UNKNOWN condition
+        is treated as live for scanning, but it must NOT mark the branch
+        chain as taken. GxEPD2 guards its GFX base class as
+        `#if ENABLE_GxEPD2_GFX ... #elif ... #else #include <Adafruit_GFX.h>`
+        with ENABLE_GxEPD2_GFX defaulting to 0 — treating the unknown #if as
+        taken pruned the #else, silently dropped the Adafruit_GFX dependency
+        and broke every GxEPD2 e-paper example (found by the gallery compile
+        smoke, 2026-08-15)."""
+        idents = [
+            i for i in self._PP_IDENT_RE.findall(expr)
+            if i not in ('defined', 'ifdef', 'ifndef')
+        ]
+        return bool(idents) and all(i in self._PP_TRUE for i in idents)
+
     def _detect_external_includes(
         self, code: str, own_files: set[str] | None = None
     ) -> list[str]:
@@ -1663,21 +1681,33 @@ class ESPIDFCompiler:
             if line.startswith('#'):
                 dtv = line[1:].lstrip()
                 if dtv.startswith(('ifdef', 'ifndef', 'if ', 'if(')):
+                    # `taken` gates whether LATER #elif/#else arms are dead.
+                    # It must be set only by PROVABLY-true conditions: an
+                    # unknown #if is scanned as live, but its #else must stay
+                    # live too — the real compiler may well take it (the
+                    # GxEPD2 ENABLE_GxEPD2_GFX default-0 pattern).
                     if dtv.startswith('ifdef'):
                         live = self._pp_branch_is_live(dtv[5:])
+                        taken = self._pp_branch_is_provably_true(dtv[5:])
                     elif dtv.startswith('ifndef'):
-                        # #ifndef X is live unless X is known-defined here.
+                        # #ifndef X is live unless X is known-defined here,
+                        # and provably TRUE when X is known-undefined.
                         idents = self._PP_IDENT_RE.findall(dtv[6:])
                         live = not any(i in self._PP_TRUE for i in idents)
+                        taken = bool(idents) and all(i in self._PP_FALSE for i in idents)
                     else:
                         live = self._pp_branch_is_live(dtv[2:])
-                    stack.append((live, live))
+                        taken = self._pp_branch_is_provably_true(dtv[2:])
+                    stack.append((live, taken))
                     continue
                 if dtv.startswith('elif'):
                     if stack:
                         _cur, taken = stack[-1]
                         live = (not taken) and self._pp_branch_is_live(dtv[4:])
-                        stack[-1] = (live, taken or live)
+                        stack[-1] = (
+                            live,
+                            taken or self._pp_branch_is_provably_true(dtv[4:]),
+                        )
                     continue
                 if dtv.startswith('else'):
                     if stack:
