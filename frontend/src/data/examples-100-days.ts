@@ -325,8 +325,8 @@ class SSD1306_SPI(SSD1306):
 ` },
     ],
     code: '',
-    components: [{"type": "wokwi-ssd1306", "id": "aqi-oled1", "x": 420, "y": 60, "properties": {}}, {"type": "wokwi-dht22", "id": "aqi-dht1", "x": 440, "y": 260, "properties": {"temperature": "28", "humidity": "65"}}],
-    wires: [{"id": "aqi-oled-vcc", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "aqi-oled1", "pinName": "3V3"}, "color": "#ff4444"}, {"id": "aqi-oled-gnd", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "aqi-oled1", "pinName": "GND"}, "color": "#000000"}, {"id": "aqi-oled-sda", "start": {"componentId": "arduino-uno", "pinName": "21"}, "end": {"componentId": "aqi-oled1", "pinName": "DATA"}, "color": "#22aaff"}, {"id": "aqi-oled-scl", "start": {"componentId": "arduino-uno", "pinName": "22"}, "end": {"componentId": "aqi-oled1", "pinName": "CLK"}, "color": "#ff8800"}, {"id": "aqi-dht-vcc", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "aqi-dht1", "pinName": "VCC"}, "color": "#ff4444"}, {"id": "aqi-dht-gnd", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "aqi-dht1", "pinName": "GND"}, "color": "#000000"}, {"id": "aqi-dht-data", "start": {"componentId": "arduino-uno", "pinName": "27"}, "end": {"componentId": "aqi-dht1", "pinName": "SDA"}, "color": "#22cc66"}],
+    components: [{"type": "wokwi-ssd1306", "id": "aqi-oled1", "x": 420, "y": 60, "properties": {}}, {"type": "wokwi-dht22", "id": "aqi-dht1", "x": 440, "y": 260, "properties": {"temperature": "28", "humidity": "65"}}, {"type": "wokwi-gas-sensor", "id": "aqi-mq135", "x": 640, "y": 300, "properties": {}}, {"type": "wokwi-gas-sensor", "id": "aqi-mq7", "x": 800, "y": 300, "properties": {}}, {"type": "wokwi-gas-sensor", "id": "aqi-pm", "x": 960, "y": 300, "properties": {}}, {"type": "wokwi-resistor", "id": "aqi-rpm", "x": 1120, "y": 60, "properties": {"value": "220"}}, {"type": "wokwi-led", "id": "aqi-pmled", "x": 1120, "y": 160, "properties": {"color": "red", "label": "PM LED"}}],
+    wires: [{"id": "aqi-oled-vcc", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "aqi-oled1", "pinName": "3V3"}, "color": "#ff4444"}, {"id": "aqi-oled-gnd", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "aqi-oled1", "pinName": "GND"}, "color": "#000000"}, {"id": "aqi-oled-sda", "start": {"componentId": "arduino-uno", "pinName": "21"}, "end": {"componentId": "aqi-oled1", "pinName": "DATA"}, "color": "#22aaff"}, {"id": "aqi-oled-scl", "start": {"componentId": "arduino-uno", "pinName": "22"}, "end": {"componentId": "aqi-oled1", "pinName": "CLK"}, "color": "#ff8800"}, {"id": "aqi-dht-vcc", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "aqi-dht1", "pinName": "VCC"}, "color": "#ff4444"}, {"id": "aqi-dht-gnd", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "aqi-dht1", "pinName": "GND"}, "color": "#000000"}, {"id": "aqi-dht-data", "start": {"componentId": "arduino-uno", "pinName": "27"}, "end": {"componentId": "aqi-dht1", "pinName": "SDA"}, "color": "#22cc66"}, {"id": "aqi-mq135-vcc", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "aqi-mq135", "pinName": "VCC"}, "color": "#ff4444"}, {"id": "aqi-mq135-gnd", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "aqi-mq135", "pinName": "GND"}, "color": "#000000"}, {"id": "aqi-mq135-aout", "start": {"componentId": "aqi-mq135", "pinName": "AOUT"}, "end": {"componentId": "arduino-uno", "pinName": "34"}, "color": "#22aaff"}, {"id": "aqi-mq7-vcc", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "aqi-mq7", "pinName": "VCC"}, "color": "#ff4444"}, {"id": "aqi-mq7-gnd", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "aqi-mq7", "pinName": "GND"}, "color": "#000000"}, {"id": "aqi-mq7-aout", "start": {"componentId": "aqi-mq7", "pinName": "AOUT"}, "end": {"componentId": "arduino-uno", "pinName": "33"}, "color": "#22aaff"}, {"id": "aqi-pm-vcc", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "aqi-pm", "pinName": "VCC"}, "color": "#ff4444"}, {"id": "aqi-pm-gnd", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "aqi-pm", "pinName": "GND"}, "color": "#000000"}, {"id": "aqi-pm-aout", "start": {"componentId": "aqi-pm", "pinName": "AOUT"}, "end": {"componentId": "arduino-uno", "pinName": "35"}, "color": "#22aaff"}, {"id": "aqi-pmled-a", "start": {"componentId": "arduino-uno", "pinName": "4"}, "end": {"componentId": "aqi-rpm", "pinName": "1"}, "color": "#cc44cc"}, {"id": "aqi-pmled-b", "start": {"componentId": "aqi-rpm", "pinName": "2"}, "end": {"componentId": "aqi-pmled", "pinName": "A"}, "color": "#cc44cc"}, {"id": "aqi-pmled-c", "start": {"componentId": "aqi-pmled", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}],
     tags: ["100-days", "dht", "esp32", "http_server", "i2c_oled", "micropython", "wifi"],
   },
   {
@@ -364,8 +364,8 @@ while True:
 ` },
     ],
     code: '',
-    components: [],
-    wires: [],
+    components: [{"type": "wokwi-photoresistor-sensor", "id": "night-ldr", "x": 430, "y": 300, "properties": {"lux": 400, "dark": "1M", "k": 20, "pullup": "100k"}}, {"type": "wokwi-resistor", "id": "night-r1", "x": 620, "y": 40, "properties": {"value": "220"}}, {"type": "wokwi-led", "id": "night-led1", "x": 620, "y": 140, "properties": {"color": "yellow", "label": "LAMP"}}],
+    wires: [{"id": "night-w1", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "night-ldr", "pinName": "VCC"}, "color": "#ff4444"}, {"id": "night-w2", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "night-ldr", "pinName": "GND"}, "color": "#000000"}, {"id": "night-w3", "start": {"componentId": "night-ldr", "pinName": "AO"}, "end": {"componentId": "arduino-uno", "pinName": "34"}, "color": "#22aaff"}, {"id": "night-w4", "start": {"componentId": "arduino-uno", "pinName": "2"}, "end": {"componentId": "night-r1", "pinName": "1"}, "color": "#cc44cc"}, {"id": "night-w5", "start": {"componentId": "night-r1", "pinName": "2"}, "end": {"componentId": "night-led1", "pinName": "A"}, "color": "#cc44cc"}, {"id": "night-w6", "start": {"componentId": "night-led1", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}],
     tags: ["100-days", "esp32", "ldr", "micropython"],
   },
   {
@@ -660,7 +660,12 @@ WIFI_PASS = "pass"
 AUTH = "jXJlUYM2K8a5uA2c"
 
 # ADC
-adc = ADC(0)
+# The original sketch targets a NodeMCU with a single 10-bit ADC (\`ADC(0)\`).
+# Here the ADC is per-pin and 12-bit: GPIO34 is ADC1 and input-only, which is
+# what the Velxio canvas wires the battery divider (potentiometer) to.
+adc = ADC(Pin(34))
+adc.atten(ADC.ATTN_11DB)   # full 0-3.3 V range
+ADC_FULL_SCALE = 4095      # 12-bit here (the NodeMCU original used 1023)
 RATIO = 0.863
 
 BATTERY_TABLE = [
@@ -672,7 +677,7 @@ BATTERY_TABLE = [
 
 def read_voltage(samples=20):
     raw = sum(adc.read() for _ in range(samples)) / samples
-    v_a0 = (raw / 1023) * 3.3
+    v_a0 = (raw / ADC_FULL_SCALE) * 3.3
     v_bat = (v_a0 * 2) * RATIO
     return round(v_bat, 2)
 
@@ -732,8 +737,8 @@ while True:
 ` },
     ],
     code: '',
-    components: [],
-    wires: [],
+    components: [{"type": "wokwi-potentiometer", "id": "bat-pot1", "x": 430, "y": 300, "properties": {"value": 800}}],
+    wires: [{"id": "bat-w1", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "bat-pot1", "pinName": "VCC"}, "color": "#ff4444"}, {"id": "bat-w2", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "bat-pot1", "pinName": "GND"}, "color": "#000000"}, {"id": "bat-w3", "start": {"componentId": "bat-pot1", "pinName": "SIG"}, "end": {"componentId": "arduino-uno", "pinName": "34"}, "color": "#22aaff"}],
     tags: ["100-days", "blynk", "blynk_cloud", "esp32", "micropython", "wifi"],
   },
   {
@@ -748,7 +753,9 @@ while True:
       { name: "main.py", content: `from machine import Pin, UART
 
 uart = UART(0, 9600)
-led = Pin("LED", Pin.OUT)
+# There is no named "LED" pin on this port — GPIO2 is the DevKit v1 onboard
+# LED position, and the Velxio canvas wires an LED + 220R there.
+led = Pin(2, Pin.OUT)
 
 print("Bluetooth Control Ready")
 
@@ -770,8 +777,8 @@ while True:
 ` },
     ],
     code: '',
-    components: [],
-    wires: [],
+    components: [{"type": "wokwi-resistor", "id": "ble-r1", "x": 430, "y": 40, "properties": {"value": "220"}}, {"type": "wokwi-led", "id": "ble-led1", "x": 430, "y": 140, "properties": {"color": "blue", "label": "BT LED"}}],
+    wires: [{"id": "ble-w1", "start": {"componentId": "arduino-uno", "pinName": "2"}, "end": {"componentId": "ble-r1", "pinName": "1"}, "color": "#cc44cc"}, {"id": "ble-w2", "start": {"componentId": "ble-r1", "pinName": "2"}, "end": {"componentId": "ble-led1", "pinName": "A"}, "color": "#cc44cc"}, {"id": "ble-w3", "start": {"componentId": "ble-led1", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}],
     tags: ["100-days", "ble", "esp32", "micropython"],
   },
   {
@@ -1116,8 +1123,8 @@ while True:
 ` },
     ],
     code: '',
-    components: [],
-    wires: [],
+    components: [{"type": "velxio-relay", "id": "pblynk-rly", "x": 430, "y": 120, "properties": {"coil_voltage": 3.3, "coil_resistance": 1000}}, {"type": "wokwi-resistor", "id": "pblynk-rlamp", "x": 570, "y": 40, "properties": {"value": "220"}}, {"type": "wokwi-led", "id": "pblynk-lamp", "x": 570, "y": 140, "properties": {"color": "red", "label": "LOAD"}}],
+    wires: [{"id": "pblynk-w1", "start": {"componentId": "arduino-uno", "pinName": "GP2"}, "end": {"componentId": "pblynk-rly", "pinName": "COIL+"}, "color": "#ff8800"}, {"id": "pblynk-w2", "start": {"componentId": "pblynk-rly", "pinName": "COIL-"}, "end": {"componentId": "arduino-uno", "pinName": "GND.1"}, "color": "#000000"}, {"id": "pblynk-w3", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "pblynk-rly", "pinName": "COM"}, "color": "#ff4444"}, {"id": "pblynk-w4", "start": {"componentId": "pblynk-rly", "pinName": "NO"}, "end": {"componentId": "pblynk-rlamp", "pinName": "1"}, "color": "#cc44cc"}, {"id": "pblynk-w5", "start": {"componentId": "pblynk-rlamp", "pinName": "2"}, "end": {"componentId": "pblynk-lamp", "pinName": "A"}, "color": "#cc44cc"}, {"id": "pblynk-w6", "start": {"componentId": "pblynk-lamp", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "GND.1"}, "color": "#000000"}],
     tags: ["100-days", "blynk", "blynk_cloud", "micropython", "pi-pico-w", "pico-w", "wifi"],
   },
   {
@@ -1465,8 +1472,8 @@ while True:
 ` },
     ],
     code: '',
-    components: [],
-    wires: [],
+    components: [{"type": "velxio-relay", "id": "fan-rly", "x": 430, "y": 120, "properties": {"coil_voltage": 3.3, "coil_resistance": 1000}}, {"type": "wokwi-resistor", "id": "fan-rlamp", "x": 570, "y": 40, "properties": {"value": "220"}}, {"type": "wokwi-led", "id": "fan-lamp", "x": 570, "y": 140, "properties": {"color": "blue", "label": "FAN"}}],
+    wires: [{"id": "fan-w1", "start": {"componentId": "arduino-uno", "pinName": "15"}, "end": {"componentId": "fan-rly", "pinName": "COIL+"}, "color": "#ff8800"}, {"id": "fan-w2", "start": {"componentId": "fan-rly", "pinName": "COIL-"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}, {"id": "fan-w3", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "fan-rly", "pinName": "COM"}, "color": "#ff4444"}, {"id": "fan-w4", "start": {"componentId": "fan-rly", "pinName": "NO"}, "end": {"componentId": "fan-rlamp", "pinName": "1"}, "color": "#cc44cc"}, {"id": "fan-w5", "start": {"componentId": "fan-rlamp", "pinName": "2"}, "end": {"componentId": "fan-lamp", "pinName": "A"}, "color": "#cc44cc"}, {"id": "fan-w6", "start": {"componentId": "fan-lamp", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}],
     tags: ["100-days", "blynk", "blynk_cloud", "esp32", "micropython", "wifi"],
   },
   {
@@ -1508,8 +1515,8 @@ while True:
 ` },
     ],
     code: '',
-    components: [],
-    wires: [],
+    components: [{"type": "wokwi-pushbutton", "id": "clap-btn1", "x": 430, "y": 300, "properties": {}}, {"type": "wokwi-resistor", "id": "clap-pull1", "x": 460, "y": 390, "properties": {"value": "10000"}}, {"type": "wokwi-resistor", "id": "clap-r1", "x": 640, "y": 40, "properties": {"value": "220"}}, {"type": "wokwi-led", "id": "clap-led1", "x": 640, "y": 140, "properties": {"color": "yellow", "label": "LAMP"}}],
+    wires: [{"id": "clap-w1", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "clap-pull1", "pinName": "1"}, "color": "#000000"}, {"id": "clap-w2", "start": {"componentId": "clap-pull1", "pinName": "2"}, "end": {"componentId": "arduino-uno", "pinName": "15"}, "color": "#ff8800"}, {"id": "clap-w3", "start": {"componentId": "arduino-uno", "pinName": "15"}, "end": {"componentId": "clap-btn1", "pinName": "1.l"}, "color": "#ff8800"}, {"id": "clap-w4", "start": {"componentId": "clap-btn1", "pinName": "2.l"}, "end": {"componentId": "arduino-uno", "pinName": "3V3"}, "color": "#ff4444"}, {"id": "clap-w5", "start": {"componentId": "arduino-uno", "pinName": "2"}, "end": {"componentId": "clap-r1", "pinName": "1"}, "color": "#cc44cc"}, {"id": "clap-w6", "start": {"componentId": "clap-r1", "pinName": "2"}, "end": {"componentId": "clap-led1", "pinName": "A"}, "color": "#cc44cc"}, {"id": "clap-w7", "start": {"componentId": "clap-led1", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}],
     tags: ["100-days", "esp32", "micropython"],
   },
   {
@@ -1611,8 +1618,8 @@ while True:
 ` },
     ],
     code: '',
-    components: [],
-    wires: [],
+    components: [{"type": "wokwi-resistor", "id": "dcm-r1", "x": 430, "y": 40, "properties": {"value": "220"}}, {"type": "wokwi-led", "id": "dcm-led1", "x": 430, "y": 140, "properties": {"color": "red", "label": "ENA"}}, {"type": "wokwi-resistor", "id": "dcm-r2", "x": 550, "y": 40, "properties": {"value": "220"}}, {"type": "wokwi-led", "id": "dcm-led2", "x": 550, "y": 140, "properties": {"color": "green", "label": "IN1"}}, {"type": "wokwi-resistor", "id": "dcm-r3", "x": 670, "y": 40, "properties": {"value": "220"}}, {"type": "wokwi-led", "id": "dcm-led3", "x": 670, "y": 140, "properties": {"color": "blue", "label": "IN2"}}],
+    wires: [{"id": "dcm-w1", "start": {"componentId": "arduino-uno", "pinName": "13"}, "end": {"componentId": "dcm-r1", "pinName": "1"}, "color": "#cc44cc"}, {"id": "dcm-w2", "start": {"componentId": "dcm-r1", "pinName": "2"}, "end": {"componentId": "dcm-led1", "pinName": "A"}, "color": "#cc44cc"}, {"id": "dcm-w3", "start": {"componentId": "dcm-led1", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}, {"id": "dcm-w4", "start": {"componentId": "arduino-uno", "pinName": "12"}, "end": {"componentId": "dcm-r2", "pinName": "1"}, "color": "#cc44cc"}, {"id": "dcm-w5", "start": {"componentId": "dcm-r2", "pinName": "2"}, "end": {"componentId": "dcm-led2", "pinName": "A"}, "color": "#cc44cc"}, {"id": "dcm-w6", "start": {"componentId": "dcm-led2", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}, {"id": "dcm-w7", "start": {"componentId": "arduino-uno", "pinName": "14"}, "end": {"componentId": "dcm-r3", "pinName": "1"}, "color": "#cc44cc"}, {"id": "dcm-w8", "start": {"componentId": "dcm-r3", "pinName": "2"}, "end": {"componentId": "dcm-led3", "pinName": "A"}, "color": "#cc44cc"}, {"id": "dcm-w9", "start": {"componentId": "dcm-led3", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}],
     tags: ["100-days", "esp32", "micropython", "servo", "wifi"],
   },
   {
@@ -1785,8 +1792,8 @@ while True:
 ` },
     ],
     code: '',
-    components: [],
-    wires: [],
+    components: [{"type": "wokwi-potentiometer", "id": "dim-pot1", "x": 430, "y": 300, "properties": {"value": 512}}, {"type": "wokwi-resistor", "id": "dim-r1", "x": 640, "y": 40, "properties": {"value": "220"}}, {"type": "wokwi-led", "id": "dim-led1", "x": 640, "y": 140, "properties": {"color": "yellow"}}],
+    wires: [{"id": "dim-w1", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "dim-pot1", "pinName": "VCC"}, "color": "#ff4444"}, {"id": "dim-w2", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "dim-pot1", "pinName": "GND"}, "color": "#000000"}, {"id": "dim-w3", "start": {"componentId": "dim-pot1", "pinName": "SIG"}, "end": {"componentId": "arduino-uno", "pinName": "34"}, "color": "#22aaff"}, {"id": "dim-w4", "start": {"componentId": "arduino-uno", "pinName": "2"}, "end": {"componentId": "dim-r1", "pinName": "1"}, "color": "#cc44cc"}, {"id": "dim-w5", "start": {"componentId": "dim-r1", "pinName": "2"}, "end": {"componentId": "dim-led1", "pinName": "A"}, "color": "#cc44cc"}, {"id": "dim-w6", "start": {"componentId": "dim-led1", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}],
     tags: ["100-days", "esp32", "micropython", "servo"],
   },
   {
@@ -1880,8 +1887,8 @@ while True:
 ` },
     ],
     code: '',
-    components: [],
-    wires: [],
+    components: [{"type": "wokwi-pushbutton", "id": "ir2-btn1", "x": 430, "y": 300, "properties": {}}, {"type": "wokwi-resistor", "id": "ir2-pull1", "x": 460, "y": 390, "properties": {"value": "10000"}}, {"type": "wokwi-pushbutton", "id": "ir2-btn2", "x": 560, "y": 300, "properties": {}}, {"type": "wokwi-resistor", "id": "ir2-pull2", "x": 590, "y": 390, "properties": {"value": "10000"}}, {"type": "wokwi-resistor", "id": "ir2-r1", "x": 700, "y": 40, "properties": {"value": "220"}}, {"type": "wokwi-led", "id": "ir2-led1", "x": 700, "y": 140, "properties": {"color": "red", "label": "IN"}}, {"type": "wokwi-resistor", "id": "ir2-r2", "x": 820, "y": 40, "properties": {"value": "220"}}, {"type": "wokwi-led", "id": "ir2-led2", "x": 820, "y": 140, "properties": {"color": "green", "label": "OUT"}}],
+    wires: [{"id": "ir2-w1", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "ir2-pull1", "pinName": "1"}, "color": "#ff4444"}, {"id": "ir2-w2", "start": {"componentId": "ir2-pull1", "pinName": "2"}, "end": {"componentId": "arduino-uno", "pinName": "14"}, "color": "#ff8800"}, {"id": "ir2-w3", "start": {"componentId": "arduino-uno", "pinName": "14"}, "end": {"componentId": "ir2-btn1", "pinName": "1.l"}, "color": "#ff8800"}, {"id": "ir2-w4", "start": {"componentId": "ir2-btn1", "pinName": "2.l"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}, {"id": "ir2-w5", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "ir2-pull2", "pinName": "1"}, "color": "#ff4444"}, {"id": "ir2-w6", "start": {"componentId": "ir2-pull2", "pinName": "2"}, "end": {"componentId": "arduino-uno", "pinName": "27"}, "color": "#ff8800"}, {"id": "ir2-w7", "start": {"componentId": "arduino-uno", "pinName": "27"}, "end": {"componentId": "ir2-btn2", "pinName": "1.l"}, "color": "#ff8800"}, {"id": "ir2-w8", "start": {"componentId": "ir2-btn2", "pinName": "2.l"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}, {"id": "ir2-w9", "start": {"componentId": "arduino-uno", "pinName": "26"}, "end": {"componentId": "ir2-r1", "pinName": "1"}, "color": "#cc44cc"}, {"id": "ir2-w10", "start": {"componentId": "ir2-r1", "pinName": "2"}, "end": {"componentId": "ir2-led1", "pinName": "A"}, "color": "#cc44cc"}, {"id": "ir2-w11", "start": {"componentId": "ir2-led1", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}, {"id": "ir2-w12", "start": {"componentId": "arduino-uno", "pinName": "25"}, "end": {"componentId": "ir2-r2", "pinName": "1"}, "color": "#cc44cc"}, {"id": "ir2-w13", "start": {"componentId": "ir2-r2", "pinName": "2"}, "end": {"componentId": "ir2-led2", "pinName": "A"}, "color": "#cc44cc"}, {"id": "ir2-w14", "start": {"componentId": "ir2-led2", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}],
     tags: ["100-days", "esp32", "micropython", "telegram", "wifi"],
   },
   {
@@ -2069,8 +2076,8 @@ while True:
 ` },
     ],
     code: '',
-    components: [],
-    wires: [],
+    components: [{"type": "wokwi-resistor", "id": "bleled-r1", "x": 430, "y": 40, "properties": {"value": "220"}}, {"type": "wokwi-led", "id": "bleled-led1", "x": 430, "y": 140, "properties": {"color": "blue", "label": "BLE"}}],
+    wires: [{"id": "bleled-w1", "start": {"componentId": "arduino-uno", "pinName": "2"}, "end": {"componentId": "bleled-r1", "pinName": "1"}, "color": "#cc44cc"}, {"id": "bleled-w2", "start": {"componentId": "bleled-r1", "pinName": "2"}, "end": {"componentId": "bleled-led1", "pinName": "A"}, "color": "#cc44cc"}, {"id": "bleled-w3", "start": {"componentId": "bleled-led1", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}],
     tags: ["100-days", "ble", "esp32", "micropython"],
   },
   {
@@ -2170,8 +2177,8 @@ while True:
 ` },
     ],
     code: '',
-    components: [],
-    wires: [],
+    components: [{"type": "wokwi-pushbutton", "id": "irtg-btn1", "x": 430, "y": 300, "properties": {}}, {"type": "wokwi-resistor", "id": "irtg-pull1", "x": 460, "y": 390, "properties": {"value": "10000"}}],
+    wires: [{"id": "irtg-w1", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "irtg-pull1", "pinName": "1"}, "color": "#ff4444"}, {"id": "irtg-w2", "start": {"componentId": "irtg-pull1", "pinName": "2"}, "end": {"componentId": "arduino-uno", "pinName": "27"}, "color": "#ff8800"}, {"id": "irtg-w3", "start": {"componentId": "arduino-uno", "pinName": "27"}, "end": {"componentId": "irtg-btn1", "pinName": "1.l"}, "color": "#ff8800"}, {"id": "irtg-w4", "start": {"componentId": "irtg-btn1", "pinName": "2.l"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}],
     tags: ["100-days", "esp32", "micropython", "telegram", "wifi"],
   },
   {
@@ -2562,7 +2569,9 @@ app.run(host="0.0.0.0", port=5000)
 from machine import Pin
 
 # LED
-led = Pin("LED", Pin.OUT)
+# ESP32: GPIO2 (DevKit v1 onboard LED position) — the canvas wires an
+# LED + 220R there so the state is visible.
+led = Pin(2, Pin.OUT)
 
 # WiFi
 ssid = "kritish"
@@ -2597,8 +2606,8 @@ while True:
 ` },
     ],
     code: '',
-    components: [],
-    wires: [],
+    components: [{"type": "wokwi-resistor", "id": "flask-r1", "x": 430, "y": 40, "properties": {"value": "220"}}, {"type": "wokwi-led", "id": "flask-led1", "x": 430, "y": 140, "properties": {"color": "green", "label": "WEB LED"}}],
+    wires: [{"id": "flask-w1", "start": {"componentId": "arduino-uno", "pinName": "2"}, "end": {"componentId": "flask-r1", "pinName": "1"}, "color": "#cc44cc"}, {"id": "flask-w2", "start": {"componentId": "flask-r1", "pinName": "2"}, "end": {"componentId": "flask-led1", "pinName": "A"}, "color": "#cc44cc"}, {"id": "flask-w3", "start": {"componentId": "flask-led1", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}],
     tags: ["100-days", "esp32", "http_server", "micropython", "wifi"],
   },
   {
@@ -3743,8 +3752,8 @@ import dsm_code1_csv
 ` },
     ],
     code: '',
-    components: [],
-    wires: [],
+    components: [{"type": "wokwi-potentiometer", "id": "dsm-pot1", "x": 430, "y": 300, "properties": {"value": 512}}, {"type": "wokwi-potentiometer", "id": "dsm-pot2", "x": 560, "y": 300, "properties": {"value": 512}}, {"type": "wokwi-potentiometer", "id": "dsm-pot3", "x": 690, "y": 300, "properties": {"value": 512}}, {"type": "wokwi-resistor", "id": "dsm-r1", "x": 430, "y": 40, "properties": {"value": "220"}}, {"type": "wokwi-led", "id": "dsm-led1", "x": 430, "y": 140, "properties": {"color": "red", "label": "FAN"}}, {"type": "wokwi-resistor", "id": "dsm-r2", "x": 560, "y": 40, "properties": {"value": "220"}}, {"type": "wokwi-led", "id": "dsm-led2", "x": 560, "y": 140, "properties": {"color": "orange", "label": "IRON"}}, {"type": "wokwi-resistor", "id": "dsm-r3", "x": 690, "y": 40, "properties": {"value": "220"}}, {"type": "wokwi-led", "id": "dsm-led3", "x": 690, "y": 140, "properties": {"color": "blue", "label": "ALERT"}}],
+    wires: [{"id": "dsm-w1", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "dsm-pot1", "pinName": "VCC"}, "color": "#ff4444"}, {"id": "dsm-w2", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "dsm-pot1", "pinName": "GND"}, "color": "#000000"}, {"id": "dsm-w3", "start": {"componentId": "dsm-pot1", "pinName": "SIG"}, "end": {"componentId": "arduino-uno", "pinName": "34"}, "color": "#22aaff"}, {"id": "dsm-w4", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "dsm-pot2", "pinName": "VCC"}, "color": "#ff4444"}, {"id": "dsm-w5", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "dsm-pot2", "pinName": "GND"}, "color": "#000000"}, {"id": "dsm-w6", "start": {"componentId": "dsm-pot2", "pinName": "SIG"}, "end": {"componentId": "arduino-uno", "pinName": "35"}, "color": "#22aaff"}, {"id": "dsm-w7", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "dsm-pot3", "pinName": "VCC"}, "color": "#ff4444"}, {"id": "dsm-w8", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "dsm-pot3", "pinName": "GND"}, "color": "#000000"}, {"id": "dsm-w9", "start": {"componentId": "dsm-pot3", "pinName": "SIG"}, "end": {"componentId": "arduino-uno", "pinName": "32"}, "color": "#22aaff"}, {"id": "dsm-w10", "start": {"componentId": "arduino-uno", "pinName": "26"}, "end": {"componentId": "dsm-r1", "pinName": "1"}, "color": "#cc44cc"}, {"id": "dsm-w11", "start": {"componentId": "dsm-r1", "pinName": "2"}, "end": {"componentId": "dsm-led1", "pinName": "A"}, "color": "#cc44cc"}, {"id": "dsm-w12", "start": {"componentId": "dsm-led1", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}, {"id": "dsm-w13", "start": {"componentId": "arduino-uno", "pinName": "27"}, "end": {"componentId": "dsm-r2", "pinName": "1"}, "color": "#cc44cc"}, {"id": "dsm-w14", "start": {"componentId": "dsm-r2", "pinName": "2"}, "end": {"componentId": "dsm-led2", "pinName": "A"}, "color": "#cc44cc"}, {"id": "dsm-w15", "start": {"componentId": "dsm-led2", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}, {"id": "dsm-w16", "start": {"componentId": "arduino-uno", "pinName": "2"}, "end": {"componentId": "dsm-r3", "pinName": "1"}, "color": "#cc44cc"}, {"id": "dsm-w17", "start": {"componentId": "dsm-r3", "pinName": "2"}, "end": {"componentId": "dsm-led3", "pinName": "A"}, "color": "#cc44cc"}, {"id": "dsm-w18", "start": {"componentId": "dsm-led3", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}],
     tags: ["100-days", "blynk", "blynk_cloud", "esp32", "micropython", "ota", "wifi"],
   },
   {
@@ -3977,8 +3986,8 @@ while True:
 ` },
     ],
     code: '',
-    components: [],
-    wires: [],
+    components: [{"type": "velxio-relay", "id": "prelay-rly", "x": 430, "y": 120, "properties": {"coil_voltage": 3.3, "coil_resistance": 1000}}, {"type": "wokwi-resistor", "id": "prelay-rlamp", "x": 570, "y": 40, "properties": {"value": "220"}}, {"type": "wokwi-led", "id": "prelay-lamp", "x": 570, "y": 140, "properties": {"color": "red", "label": "LOAD"}}],
+    wires: [{"id": "prelay-w1", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "prelay-rly", "pinName": "COIL+"}, "color": "#ff4444"}, {"id": "prelay-w2", "start": {"componentId": "prelay-rly", "pinName": "COIL-"}, "end": {"componentId": "arduino-uno", "pinName": "GP2"}, "color": "#ff8800"}, {"id": "prelay-w3", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "prelay-rly", "pinName": "COM"}, "color": "#ff4444"}, {"id": "prelay-w4", "start": {"componentId": "prelay-rly", "pinName": "NO"}, "end": {"componentId": "prelay-rlamp", "pinName": "1"}, "color": "#cc44cc"}, {"id": "prelay-w5", "start": {"componentId": "prelay-rlamp", "pinName": "2"}, "end": {"componentId": "prelay-lamp", "pinName": "A"}, "color": "#cc44cc"}, {"id": "prelay-w6", "start": {"componentId": "prelay-lamp", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "GND.1"}, "color": "#000000"}],
     tags: ["100-days", "micropython", "pi-pico-w", "pico-w", "wifi"],
   },
   {
@@ -4275,8 +4284,11 @@ WIFI_SSID = "kritish"
 WIFI_PASS = "@pass"
 
 # 📍 Pins
-SOIL_PIN  = 3   # ADC
-RELAY_PIN = 1   # Relay (active LOW)
+# The original pinout is for the XIAO form factor (GPIO3 = ADC, GPIO1 = relay).
+# On the DevKit board those two pads are UART0 RX/TX — using them kills the
+# serial console. GPIO34 is ADC1 (input-only) and GPIO26 is a free output.
+SOIL_PIN  = 34  # ADC (ADC1 channel, input-only)
+RELAY_PIN = 26  # Relay (active LOW)
 
 # 🌱 Soil ADC setup
 soil = ADC(Pin(SOIL_PIN))
@@ -4360,8 +4372,8 @@ while True:
 ` },
     ],
     code: '',
-    components: [],
-    wires: [],
+    components: [{"type": "wokwi-potentiometer", "id": "irr-pot1", "x": 430, "y": 300, "properties": {"value": 300}}, {"type": "velxio-relay", "id": "irr-rly", "x": 640, "y": 120, "properties": {"coil_voltage": 3.3, "coil_resistance": 1000}}, {"type": "wokwi-resistor", "id": "irr-rlamp", "x": 780, "y": 40, "properties": {"value": "220"}}, {"type": "wokwi-led", "id": "irr-lamp", "x": 780, "y": 140, "properties": {"color": "blue", "label": "PUMP"}}],
+    wires: [{"id": "irr-w1", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "irr-pot1", "pinName": "VCC"}, "color": "#ff4444"}, {"id": "irr-w2", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "irr-pot1", "pinName": "GND"}, "color": "#000000"}, {"id": "irr-w3", "start": {"componentId": "irr-pot1", "pinName": "SIG"}, "end": {"componentId": "arduino-uno", "pinName": "34"}, "color": "#22aaff"}, {"id": "irr-w4", "start": {"componentId": "arduino-uno", "pinName": "26"}, "end": {"componentId": "irr-rly", "pinName": "COIL+"}, "color": "#ff8800"}, {"id": "irr-w5", "start": {"componentId": "irr-rly", "pinName": "COIL-"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}, {"id": "irr-w6", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "irr-rly", "pinName": "COM"}, "color": "#ff4444"}, {"id": "irr-w7", "start": {"componentId": "irr-rly", "pinName": "NO"}, "end": {"componentId": "irr-rlamp", "pinName": "1"}, "color": "#cc44cc"}, {"id": "irr-w8", "start": {"componentId": "irr-rlamp", "pinName": "2"}, "end": {"componentId": "irr-lamp", "pinName": "A"}, "color": "#cc44cc"}, {"id": "irr-w9", "start": {"componentId": "irr-lamp", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}],
     tags: ["100-days", "blynk", "blynk_cloud", "esp32", "micropython", "wifi"],
   },
   {
@@ -4377,8 +4389,11 @@ while True:
 import time
 
 # ── Hardware setup ────────────────────────────────────────────
-vrx = machine.ADC(machine.Pin(26))  # Joystick X axis
-servo = machine.PWM(machine.Pin(0))
+# The README wires this for a different board (GP26 = ADC0, GP0 = servo).
+# Here ADC1 lives on GPIO32-39 and GPIO0 is a strap pin, so the joystick reads
+# on GPIO34 and the servo is driven from GPIO13.
+vrx = machine.ADC(machine.Pin(34))  # Joystick X axis
+servo = machine.PWM(machine.Pin(13))
 servo.freq(50)  # SG90 = 50Hz
 
 # ── Servo helper ──────────────────────────────────────────────
@@ -4409,8 +4424,8 @@ while True:
 ` },
     ],
     code: '',
-    components: [],
-    wires: [],
+    components: [{"type": "wokwi-analog-joystick", "id": "joy-stick", "x": 430, "y": 300, "properties": {}}, {"type": "wokwi-servo", "id": "joy-servo", "x": 660, "y": 120, "properties": {}}],
+    wires: [{"id": "joy-w1", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "joy-stick", "pinName": "VCC"}, "color": "#ff4444"}, {"id": "joy-w2", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "joy-stick", "pinName": "GND"}, "color": "#000000"}, {"id": "joy-w3", "start": {"componentId": "joy-stick", "pinName": "HORZ"}, "end": {"componentId": "arduino-uno", "pinName": "34"}, "color": "#22aaff"}, {"id": "joy-w4", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "joy-servo", "pinName": "V+"}, "color": "#ff4444"}, {"id": "joy-w5", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "joy-servo", "pinName": "GND"}, "color": "#000000"}, {"id": "joy-w6", "start": {"componentId": "arduino-uno", "pinName": "13"}, "end": {"componentId": "joy-servo", "pinName": "PWM"}, "color": "#ff8800"}],
     tags: ["100-days", "esp32", "micropython", "servo"],
   },
   {
@@ -4690,8 +4705,8 @@ while True:
 ` },
     ],
     code: '',
-    components: [],
-    wires: [],
+    components: [{"type": "wokwi-gas-sensor", "id": "mq4-mq", "x": 430, "y": 300, "properties": {}}, {"type": "wokwi-buzzer", "id": "mq4-buz", "x": 650, "y": 120, "properties": {}}],
+    wires: [{"id": "mq4-w1", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "mq4-mq", "pinName": "VCC"}, "color": "#ff4444"}, {"id": "mq4-w2", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "mq4-mq", "pinName": "GND"}, "color": "#000000"}, {"id": "mq4-w3", "start": {"componentId": "mq4-mq", "pinName": "AOUT"}, "end": {"componentId": "arduino-uno", "pinName": "34"}, "color": "#22aaff"}, {"id": "mq4-w4", "start": {"componentId": "arduino-uno", "pinName": "15"}, "end": {"componentId": "mq4-buz", "pinName": "1"}, "color": "#ff8800"}, {"id": "mq4-w5", "start": {"componentId": "mq4-buz", "pinName": "2"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}],
     tags: ["100-days", "esp32", "micropython"],
   },
   {
@@ -4733,8 +4748,8 @@ while True:
 ` },
     ],
     code: '',
-    components: [],
-    wires: [],
+    components: [{"type": "wokwi-gas-sensor", "id": "mq7-mq", "x": 430, "y": 300, "properties": {}}],
+    wires: [{"id": "mq7-w1", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "mq7-mq", "pinName": "VCC"}, "color": "#ff4444"}, {"id": "mq7-w2", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "mq7-mq", "pinName": "GND"}, "color": "#000000"}, {"id": "mq7-w3", "start": {"componentId": "mq7-mq", "pinName": "AOUT"}, "end": {"componentId": "arduino-uno", "pinName": "35"}, "color": "#22aaff"}],
     tags: ["100-days", "esp32", "micropython"],
   },
   {
@@ -4776,8 +4791,8 @@ while True:
 ` },
     ],
     code: '',
-    components: [],
-    wires: [],
+    components: [{"type": "wokwi-gas-sensor", "id": "mq135-mq", "x": 430, "y": 300, "properties": {}}],
+    wires: [{"id": "mq135-w1", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "mq135-mq", "pinName": "VCC"}, "color": "#ff4444"}, {"id": "mq135-w2", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "mq135-mq", "pinName": "GND"}, "color": "#000000"}, {"id": "mq135-w3", "start": {"componentId": "mq135-mq", "pinName": "AOUT"}, "end": {"componentId": "arduino-uno", "pinName": "34"}, "color": "#22aaff"}],
     tags: ["100-days", "esp32", "micropython", "ota"],
   },
   {
@@ -4800,7 +4815,9 @@ last_weather_time = 0
 weather_temp = 0
 
 # Velxio decodes the hardware I2C controller only (no bit-banged buses)
-i2c = I2C(0, sda=Pin(5), scl=Pin(6), freq=100000)
+# GPIO6 is wired to the internal SPI flash on this module and is not
+# broken out on the DevKit header — use the canonical I2C pads instead.
+i2c = I2C(0, sda=Pin(21), scl=Pin(22), freq=100000)
 oled=ssd1306.SSD1306_I2C(128, 64, i2c)
 
 ssid="ssid"
@@ -5052,7 +5069,7 @@ class SSD1306_SPI(SSD1306):
     ],
     code: '',
     components: [{"type": "wokwi-ssd1306", "id": "watch-oled1", "x": 420, "y": 60, "properties": {}}],
-    wires: [{"id": "watch-oled-vcc", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "watch-oled1", "pinName": "3V3"}, "color": "#ff4444"}, {"id": "watch-oled-gnd", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "watch-oled1", "pinName": "GND"}, "color": "#000000"}, {"id": "watch-oled-sda", "start": {"componentId": "arduino-uno", "pinName": "5"}, "end": {"componentId": "watch-oled1", "pinName": "DATA"}, "color": "#22aaff"}, {"id": "watch-oled-scl", "start": {"componentId": "arduino-uno", "pinName": "6"}, "end": {"componentId": "watch-oled1", "pinName": "CLK"}, "color": "#ff8800"}],
+    wires: [{"id": "watch-oled-vcc", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "watch-oled1", "pinName": "3V3"}, "color": "#ff4444"}, {"id": "watch-oled-gnd", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "watch-oled1", "pinName": "GND"}, "color": "#000000"}, {"id": "watch-oled-sda", "start": {"componentId": "arduino-uno", "pinName": "21"}, "end": {"componentId": "watch-oled1", "pinName": "DATA"}, "color": "#22aaff"}, {"id": "watch-oled-scl", "start": {"componentId": "arduino-uno", "pinName": "22"}, "end": {"componentId": "watch-oled1", "pinName": "CLK"}, "color": "#ff8800"}],
     tags: ["100-days", "esp32", "i2c_oled", "micropython", "wifi"],
   },
   {
@@ -5249,7 +5266,7 @@ ota.check_and_update()` },
       { name: "main.py", content: `import time
 from machine import Pin
 
-led = Pin("LED", Pin.OUT)
+led = Pin(15, Pin.OUT)  # GP15: the CYW43 "LED" pin is not visible on the canvas
 
 while True:
     led.on()
@@ -5333,8 +5350,8 @@ def check_and_update():
         print("Already on latest version!")` },
     ],
     code: '',
-    components: [],
-    wires: [],
+    components: [{"type": "wokwi-resistor", "id": "ota-r1", "x": 430, "y": 40, "properties": {"value": "220"}}, {"type": "wokwi-led", "id": "ota-led1", "x": 430, "y": 140, "properties": {"color": "green", "label": "OTA"}}],
+    wires: [{"id": "ota-w1", "start": {"componentId": "arduino-uno", "pinName": "GP15"}, "end": {"componentId": "ota-r1", "pinName": "1"}, "color": "#cc44cc"}, {"id": "ota-w2", "start": {"componentId": "ota-r1", "pinName": "2"}, "end": {"componentId": "ota-led1", "pinName": "A"}, "color": "#cc44cc"}, {"id": "ota-w3", "start": {"componentId": "ota-led1", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "GND.1"}, "color": "#000000"}],
     tags: ["100-days", "micropython", "ota", "pi-pico-w", "pico-w", "wifi"],
   },
   {
@@ -5350,7 +5367,7 @@ def check_and_update():
 import time
 
 pir = Pin(16, Pin.IN, Pin.PULL_DOWN)   # PIR sensor pin
-led = Pin("LED", Pin.OUT)              # Built-in LED
+led = Pin(15, Pin.OUT)  # GP15: the CYW43 "LED" pin is not visible on the canvas              # Built-in LED
 
 print("PIR Motion Detector Started...")
 
@@ -5365,8 +5382,8 @@ while True:
         time.sleep(0.2)` },
     ],
     code: '',
-    components: [],
-    wires: [],
+    components: [{"type": "wokwi-pir-motion-sensor", "id": "ppir-pir", "x": 430, "y": 300, "properties": {}}, {"type": "wokwi-resistor", "id": "ppir-r1", "x": 660, "y": 40, "properties": {"value": "220"}}, {"type": "wokwi-led", "id": "ppir-led1", "x": 660, "y": 140, "properties": {"color": "red", "label": "MOTION"}}],
+    wires: [{"id": "ppir-w1", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "ppir-pir", "pinName": "VCC"}, "color": "#ff4444"}, {"id": "ppir-w2", "start": {"componentId": "arduino-uno", "pinName": "GND.1"}, "end": {"componentId": "ppir-pir", "pinName": "GND"}, "color": "#000000"}, {"id": "ppir-w3", "start": {"componentId": "ppir-pir", "pinName": "OUT"}, "end": {"componentId": "arduino-uno", "pinName": "GP16"}, "color": "#22cc66"}, {"id": "ppir-w4", "start": {"componentId": "arduino-uno", "pinName": "GP15"}, "end": {"componentId": "ppir-r1", "pinName": "1"}, "color": "#cc44cc"}, {"id": "ppir-w5", "start": {"componentId": "ppir-r1", "pinName": "2"}, "end": {"componentId": "ppir-led1", "pinName": "A"}, "color": "#cc44cc"}, {"id": "ppir-w6", "start": {"componentId": "ppir-led1", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "GND.1"}, "color": "#000000"}],
     tags: ["100-days", "micropython", "pi-pico-w", "pico-w"],
   },
   {
@@ -5864,7 +5881,7 @@ from machine import Pin
 SSID = "kritish"
 PASSWORD = "pass"
 
-led = Pin("LED", Pin.OUT)
+led = Pin(15, Pin.OUT)  # GP15: the CYW43 "LED" pin is not visible on the canvas
 led.off()
 
 # ---------- Async WiFi Connect ----------
@@ -5965,8 +5982,8 @@ asyncio.run(main())
 ` },
     ],
     code: '',
-    components: [],
-    wires: [],
+    components: [{"type": "wokwi-resistor", "id": "pasync-r1", "x": 430, "y": 40, "properties": {"value": "220"}}, {"type": "wokwi-led", "id": "pasync-led1", "x": 430, "y": 140, "properties": {"color": "green", "label": "WEB LED"}}],
+    wires: [{"id": "pasync-w1", "start": {"componentId": "arduino-uno", "pinName": "GP15"}, "end": {"componentId": "pasync-r1", "pinName": "1"}, "color": "#cc44cc"}, {"id": "pasync-w2", "start": {"componentId": "pasync-r1", "pinName": "2"}, "end": {"componentId": "pasync-led1", "pinName": "A"}, "color": "#cc44cc"}, {"id": "pasync-w3", "start": {"componentId": "pasync-led1", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "GND.1"}, "color": "#000000"}],
     tags: ["100-days", "micropython", "pi-pico-w", "pico-w", "wifi"],
   },
   {
@@ -6231,8 +6248,8 @@ while True:
 ` },
     ],
     code: '',
-    components: [],
-    wires: [],
+    components: [{"type": "wokwi-servo", "id": "psrv-servo", "x": 460, "y": 120, "properties": {}}],
+    wires: [{"id": "psrv-w1", "start": {"componentId": "arduino-uno", "pinName": "VBUS"}, "end": {"componentId": "psrv-servo", "pinName": "V+"}, "color": "#ff4444"}, {"id": "psrv-w2", "start": {"componentId": "arduino-uno", "pinName": "GND.1"}, "end": {"componentId": "psrv-servo", "pinName": "GND"}, "color": "#000000"}, {"id": "psrv-w3", "start": {"componentId": "arduino-uno", "pinName": "GP15"}, "end": {"componentId": "psrv-servo", "pinName": "PWM"}, "color": "#ff8800"}],
     tags: ["100-days", "micropython", "ota", "pi-pico-w", "pico-w", "servo", "wifi"],
   },
   {
@@ -6268,8 +6285,8 @@ while True:
 ` },
     ],
     code: '',
-    components: [],
-    wires: [],
+    components: [{"type": "wokwi-led-bar-graph", "id": "potviz-bar", "x": 430, "y": 60, "properties": {"color": "red"}}, {"type": "wokwi-potentiometer", "id": "potviz-pot1", "x": 430, "y": 320, "properties": {"value": 512}}],
+    wires: [{"id": "potviz-w1", "start": {"componentId": "arduino-uno", "pinName": "2"}, "end": {"componentId": "potviz-bar", "pinName": "A1"}, "color": "#cc44cc"}, {"id": "potviz-w2", "start": {"componentId": "potviz-bar", "pinName": "C1"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}, {"id": "potviz-w3", "start": {"componentId": "arduino-uno", "pinName": "4"}, "end": {"componentId": "potviz-bar", "pinName": "A2"}, "color": "#cc44cc"}, {"id": "potviz-w4", "start": {"componentId": "potviz-bar", "pinName": "C2"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}, {"id": "potviz-w5", "start": {"componentId": "arduino-uno", "pinName": "5"}, "end": {"componentId": "potviz-bar", "pinName": "A3"}, "color": "#cc44cc"}, {"id": "potviz-w6", "start": {"componentId": "potviz-bar", "pinName": "C3"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}, {"id": "potviz-w7", "start": {"componentId": "arduino-uno", "pinName": "12"}, "end": {"componentId": "potviz-bar", "pinName": "A4"}, "color": "#cc44cc"}, {"id": "potviz-w8", "start": {"componentId": "potviz-bar", "pinName": "C4"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}, {"id": "potviz-w9", "start": {"componentId": "arduino-uno", "pinName": "13"}, "end": {"componentId": "potviz-bar", "pinName": "A5"}, "color": "#cc44cc"}, {"id": "potviz-w10", "start": {"componentId": "potviz-bar", "pinName": "C5"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}, {"id": "potviz-w11", "start": {"componentId": "arduino-uno", "pinName": "14"}, "end": {"componentId": "potviz-bar", "pinName": "A6"}, "color": "#cc44cc"}, {"id": "potviz-w12", "start": {"componentId": "potviz-bar", "pinName": "C6"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}, {"id": "potviz-w13", "start": {"componentId": "arduino-uno", "pinName": "15"}, "end": {"componentId": "potviz-bar", "pinName": "A7"}, "color": "#cc44cc"}, {"id": "potviz-w14", "start": {"componentId": "potviz-bar", "pinName": "C7"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}, {"id": "potviz-w15", "start": {"componentId": "arduino-uno", "pinName": "16"}, "end": {"componentId": "potviz-bar", "pinName": "A8"}, "color": "#cc44cc"}, {"id": "potviz-w16", "start": {"componentId": "potviz-bar", "pinName": "C8"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}, {"id": "potviz-w17", "start": {"componentId": "arduino-uno", "pinName": "17"}, "end": {"componentId": "potviz-bar", "pinName": "A9"}, "color": "#cc44cc"}, {"id": "potviz-w18", "start": {"componentId": "potviz-bar", "pinName": "C9"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}, {"id": "potviz-w19", "start": {"componentId": "arduino-uno", "pinName": "18"}, "end": {"componentId": "potviz-bar", "pinName": "A10"}, "color": "#cc44cc"}, {"id": "potviz-w20", "start": {"componentId": "potviz-bar", "pinName": "C10"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}, {"id": "potviz-w21", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "potviz-pot1", "pinName": "VCC"}, "color": "#ff4444"}, {"id": "potviz-w22", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "potviz-pot1", "pinName": "GND"}, "color": "#000000"}, {"id": "potviz-w23", "start": {"componentId": "potviz-pot1", "pinName": "SIG"}, "end": {"componentId": "arduino-uno", "pinName": "34"}, "color": "#22aaff"}],
     tags: ["100-days", "esp32", "micropython"],
   },
   {
@@ -6586,8 +6603,8 @@ while True:
 ` },
     ],
     code: '',
-    components: [],
-    wires: [],
+    components: [{"type": "wokwi-rgb-led", "id": "rgb-led", "x": 700, "y": 100, "properties": {}}, {"type": "wokwi-resistor", "id": "rgb-r0", "x": 560, "y": 40, "properties": {"value": "220"}}, {"type": "wokwi-resistor", "id": "rgb-r1", "x": 560, "y": 110, "properties": {"value": "220"}}, {"type": "wokwi-resistor", "id": "rgb-r2", "x": 560, "y": 180, "properties": {"value": "220"}}, {"type": "wokwi-potentiometer", "id": "rgb-pot1", "x": 430, "y": 300, "properties": {"value": 512}}, {"type": "wokwi-potentiometer", "id": "rgb-pot2", "x": 560, "y": 300, "properties": {"value": 512}}, {"type": "wokwi-potentiometer", "id": "rgb-pot3", "x": 690, "y": 300, "properties": {"value": 512}}],
+    wires: [{"id": "rgb-w1", "start": {"componentId": "arduino-uno", "pinName": "25"}, "end": {"componentId": "rgb-r0", "pinName": "1"}, "color": "#ff2222"}, {"id": "rgb-w2", "start": {"componentId": "rgb-r0", "pinName": "2"}, "end": {"componentId": "rgb-led", "pinName": "R"}, "color": "#ff2222"}, {"id": "rgb-w3", "start": {"componentId": "arduino-uno", "pinName": "26"}, "end": {"componentId": "rgb-r1", "pinName": "1"}, "color": "#22cc66"}, {"id": "rgb-w4", "start": {"componentId": "rgb-r1", "pinName": "2"}, "end": {"componentId": "rgb-led", "pinName": "G"}, "color": "#22cc66"}, {"id": "rgb-w5", "start": {"componentId": "arduino-uno", "pinName": "27"}, "end": {"componentId": "rgb-r2", "pinName": "1"}, "color": "#22aaff"}, {"id": "rgb-w6", "start": {"componentId": "rgb-r2", "pinName": "2"}, "end": {"componentId": "rgb-led", "pinName": "B"}, "color": "#22aaff"}, {"id": "rgb-w7", "start": {"componentId": "rgb-led", "pinName": "COM"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}, {"id": "rgb-w8", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "rgb-pot1", "pinName": "VCC"}, "color": "#ff4444"}, {"id": "rgb-w9", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "rgb-pot1", "pinName": "GND"}, "color": "#000000"}, {"id": "rgb-w10", "start": {"componentId": "rgb-pot1", "pinName": "SIG"}, "end": {"componentId": "arduino-uno", "pinName": "36"}, "color": "#22aaff"}, {"id": "rgb-w11", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "rgb-pot2", "pinName": "VCC"}, "color": "#ff4444"}, {"id": "rgb-w12", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "rgb-pot2", "pinName": "GND"}, "color": "#000000"}, {"id": "rgb-w13", "start": {"componentId": "rgb-pot2", "pinName": "SIG"}, "end": {"componentId": "arduino-uno", "pinName": "39"}, "color": "#22aaff"}, {"id": "rgb-w14", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "rgb-pot3", "pinName": "VCC"}, "color": "#ff4444"}, {"id": "rgb-w15", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "rgb-pot3", "pinName": "GND"}, "color": "#000000"}, {"id": "rgb-w16", "start": {"componentId": "rgb-pot3", "pinName": "SIG"}, "end": {"componentId": "arduino-uno", "pinName": "34"}, "color": "#22aaff"}],
     tags: ["100-days", "esp32", "micropython", "servo"],
   },
   {
@@ -6960,8 +6977,8 @@ while True:
 ` },
     ],
     code: '',
-    components: [],
-    wires: [],
+    components: [{"type": "wokwi-servo", "id": "psrv2-servo", "x": 460, "y": 120, "properties": {}}],
+    wires: [{"id": "psrv2-w1", "start": {"componentId": "arduino-uno", "pinName": "VBUS"}, "end": {"componentId": "psrv2-servo", "pinName": "V+"}, "color": "#ff4444"}, {"id": "psrv2-w2", "start": {"componentId": "arduino-uno", "pinName": "GND.1"}, "end": {"componentId": "psrv2-servo", "pinName": "GND"}, "color": "#000000"}, {"id": "psrv2-w3", "start": {"componentId": "arduino-uno", "pinName": "GP15"}, "end": {"componentId": "psrv2-servo", "pinName": "PWM"}, "color": "#ff8800"}],
     tags: ["100-days", "micropython", "pi-pico-w", "pico-w", "servo"],
   },
   {
@@ -7116,8 +7133,8 @@ while True:
 ` },
     ],
     code: '',
-    components: [],
-    wires: [],
+    components: [{"type": "wokwi-7segment", "id": "seg-disp", "x": 470, "y": 120, "properties": {"common": "cathode"}}],
+    wires: [{"id": "seg-w1", "start": {"componentId": "arduino-uno", "pinName": "GP2"}, "end": {"componentId": "seg-disp", "pinName": "A"}, "color": "#cc44cc"}, {"id": "seg-w2", "start": {"componentId": "arduino-uno", "pinName": "GP3"}, "end": {"componentId": "seg-disp", "pinName": "B"}, "color": "#cc44cc"}, {"id": "seg-w3", "start": {"componentId": "arduino-uno", "pinName": "GP6"}, "end": {"componentId": "seg-disp", "pinName": "C"}, "color": "#cc44cc"}, {"id": "seg-w4", "start": {"componentId": "arduino-uno", "pinName": "GP5"}, "end": {"componentId": "seg-disp", "pinName": "D"}, "color": "#cc44cc"}, {"id": "seg-w5", "start": {"componentId": "arduino-uno", "pinName": "GP4"}, "end": {"componentId": "seg-disp", "pinName": "E"}, "color": "#cc44cc"}, {"id": "seg-w6", "start": {"componentId": "arduino-uno", "pinName": "GP1"}, "end": {"componentId": "seg-disp", "pinName": "F"}, "color": "#cc44cc"}, {"id": "seg-w7", "start": {"componentId": "arduino-uno", "pinName": "GP0"}, "end": {"componentId": "seg-disp", "pinName": "G"}, "color": "#cc44cc"}, {"id": "seg-w8", "start": {"componentId": "seg-disp", "pinName": "COM"}, "end": {"componentId": "arduino-uno", "pinName": "GND.1"}, "color": "#000000"}],
     tags: ["100-days", "micropython", "raspberry-pi-pico", "rp2040"],
   },
   {
@@ -7453,7 +7470,8 @@ except OSError as e:
 led1=Pin(16, Pin.OUT) # Initialize LED 1 on pin 16 (D0), set as output
 led2=Pin(5, Pin.OUT) # Initialize LED 2 on pin 5 (D1), set as output
 led3=Pin(4, Pin.OUT) # Initialize LED 3 on pin 4 (D2), set as output
-led4=Pin(0, Pin.OUT) # Initialize LED 4 on pin 0 (D3), set as output
+# GPIO0 is a boot-strap pin and is not broken out on the DevKit header.
+led4=Pin(23, Pin.OUT) # Initialize LED 4 on GPIO23, set as output
 sensor=dht.DHT22(Pin(14)) # DHT on pin 14 — Velxio emulates the DHT22 waveform (use DHT11 on real hw)
 
 led1.value(1) # Turn off LED 1 initially (active low)
@@ -7549,7 +7567,7 @@ while True:
     ],
     code: '',
     components: [{"type": "wokwi-dht22", "id": "home-dht1", "x": 460, "y": 320, "properties": {"temperature": "28", "humidity": "65"}}, {"type": "wokwi-resistor", "id": "home-r16", "x": 420, "y": 60, "properties": {"value": "220"}}, {"type": "wokwi-led", "id": "home-led16", "x": 420, "y": 160, "properties": {"color": "red"}}, {"type": "wokwi-resistor", "id": "home-r5", "x": 510, "y": 60, "properties": {"value": "220"}}, {"type": "wokwi-led", "id": "home-led5", "x": 510, "y": 160, "properties": {"color": "green"}}, {"type": "wokwi-resistor", "id": "home-r4", "x": 600, "y": 60, "properties": {"value": "220"}}, {"type": "wokwi-led", "id": "home-led4", "x": 600, "y": 160, "properties": {"color": "blue"}}, {"type": "wokwi-resistor", "id": "home-r0", "x": 690, "y": 60, "properties": {"value": "220"}}, {"type": "wokwi-led", "id": "home-led0", "x": 690, "y": 160, "properties": {"color": "yellow"}}],
-    wires: [{"id": "home-dht-vcc", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "home-dht1", "pinName": "VCC"}, "color": "#ff4444"}, {"id": "home-dht-gnd", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "home-dht1", "pinName": "GND"}, "color": "#000000"}, {"id": "home-dht-data", "start": {"componentId": "arduino-uno", "pinName": "14"}, "end": {"componentId": "home-dht1", "pinName": "SDA"}, "color": "#22cc66"}, {"id": "home-vcc16", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "home-r16", "pinName": "1"}, "color": "#ff4444"}, {"id": "home-ra16", "start": {"componentId": "home-r16", "pinName": "2"}, "end": {"componentId": "home-led16", "pinName": "A"}, "color": "#cc44cc"}, {"id": "home-cpin16", "start": {"componentId": "home-led16", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "16"}, "color": "#22aaff"}, {"id": "home-vcc5", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "home-r5", "pinName": "1"}, "color": "#ff4444"}, {"id": "home-ra5", "start": {"componentId": "home-r5", "pinName": "2"}, "end": {"componentId": "home-led5", "pinName": "A"}, "color": "#cc44cc"}, {"id": "home-cpin5", "start": {"componentId": "home-led5", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "5"}, "color": "#22aaff"}, {"id": "home-vcc4", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "home-r4", "pinName": "1"}, "color": "#ff4444"}, {"id": "home-ra4", "start": {"componentId": "home-r4", "pinName": "2"}, "end": {"componentId": "home-led4", "pinName": "A"}, "color": "#cc44cc"}, {"id": "home-cpin4", "start": {"componentId": "home-led4", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "4"}, "color": "#22aaff"}, {"id": "home-vcc0", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "home-r0", "pinName": "1"}, "color": "#ff4444"}, {"id": "home-ra0", "start": {"componentId": "home-r0", "pinName": "2"}, "end": {"componentId": "home-led0", "pinName": "A"}, "color": "#cc44cc"}, {"id": "home-cpin0", "start": {"componentId": "home-led0", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "0"}, "color": "#22aaff"}],
+    wires: [{"id": "home-dht-vcc", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "home-dht1", "pinName": "VCC"}, "color": "#ff4444"}, {"id": "home-dht-gnd", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "home-dht1", "pinName": "GND"}, "color": "#000000"}, {"id": "home-dht-data", "start": {"componentId": "arduino-uno", "pinName": "14"}, "end": {"componentId": "home-dht1", "pinName": "SDA"}, "color": "#22cc66"}, {"id": "home-hi1", "start": {"componentId": "arduino-uno", "pinName": "16"}, "end": {"componentId": "home-r16", "pinName": "1"}, "color": "#cc44cc"}, {"id": "home-ra1", "start": {"componentId": "home-r16", "pinName": "2"}, "end": {"componentId": "home-led16", "pinName": "A"}, "color": "#cc44cc"}, {"id": "home-gnd1", "start": {"componentId": "home-led16", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}, {"id": "home-hi2", "start": {"componentId": "arduino-uno", "pinName": "5"}, "end": {"componentId": "home-r5", "pinName": "1"}, "color": "#cc44cc"}, {"id": "home-ra2", "start": {"componentId": "home-r5", "pinName": "2"}, "end": {"componentId": "home-led5", "pinName": "A"}, "color": "#cc44cc"}, {"id": "home-gnd2", "start": {"componentId": "home-led5", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}, {"id": "home-hi3", "start": {"componentId": "arduino-uno", "pinName": "4"}, "end": {"componentId": "home-r4", "pinName": "1"}, "color": "#cc44cc"}, {"id": "home-ra3", "start": {"componentId": "home-r4", "pinName": "2"}, "end": {"componentId": "home-led4", "pinName": "A"}, "color": "#cc44cc"}, {"id": "home-gnd3", "start": {"componentId": "home-led4", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}, {"id": "home-hi4", "start": {"componentId": "arduino-uno", "pinName": "23"}, "end": {"componentId": "home-r0", "pinName": "1"}, "color": "#cc44cc"}, {"id": "home-ra4", "start": {"componentId": "home-r0", "pinName": "2"}, "end": {"componentId": "home-led0", "pinName": "A"}, "color": "#cc44cc"}, {"id": "home-gnd4", "start": {"componentId": "home-led0", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}],
     tags: ["100-days", "blynk", "blynk_cloud", "dht", "esp32", "micropython", "wifi"],
   },
   {
@@ -7691,8 +7709,8 @@ while True:
     utime.sleep_ms(100)` },
     ],
     code: '',
-    components: [],
-    wires: [],
+    components: [{"type": "wokwi-pir-motion-sensor", "id": "sec-pir", "x": 430, "y": 300, "properties": {}}, {"type": "wokwi-membrane-keypad", "id": "sec-keypad", "x": 640, "y": 60, "properties": {}}],
+    wires: [{"id": "sec-w1", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "sec-pir", "pinName": "VCC"}, "color": "#ff4444"}, {"id": "sec-w2", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "sec-pir", "pinName": "GND"}, "color": "#000000"}, {"id": "sec-w3", "start": {"componentId": "sec-pir", "pinName": "OUT"}, "end": {"componentId": "arduino-uno", "pinName": "14"}, "color": "#22cc66"}, {"id": "sec-w4", "start": {"componentId": "arduino-uno", "pinName": "19"}, "end": {"componentId": "sec-keypad", "pinName": "R1"}, "color": "#ff8800"}, {"id": "sec-w5", "start": {"componentId": "arduino-uno", "pinName": "18"}, "end": {"componentId": "sec-keypad", "pinName": "R2"}, "color": "#ff8800"}, {"id": "sec-w6", "start": {"componentId": "arduino-uno", "pinName": "5"}, "end": {"componentId": "sec-keypad", "pinName": "R3"}, "color": "#ff8800"}, {"id": "sec-w7", "start": {"componentId": "arduino-uno", "pinName": "17"}, "end": {"componentId": "sec-keypad", "pinName": "R4"}, "color": "#ff8800"}, {"id": "sec-w8", "start": {"componentId": "arduino-uno", "pinName": "16"}, "end": {"componentId": "sec-keypad", "pinName": "C1"}, "color": "#22aaff"}, {"id": "sec-w9", "start": {"componentId": "arduino-uno", "pinName": "4"}, "end": {"componentId": "sec-keypad", "pinName": "C2"}, "color": "#22aaff"}, {"id": "sec-w10", "start": {"componentId": "arduino-uno", "pinName": "2"}, "end": {"componentId": "sec-keypad", "pinName": "C3"}, "color": "#22aaff"}, {"id": "sec-w11", "start": {"componentId": "arduino-uno", "pinName": "15"}, "end": {"componentId": "sec-keypad", "pinName": "C4"}, "color": "#22aaff"}],
     tags: ["100-days", "esp32", "micropython", "wifi"],
   },
   {
@@ -8010,112 +8028,67 @@ while True:
 ` },
     ],
     code: '',
-    components: [],
-    wires: [],
+    components: [{"type": "velxio-a4988", "id": "stp-drv", "x": 450, "y": 120, "properties": {}}, {"type": "wokwi-stepper-motor", "id": "stp-motor", "x": 640, "y": 100, "properties": {}}],
+    wires: [{"id": "stp-w1", "start": {"componentId": "arduino-uno", "pinName": "14"}, "end": {"componentId": "stp-drv", "pinName": "STEP"}, "color": "#ff8800"}, {"id": "stp-w2", "start": {"componentId": "arduino-uno", "pinName": "12"}, "end": {"componentId": "stp-drv", "pinName": "DIR"}, "color": "#22aaff"}, {"id": "stp-w3", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "stp-drv", "pinName": "ENABLE"}, "color": "#000000"}, {"id": "stp-w4", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "stp-drv", "pinName": "VDD"}, "color": "#ff4444"}, {"id": "stp-w5", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "stp-drv", "pinName": "GND"}, "color": "#000000"}, {"id": "stp-w6", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "stp-drv", "pinName": "VMOT"}, "color": "#ff4444"}, {"id": "stp-w7", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "stp-drv", "pinName": "GND.2"}, "color": "#000000"}, {"id": "stp-w8", "start": {"componentId": "stp-drv", "pinName": "1A"}, "end": {"componentId": "stp-motor", "pinName": "A+"}, "color": "#cc44cc"}, {"id": "stp-w9", "start": {"componentId": "stp-drv", "pinName": "1B"}, "end": {"componentId": "stp-motor", "pinName": "A-"}, "color": "#cc44cc"}, {"id": "stp-w10", "start": {"componentId": "stp-drv", "pinName": "2A"}, "end": {"componentId": "stp-motor", "pinName": "B+"}, "color": "#22cc66"}, {"id": "stp-w11", "start": {"componentId": "stp-drv", "pinName": "2B"}, "end": {"componentId": "stp-motor", "pinName": "B-"}, "color": "#22cc66"}],
     tags: ["100-days", "esp32", "micropython", "stepper"],
   },
   {
     id: "100d-temperature-based-led-indicator-micropython-esp32",
     title: "Temperature Based LED Indicator (MicroPython ESP32)",
-    description: "Temperature Based LED Indicator (MicroPython ESP32) on ESP32 (MicroPython) \u2014 uses Servo, Wi-Fi. From Kritish Mohapatra's 100 Days of IoT series: https://github.com/kritishmohapatra/100_Days_100_IoT_Projects",
-    category: "robotics",
-    difficulty: "intermediate",
+    description: "Temperature Based LED Indicator (MicroPython ESP32) on ESP32 (MicroPython) \u2014 uses DHT. From Kritish Mohapatra's 100 Days of IoT series: https://github.com/kritishmohapatra/100_Days_100_IoT_Projects",
+    category: "sensors",
+    difficulty: "beginner",
     boardType: "esp32",
     languageMode: 'micropython',
     files: [
-      { name: "main.py", content: `import network
-import socket
-from machine import Pin, PWM
-from time import sleep_ms
+      { name: "main.py", content: `# Temperature Based LED Indicator (MicroPython + ESP32)
+#
+# The upstream repo shipped the DC-motor web-slider sketch in this folder by
+# mistake; the code below is the project's own listing from its README
+# (DHT22 on GPIO15, three LEDs on GPIO25/26/27).
+#
+# Velxio's simulator emulates the DHT22 waveform, so dht.DHT22 is used here.
+# On real hardware with a DHT11, switch back to dht.DHT11.
 
-# -------- WiFi --------
-ssid = "kritish"
-password = "pass"
+from machine import Pin
+import dht
+import time
 
-wlan = network.WLAN(network.STA_IF)
-wlan.active(True)
-wlan.connect(ssid, password)
+sensor = dht.DHT22(Pin(15))
 
-while not wlan.isconnected():
-    pass
-
-print("Open:", wlan.ifconfig()[0])
-
-# -------- Motor --------
-ENA = PWM(Pin(13), freq=1000)
-IN1 = Pin(12, Pin.OUT)
-IN2 = Pin(14, Pin.OUT)
-
-IN1.on()
-IN2.off()
-ENA.duty(0)
-
-def set_motor(speed):
-    speed = int(speed)
-
-    if speed <= 0:
-        ENA.duty(0)
-        return
-
-    # kick start for 6V + L298N
-    ENA.duty(1023)
-    sleep_ms(150)
-    ENA.duty(speed)
-
-# -------- HTML --------
-html = """<!DOCTYPE html>
-<html>
-<body>
-<h2>ESP32 DC Motor Control</h2>
-<input type="range" min="0" max="1023" value="0"
-oninput="send(this.value)">
-<p>Speed: <span id="v">0</span></p>
-
-<script>
-function send(val){
- document.getElementById("v").innerHTML = val;
- fetch("/set?speed=" + val);
-}
-</script>
-</body>
-</html>
-"""
-
-# -------- Server --------
-addr = socket.getaddrinfo('0.0.0.0', 80)[0][-1]
-s = socket.socket()
-s.bind(addr)
-s.listen(1)
-
-print("Server running")
+green = Pin(25, Pin.OUT)
+yellow = Pin(26, Pin.OUT)
+red = Pin(27, Pin.OUT)
 
 while True:
-    cl, addr = s.accept()
-    req = cl.recv(1024).decode()
+    try:
+        sensor.measure()
+        t = sensor.temperature()
+        h = sensor.humidity()
 
-    if "/set?speed=" in req:
-        try:
-            part = req.split("/set?speed=")[1]
-            spd = part.split(" ")[0]
-            set_motor(spd)
-            print("Speed set:", spd)
-        except:
-            pass
+        print("Temperature:", t, "C | Humidity:", h, "%")
 
-        cl.send("HTTP/1.1 200 OK\\r\\n\\r\\nOK")
-        cl.close()
-        continue
+        green.off()
+        yellow.off()
+        red.off()
 
-    cl.send("HTTP/1.1 200 OK\\r\\nContent-Type: text/html\\r\\n\\r\\n")
-    cl.send(html)
-    cl.close()
+        if t < 25:
+            green.on()
+        elif t < 30:
+            yellow.on()
+        else:
+            red.on()
 
+    except OSError as e:
+        print("DHT read failed:", e)  # keep the loop alive (sensor unplugged?)
+
+    time.sleep(2)
 ` },
     ],
     code: '',
-    components: [],
-    wires: [],
-    tags: ["100-days", "esp32", "micropython", "servo", "wifi"],
+    components: [{"type": "wokwi-dht22", "id": "tled-dht", "x": 430, "y": 300, "properties": {"temperature": "28", "humidity": "55"}}, {"type": "wokwi-resistor", "id": "tled-r1", "x": 640, "y": 40, "properties": {"value": "220"}}, {"type": "wokwi-led", "id": "tled-led1", "x": 640, "y": 140, "properties": {"color": "green", "label": "<25C"}}, {"type": "wokwi-resistor", "id": "tled-r2", "x": 760, "y": 40, "properties": {"value": "220"}}, {"type": "wokwi-led", "id": "tled-led2", "x": 760, "y": 140, "properties": {"color": "yellow", "label": "25-30C"}}, {"type": "wokwi-resistor", "id": "tled-r3", "x": 880, "y": 40, "properties": {"value": "220"}}, {"type": "wokwi-led", "id": "tled-led3", "x": 880, "y": 140, "properties": {"color": "red", "label": ">30C"}}],
+    wires: [{"id": "tled-w1", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "tled-dht", "pinName": "VCC"}, "color": "#ff4444"}, {"id": "tled-w2", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "tled-dht", "pinName": "GND"}, "color": "#000000"}, {"id": "tled-w3", "start": {"componentId": "tled-dht", "pinName": "SDA"}, "end": {"componentId": "arduino-uno", "pinName": "15"}, "color": "#22cc66"}, {"id": "tled-w4", "start": {"componentId": "arduino-uno", "pinName": "25"}, "end": {"componentId": "tled-r1", "pinName": "1"}, "color": "#cc44cc"}, {"id": "tled-w5", "start": {"componentId": "tled-r1", "pinName": "2"}, "end": {"componentId": "tled-led1", "pinName": "A"}, "color": "#cc44cc"}, {"id": "tled-w6", "start": {"componentId": "tled-led1", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}, {"id": "tled-w7", "start": {"componentId": "arduino-uno", "pinName": "26"}, "end": {"componentId": "tled-r2", "pinName": "1"}, "color": "#cc44cc"}, {"id": "tled-w8", "start": {"componentId": "tled-r2", "pinName": "2"}, "end": {"componentId": "tled-led2", "pinName": "A"}, "color": "#cc44cc"}, {"id": "tled-w9", "start": {"componentId": "tled-led2", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}, {"id": "tled-w10", "start": {"componentId": "arduino-uno", "pinName": "27"}, "end": {"componentId": "tled-r3", "pinName": "1"}, "color": "#cc44cc"}, {"id": "tled-w11", "start": {"componentId": "tled-r3", "pinName": "2"}, "end": {"componentId": "tled-led3", "pinName": "A"}, "color": "#cc44cc"}, {"id": "tled-w12", "start": {"componentId": "tled-led3", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}],
+    tags: ["100-days", "dht", "esp32", "micropython"],
   },
   {
     id: "100d-ultrasonic-led-distance-indicator-esp32-micropython",
@@ -8230,8 +8203,8 @@ while True:
 ` },
     ],
     code: '',
-    components: [],
-    wires: [],
+    components: [{"type": "wokwi-hc-sr04", "id": "usd-sr04", "x": 430, "y": 300, "properties": {"distance": "40"}}, {"type": "wokwi-resistor", "id": "usd-r1", "x": 660, "y": 40, "properties": {"value": "220"}}, {"type": "wokwi-led", "id": "usd-led1", "x": 660, "y": 140, "properties": {"color": "green", "label": "FAR"}}, {"type": "wokwi-resistor", "id": "usd-r2", "x": 780, "y": 40, "properties": {"value": "220"}}, {"type": "wokwi-led", "id": "usd-led2", "x": 780, "y": 140, "properties": {"color": "red", "label": "NEAR"}}],
+    wires: [{"id": "usd-w1", "start": {"componentId": "arduino-uno", "pinName": "3V3"}, "end": {"componentId": "usd-sr04", "pinName": "VCC"}, "color": "#ff4444"}, {"id": "usd-w2", "start": {"componentId": "arduino-uno", "pinName": "GND"}, "end": {"componentId": "usd-sr04", "pinName": "GND"}, "color": "#000000"}, {"id": "usd-w3", "start": {"componentId": "arduino-uno", "pinName": "5"}, "end": {"componentId": "usd-sr04", "pinName": "TRIG"}, "color": "#ff8800"}, {"id": "usd-w4", "start": {"componentId": "usd-sr04", "pinName": "ECHO"}, "end": {"componentId": "arduino-uno", "pinName": "18"}, "color": "#22cc66"}, {"id": "usd-w5", "start": {"componentId": "arduino-uno", "pinName": "12"}, "end": {"componentId": "usd-r1", "pinName": "1"}, "color": "#cc44cc"}, {"id": "usd-w6", "start": {"componentId": "usd-r1", "pinName": "2"}, "end": {"componentId": "usd-led1", "pinName": "A"}, "color": "#cc44cc"}, {"id": "usd-w7", "start": {"componentId": "usd-led1", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}, {"id": "usd-w8", "start": {"componentId": "arduino-uno", "pinName": "13"}, "end": {"componentId": "usd-r2", "pinName": "1"}, "color": "#cc44cc"}, {"id": "usd-w9", "start": {"componentId": "usd-r2", "pinName": "2"}, "end": {"componentId": "usd-led2", "pinName": "A"}, "color": "#cc44cc"}, {"id": "usd-w10", "start": {"componentId": "usd-led2", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}],
     tags: ["100-days", "esp32", "micropython", "ultrasonic"],
   },
   {
@@ -8343,8 +8316,8 @@ while True:
 ` },
     ],
     code: '',
-    components: [],
-    wires: [],
+    components: [{"type": "wokwi-resistor", "id": "pws-r1", "x": 430, "y": 40, "properties": {"value": "220"}}, {"type": "wokwi-led", "id": "pws-led1", "x": 430, "y": 140, "properties": {"color": "blue", "label": "WS LED"}}],
+    wires: [{"id": "pws-w1", "start": {"componentId": "arduino-uno", "pinName": "GP15"}, "end": {"componentId": "pws-r1", "pinName": "1"}, "color": "#cc44cc"}, {"id": "pws-w2", "start": {"componentId": "pws-r1", "pinName": "2"}, "end": {"componentId": "pws-led1", "pinName": "A"}, "color": "#cc44cc"}, {"id": "pws-w3", "start": {"componentId": "pws-led1", "pinName": "C"}, "end": {"componentId": "arduino-uno", "pinName": "GND.1"}, "color": "#000000"}],
     tags: ["100-days", "micropython", "pi-pico-w", "pico-w", "websocket", "wifi"],
   },
   {
@@ -8488,8 +8461,8 @@ while True:
 ` },
     ],
     code: '',
-    components: [],
-    wires: [],
+    components: [{"type": "wokwi-led-bar-graph", "id": "car-bar", "x": 450, "y": 80, "properties": {"color": "green"}}],
+    wires: [{"id": "car-w1", "start": {"componentId": "arduino-uno", "pinName": "27"}, "end": {"componentId": "car-bar", "pinName": "A1"}, "color": "#cc44cc"}, {"id": "car-w2", "start": {"componentId": "car-bar", "pinName": "C1"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}, {"id": "car-w3", "start": {"componentId": "arduino-uno", "pinName": "26"}, "end": {"componentId": "car-bar", "pinName": "A2"}, "color": "#cc44cc"}, {"id": "car-w4", "start": {"componentId": "car-bar", "pinName": "C2"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}, {"id": "car-w5", "start": {"componentId": "arduino-uno", "pinName": "25"}, "end": {"componentId": "car-bar", "pinName": "A3"}, "color": "#cc44cc"}, {"id": "car-w6", "start": {"componentId": "car-bar", "pinName": "C3"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}, {"id": "car-w7", "start": {"componentId": "arduino-uno", "pinName": "33"}, "end": {"componentId": "car-bar", "pinName": "A4"}, "color": "#cc44cc"}, {"id": "car-w8", "start": {"componentId": "car-bar", "pinName": "C4"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}, {"id": "car-w9", "start": {"componentId": "arduino-uno", "pinName": "19"}, "end": {"componentId": "car-bar", "pinName": "A5"}, "color": "#cc44cc"}, {"id": "car-w10", "start": {"componentId": "car-bar", "pinName": "C5"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}, {"id": "car-w11", "start": {"componentId": "arduino-uno", "pinName": "18"}, "end": {"componentId": "car-bar", "pinName": "A6"}, "color": "#cc44cc"}, {"id": "car-w12", "start": {"componentId": "car-bar", "pinName": "C6"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}, {"id": "car-w13", "start": {"componentId": "arduino-uno", "pinName": "5"}, "end": {"componentId": "car-bar", "pinName": "A7"}, "color": "#cc44cc"}, {"id": "car-w14", "start": {"componentId": "car-bar", "pinName": "C7"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}, {"id": "car-w15", "start": {"componentId": "arduino-uno", "pinName": "17"}, "end": {"componentId": "car-bar", "pinName": "A8"}, "color": "#cc44cc"}, {"id": "car-w16", "start": {"componentId": "car-bar", "pinName": "C8"}, "end": {"componentId": "arduino-uno", "pinName": "GND"}, "color": "#000000"}],
     tags: ["100-days", "esp32", "micropython", "wifi"],
   },
 ];
