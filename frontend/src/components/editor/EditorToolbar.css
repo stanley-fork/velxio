@@ -171,6 +171,28 @@
   }
 }
 
+/* Same two collapses when the toolbar rides inside the shared desktop bar
+   (App.css turns the wrapper's own containment off there so the bar can
+   wrap instead of overlap): key them to the BAR's width, at the thresholds
+   where the canvas controls drop their labels (1010px) and the board
+   selector shrinks (905px), so the whole row degrades in step. */
+@container unified-toolbar (max-width: 1010px) {
+  .tb-libraries-label {
+    display: none;
+  }
+  .tb-btn-libraries {
+    padding: 0 6px;
+  }
+}
+@container unified-toolbar (max-width: 905px) {
+  .tb-board-pill-label {
+    display: none;
+  }
+  .tb-board-pill {
+    padding: 3px 6px;
+  }
+}
+
 /* Import / Export moved to the File menu in the header (EditorMenuBar):
    their inline buttons and the responsive overflow twins are gone, which
    is ~70px the row no longer has to find on laptop widths. */

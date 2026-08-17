@@ -446,3 +446,20 @@ def test_render_sdkconfig_idf5_per_target_drops(compiler: ESPIDFCompiler) -> Non
         _TEMPLATE_DIR, idf_target='esp32s3', use_idf5=True,
     )
     assert 'CONFIG_ESPTOOLPY_FLASHFREQ_26M' not in s3_text  # S3 has no 26M
+
+
+def test_ninja_log_step_count(tmp_path) -> None:
+    """Diagnostic helper for the ninja-timeout log line: counts completed
+    steps in .ninja_log (header excluded), 0 when the log is missing."""
+    from app.services.espidf_compiler import _ninja_log_step_count
+
+    build_dir = tmp_path / 'build'
+    assert _ninja_log_step_count(build_dir) == 0
+    build_dir.mkdir()
+    (build_dir / '.ninja_log').write_text(
+        '# ninja log v6\n'
+        '1\t20\t0\tesp-idf/a.obj\tdeadbeef\n'
+        '2\t30\t0\tesp-idf/b.obj\tcafebabe\n',
+        encoding='utf-8',
+    )
+    assert _ninja_log_step_count(build_dir) == 2

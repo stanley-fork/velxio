@@ -204,8 +204,28 @@ def _extract_directives(text: str) -> tuple[str, list[str]]:
 # export macro between the keyword and the name, optional `final`, optional
 # base-clause. Anchored at the end so `typedef struct` (anonymous) never hits.
 _CLASS_RE = re.compile(
-    r"\b(class|struct)\s+(?:[A-Z][A-Z0-9_]*\s+)?([A-Za-z_]\w*)\s*(?:final\s*)?(?::[^{;]*)?$"
+    r"\b(class|struct)\s+(?:[A-Z][A-Z0-9_]*\s+)?([A-Za-z_]\w*)\s*(?:final\s*)?(?::([^{;]*))?$"
 )
+# One base in a base-clause: `public Adafruit_GFX`, `virtual private Print`,
+# `Adafruit_GrayOLED`, `Print<T>` (template args dropped), `ns::Base`.
+_BASE_RE = re.compile(r"(?:\b(?:public|protected|private|virtual)\s+)*([A-Za-z_][\w:]*)")
+
+
+def _parse_bases(clause: Optional[str]) -> list[str]:
+    """Base class names from the text after the `:` of a class head. Access
+    and virtual keywords are dropped, `ns::Base` keeps its last segment,
+    template arguments are cut. Order preserved (first base first)."""
+    if not clause:
+        return []
+    out: list[str] = []
+    for part in clause.split(","):
+        m = _BASE_RE.search(part.strip())
+        if not m:
+            continue
+        name = m.group(1).split("<", 1)[0].rsplit("::", 1)[-1]
+        if name and name not in out:
+            out.append(name)
+    return out
 _ENUM_RE = re.compile(
     r"\benum(?:\s+(class|struct))?(?:\s+([A-Za-z_]\w*))?\s*(?::\s*[\w:\s]+)?$"
 )
@@ -267,6 +287,42 @@ def _build_call(name: str, parts: list[str]) -> tuple[str, str]:
     return ", ".join(parts), insert
 
 
+def _split_comma_declarators(candidate: str) -> list[str]:
+    """`void a(int), b(), c(char x);` declares three methods sharing a return
+    type (TFT_eSPI declares setTextColor/setTextSize and setCursor/... this
+    way). Split on top-level commas that sit OUTSIDE parentheses and after a
+    complete `name(args)` group, and prepend the shared head to each tail.
+    Anything else -- a single declarator, or commas only inside argument
+    lists -- comes back as a one-element list."""
+    depth = 0
+    cuts: list[int] = []
+    seen_group = False
+    for k, ch in enumerate(candidate):
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                seen_group = True
+        elif ch == "," and depth == 0 and seen_group:
+            cuts.append(k)
+    if not cuts:
+        return [candidate]
+    first = candidate[: cuts[0]]
+    p = first.find("(")
+    nm = _NAME_TAIL_RE.search(first[:p]) if p > 0 else None
+    if not nm:
+        return [candidate]
+    head = first[: nm.start()]
+    out = [first]
+    prev = cuts[0] + 1
+    for cut in cuts[1:] + [len(candidate)]:
+        out.append(head + candidate[prev:cut].strip())
+        prev = cut + 1
+    # the trailing `;`-less tail keeps whatever trailer it had (const, = 0)
+    return out
+
+
 def _try_method(candidate: str, scope: dict, add: Callable[[dict], Optional[dict]], detail: str) -> None:
     """Attempt to parse `candidate` (a statement inside a public class/struct
     section, stripped of access labels) as a method declaration. Emits a
@@ -274,6 +330,11 @@ def _try_method(candidate: str, scope: dict, add: Callable[[dict], Optional[dict
     its first public constructor. Anything unconfident is skipped."""
     candidate = re.sub(r"\s+", " ", candidate).strip()
     if not candidate or "operator" in candidate or "~" in candidate or "template" in candidate:
+        return
+    parts_ = _split_comma_declarators(candidate)
+    if len(parts_) > 1:
+        for one in parts_:
+            _try_method(one, scope, add, detail)
         return
     p = candidate.find("(")
     if p <= 0:
@@ -411,6 +472,13 @@ def _scan_text(text: str, add: Callable[[dict], Optional[dict]], detail: str) ->
                 if cm:
                     cname = cm.group(2)
                     sym = {"name": cname, "kind": "class", "detail": detail}
+                    bases = _parse_bases(cm.group(3))
+                    if bases:
+                        # Lets the /type/ endpoint (and the editor) follow
+                        # inheritance: Adafruit_SH1106G -> Adafruit_SH110X ->
+                        # Adafruit_GrayOLED -> Adafruit_GFX, where the drawing
+                        # API actually lives.
+                        sym["bases"] = bases
                     stored = add(sym)
                     stack.append({
                         "kind": "classlike",

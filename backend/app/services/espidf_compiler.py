@@ -195,6 +195,17 @@ def _evict_cold_variants(target_dir: Path, keep: int) -> None:
         shutil.rmtree(d, ignore_errors=True)
 
 
+def _ninja_log_step_count(build_dir: 'str | Path') -> int:
+    """Number of completed build steps recorded in ``build_dir/.ninja_log``
+    (0 when absent/unreadable). Diagnostics only — used to say how far a
+    timed-out build got."""
+    try:
+        with open(Path(build_dir) / '.ninja_log', encoding='utf-8', errors='replace') as fh:
+            return max(0, sum(1 for _ in fh) - 1)  # first line is the header
+    except OSError:
+        return 0
+
+
 # ── .ino prototype generation ────────────────────────────────────────────────
 # arduino-cli runs ctags over the sketch and injects forward declarations so
 # the classic Arduino idiom — helpers defined AFTER setup()/loop() that use
@@ -3587,6 +3598,10 @@ class ESPIDFCompiler:
         try:
             cmake_result = await asyncio.to_thread(_run_cmake)
         except subprocess.TimeoutExpired:
+            logger.error(
+                f'[espidf] cmake configure timed out after {cmake_timeout}s '
+                f'in {build_dir}'
+            )
             return {
                 'success': False,
                 'error': f'ESP-IDF cmake configure timed out ({cmake_timeout}s)',
@@ -3626,9 +3641,24 @@ class ESPIDFCompiler:
         try:
             ninja_result = await asyncio.to_thread(_run_ninja)
         except subprocess.TimeoutExpired:
+            # Silent before — a 600s failure left no server-side trace at all,
+            # so a slow-box incident (2026-08-17: cold S3 variant, ccache
+            # missing on every object) had to be reconstructed from the
+            # variant's .ninja_log. Say where it happened and how far it got.
+            done_steps = _ninja_log_step_count(build_dir)
+            logger.error(
+                f'[espidf] ninja build timed out after {NINJA_TIMEOUT_S}s in '
+                f'{build_dir} ({done_steps} steps logged)'
+            )
             return {
                 'success': False,
-                'error': f'ESP-IDF build timed out ({NINJA_TIMEOUT_S}s)',
+                # ninja is incremental and the variant dir persists: the
+                # objects built so far are kept, so retrying picks up where
+                # this attempt stopped instead of starting over.
+                'error': (
+                    f'ESP-IDF build timed out ({NINJA_TIMEOUT_S}s) — the partial '
+                    f'build is kept; compile again to resume where it stopped'
+                ),
                 'stdout': '',
                 'stderr': '',
             }

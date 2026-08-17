@@ -23,6 +23,85 @@ def _looks_like_missing_header(stderr: str | None) -> bool:
     return bool(stderr and _MISSING_HEADER_RE.search(stderr))
 
 
+# ── arduino-cli error humanizer ──────────────────────────────────────────────
+# arduino-cli reports failures in two shapes: plain text on stderr, or (when
+# invoked with --format json) a JSON object {"error": "...", "warnings": [...]}
+# on stderr. We used to hand that raw blob straight to the caller, so a fresh
+# desktop install with no library index yet — and no way to reach
+# downloads.arduino.cc through the user's firewall / proxy — surfaced to the
+# in-app agent as "the library server returns a JSON error" (2026-08-17,
+# a Maker cancelled 16 minutes after subscribing). Turn the known shapes into
+# one actionable sentence and keep the raw text under a separate key.
+
+_INDEX_DOWNLOAD_MARKERS = (
+    "error downloading index",
+    "library_index.tar.bz2",
+    "library_index.json",
+    "package_index.json",
+    "error updating library index",
+    "error initializing instance",
+)
+_NETWORK_MARKERS = (
+    "downloads.arduino.cc",
+    "dial tcp",
+    "dial udp",
+    "network is unreachable",
+    "no such host",
+    "connection refused",
+    "tls handshake",
+    "i/o timeout",
+    "context deadline exceeded",
+    "proxy",
+)
+
+
+def humanize_cli_error(raw: str | None, *, action: str = "run arduino-cli") -> str:
+    """One readable sentence for an arduino-cli failure.
+
+    `raw` is whatever arduino-cli wrote (stderr, or stdout+stderr). `action`
+    names what we were doing ("search libraries", "install Adafruit GFX") so
+    the message reads naturally in the UI and in the agent's tool result.
+    """
+    text = (raw or "").strip()
+    # JSON-shaped error (--format json): {"error": "...", "warnings": [...]}
+    if text.startswith("{"):
+        try:
+            import json as _json
+            obj = _json.loads(text)
+            if isinstance(obj, dict):
+                parts = [str(obj.get("error") or "")]
+                warns = obj.get("warnings")
+                if isinstance(warns, list):
+                    parts.extend(str(w) for w in warns)
+                text = "\n".join(p for p in parts if p).strip()
+        except ValueError:
+            pass
+    low = text.lower()
+
+    if any(m in low for m in _INDEX_DOWNLOAD_MARKERS) or (
+        "index" in low and any(m in low for m in _NETWORK_MARKERS)
+    ):
+        return (
+            f"Could not {action}: the Arduino library index is not available yet "
+            "and arduino-cli could not download it from downloads.arduino.cc. "
+            "Check your internet connection, firewall or proxy and try again."
+        )
+    if "can't download library" in low or (
+        "download" in low and any(m in low for m in _NETWORK_MARKERS)
+    ):
+        return (
+            f"Could not {action}: the download from downloads.arduino.cc failed. "
+            "Check your internet connection, firewall or proxy and try again."
+        )
+    if "not found" in low or "no library found" in low:
+        first = next((ln.strip() for ln in text.splitlines() if ln.strip()), text)
+        return f"Could not {action}: {first[:300]}"
+    if not text:
+        return f"Could not {action}: arduino-cli returned no output."
+    first = next((ln.strip() for ln in text.splitlines() if ln.strip()), text)
+    return f"Could not {action}: {first[:300]}"
+
+
 class ArduinoCLIService:
     # Board manager URLs for cores that aren't built-in
     CORE_URLS: dict[str, str] = {
@@ -658,8 +737,12 @@ class ArduinoCLIService:
 
             if result.returncode != 0:
                 print(f"Error searching libraries: {stderr}")
-                return {"success": False, "error": stderr}
-                
+                return {
+                    "success": False,
+                    "error": humanize_cli_error(stderr or stdout, action="search libraries"),
+                    "raw_error": stderr,
+                }
+
             import json
             try:
                 results = json.loads(stdout)
@@ -686,7 +769,13 @@ class ArduinoCLIService:
 
                 return {"success": True, "libraries": libraries}
             except json.JSONDecodeError:
-                return {"success": False, "error": "Invalid output format from arduino-cli"}
+                # rc was 0 but stdout is not JSON: arduino-cli printed a
+                # progress/warning line ahead of (or instead of) the payload.
+                return {
+                    "success": False,
+                    "error": humanize_cli_error(stderr or stdout, action="search libraries"),
+                    "raw_error": (stderr or stdout)[:2000],
+                }
 
         except Exception as e:
             print(f"Exception searching libraries: {e}")
@@ -763,7 +852,15 @@ class ArduinoCLIService:
                             "requested_version": version,
                         }
                 print(f"Failed to install {library_name}: {result.stderr}")
-                return {"success": False, "error": result.stderr, "stdout": result.stdout}
+                return {
+                    "success": False,
+                    "error": humanize_cli_error(
+                        (result.stderr or "") + "\n" + (result.stdout or ""),
+                        action=f"install {library_name}",
+                    ),
+                    "raw_error": result.stderr,
+                    "stdout": result.stdout,
+                }
 
         except Exception as e:
             print(f"Exception installing library: {e}")

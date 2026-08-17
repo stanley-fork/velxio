@@ -79,6 +79,9 @@ export const EditorPage: React.FC = () => {
   // Lets users hide a pane to give the right-docked chat more room.
   const viewMode = useEditorStore((s) => s.viewMode);
   const setViewMode = useEditorStore((s) => s.setViewMode);
+  const explorerOpen = useEditorStore((s) => s.explorerOpen);
+  const setExplorerOpen = useEditorStore((s) => s.setExplorerOpen);
+  const toggleExplorer = useEditorStore((s) => s.toggleExplorer);
   const containerRef = useRef<HTMLDivElement>(null);
   const resizingRef = useRef(false);
   const serialMonitorOpen = useSimulatorStore((s) => s.serialMonitorOpen);
@@ -217,7 +220,6 @@ export const EditorPage: React.FC = () => {
     localStorage.setItem('velxio_star_clicked', '1');
     setShowStarBanner(false);
   };
-  const [explorerOpen, setExplorerOpen] = useState(true);
   const [explorerWidth, setExplorerWidth] = useState(EXPLORER_DEFAULT);
   const [isMobile, setIsMobile] = useState(
     () => window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`).matches,
@@ -256,7 +258,7 @@ export const EditorPage: React.FC = () => {
     update(mq);
     mq.addEventListener('change', update);
     return () => mq.removeEventListener('change', update);
-  }, []);
+  }, [setExplorerOpen]);
 
   // Ctrl+S shortcut
   useEffect(() => {
@@ -277,15 +279,13 @@ export const EditorPage: React.FC = () => {
     const offNew = registerEditorCommand('project.new', () => {
       void handleNewClick();
     });
-    const offExplorer = registerEditorCommand('view.toggleExplorer', () =>
-      setExplorerOpen((v) => !v),
-    );
+    const offExplorer = registerEditorCommand('view.toggleExplorer', () => toggleExplorer());
     return () => {
       offSave();
       offNew();
       offExplorer();
     };
-  }, [handleSaveClick, handleNewClick]);
+  }, [handleSaveClick, handleNewClick, toggleExplorer]);
 
   // Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z — canvas undo/redo. Skipped when the
   // user is typing in any input/textarea/contenteditable so the Monaco
@@ -446,7 +446,7 @@ export const EditorPage: React.FC = () => {
             aria-label={t('editor.shell.viewMode')}
             className="view-mode-toggle"
             style={{
-              display: 'flex',
+              // display comes from App.css (flex; none on a narrow bar or mobile).
               // Never squeezed below its buttons: flexbox used to crush
               // this block to a third of its width and clip two of them.
               flexShrink: 0,
@@ -460,7 +460,7 @@ export const EditorPage: React.FC = () => {
             }}
           >
             <button
-              onClick={() => setExplorerOpen((v) => !v)}
+              onClick={() => toggleExplorer()}
               aria-pressed={explorerOpen}
               title={explorerOpen ? t('editor.menu.hideExplorer', 'Hide file explorer') : t('editor.menu.showExplorer', 'Show file explorer')}
               style={{
@@ -663,7 +663,7 @@ export const EditorPage: React.FC = () => {
               <div style={{ display: 'flex', alignItems: 'stretch', flexShrink: 0 }}>
                 <button
                   className="explorer-toggle-btn"
-                  onClick={() => setExplorerOpen((v) => !v)}
+                  onClick={() => toggleExplorer()}
                   title={explorerOpen ? t('editor.menu.hideExplorer', 'Hide file explorer') : t('editor.menu.showExplorer', 'Show file explorer')}
                 >
                   <svg

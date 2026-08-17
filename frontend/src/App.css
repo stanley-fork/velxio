@@ -188,8 +188,23 @@ body {
 
 /* Collapse the Code/Both/Circuit labels to icon-only first (biggest fixed
    block in the bar) as the shared bar narrows. */
+.view-mode-toggle {
+  display: flex;
+}
+
 @container unified-toolbar (max-width: 1140px) {
   .view-mode-toggle .vm-label {
+    display: none;
+  }
+}
+
+/* Narrow bar (small window with the AI chat docked): drop the explorer /
+   Code / Both / Circuit toggle altogether. Every one of its switches is a
+   checkmarked row in the header's View menu, so nothing is lost — and the
+   ~140px it frees is what keeps the Run group and the canvas controls on
+   one line instead of overlapping. */
+@container unified-toolbar (max-width: 760px) {
+  .view-mode-toggle {
     display: none;
   }
 }
@@ -210,6 +225,18 @@ body {
 .unified-toolbar-editor .editor-toolbar {
   flex: 1;
   min-width: 0;
+}
+
+/* The wrapper is an inline-size query container for its standalone (mobile)
+   mount. Inside the shared bar that containment is exactly what let the
+   editor zone shrink under its buttons: size containment makes the wrapper
+   contribute ZERO intrinsic width, so the zone's `min-width: max-content`
+   above resolved to nothing, flexbox squeezed it, and Libraries / Output
+   painted over the board selector instead of the bar wrapping. Turn it off
+   here — the label collapses are keyed to the `unified-toolbar` container
+   in EditorToolbar.css for this mount. */
+.unified-toolbar-editor .editor-toolbar-wrapper {
+  container-type: normal;
 }
 
 .unified-toolbar-editor .editor-toolbar {

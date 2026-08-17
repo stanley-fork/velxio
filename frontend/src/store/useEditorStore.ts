@@ -152,6 +152,12 @@ interface EditorState {
   fontSize: number;
   viewMode: EditorViewMode;
   setViewMode: (mode: EditorViewMode) => void;
+  /** Desktop file-explorer pane. Lives in the store (not EditorPage state) so
+   *  the header's View menu can show its checkmark and toggle it — the
+   *  toolbar's own segmented toggle hides on narrow bars. */
+  explorerOpen: boolean;
+  setExplorerOpen: (open: boolean) => void;
+  toggleExplorer: () => void;
 
   // ── File groups (one per board) ──────────────────────────────────────────
   /** Map of groupId → WorkspaceFile[]. Stored as plain object for Zustand. */
@@ -229,6 +235,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   fontSize: 14,
   viewMode: 'both',
   setViewMode: (mode) => set({ viewMode: mode }),
+  explorerOpen: true,
+  setExplorerOpen: (open) => set({ explorerOpen: open }),
+  toggleExplorer: () => set((s) => ({ explorerOpen: !s.explorerOpen })),
 
   // File groups — initial state has one group for the default Arduino Uno board
   fileGroups: {

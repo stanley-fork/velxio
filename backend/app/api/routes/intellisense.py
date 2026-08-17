@@ -83,6 +83,7 @@ def _payload_for(root: Path, entry: Path) -> dict:
 
 _TYPE_INDEX_NAME = "_types.json"
 _TYPE_INDEX_MAX_AGE_S = 6 * 3600
+_MAX_BASES = 8
 
 
 def _type_index(root: Path) -> dict[str, str]:
@@ -167,13 +168,56 @@ def get_type_members(name: str) -> JSONResponse:
     if not entry.is_dir():
         raise HTTPException(status_code=404, detail=f"stale type index for {name}")
     payload = _payload_for(root, entry)
-    members = [s for s in payload.get("symbols", []) if s.get("owner") == name]
+
+    # Own members first, then the inheritance chain, breadth-first, each base
+    # resolved through the same index (it may live in another library:
+    # Adafruit_SH1106G -> Adafruit_SH110X -> Adafruit_GrayOLED -> Adafruit_GFX
+    # crosses two). Members are re-owned to the requested type so the editor
+    # sees one flat class; `bases` lists the chain so a host that already
+    # embeds one of them (Adafruit_GFX is curated client-side) can dedupe.
+    symbols: list[dict] = []
+    seen_names: set[str] = set()
+    chain: list[str] = []
+    queue = [(name, payload)]
+    visited = {name}
+    types = _type_index(root)
+    while queue and len(chain) < _MAX_BASES:
+        cur, cur_payload = queue.pop(0)
+        if cur != name:
+            chain.append(cur)
+        for sym in cur_payload.get("symbols", []):
+            if sym.get("owner") != cur or sym["name"] in seen_names:
+                continue
+            seen_names.add(sym["name"])
+            out = dict(sym)
+            out["owner"] = name
+            if cur != name:
+                out["inheritedFrom"] = cur
+            symbols.append(out)
+        cls = next(
+            (s for s in cur_payload.get("symbols", []) if s.get("kind") == "class" and s.get("name") == cur),
+            None,
+        )
+        for base in (cls or {}).get("bases", []):
+            if base in visited:
+                continue
+            visited.add(base)
+            base_entry = types.get(base)
+            if base_entry and (root / base_entry).is_dir():
+                queue.append((base, _payload_for(root, root / base_entry)))
+            else:
+                # Not in the cache (a core class like Print/Stream, or an
+                # embedded one like Adafruit_GFX): still report it so the
+                # host can supply the members itself.
+                chain.append(base)
+
     return JSONResponse(
         content={
             "id": payload.get("id") or entry_name,
             "triggers": payload.get("triggers", []),
             "type": name,
-            "symbols": members,
+            "bases": chain,
+            "symbols": symbols,
         },
         headers=_CACHE_HEADERS,
     )

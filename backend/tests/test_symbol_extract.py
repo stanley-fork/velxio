@@ -154,6 +154,7 @@ public:
     methods = _by_kind(result, "method")
     assert set(methods) == {"moveTo", "run", "setMaxSpeed"}
     assert all(m["owner"] == "Stepper" for m in methods.values())
+    assert _by_kind(result, "class")["Stepper"].get("bases") is None
     assert "step" not in methods and "_pin" not in methods
     assert {"FUNCTION", "DRIVER"} <= set(_by_kind(result, "constant"))
 
@@ -260,6 +261,31 @@ def test_type_endpoint_returns_only_the_declaring_class_members(
 
     r = client.get("/api/intellisense/type/BundleThing")
     assert r.status_code == 200 and r.json()["id"] == "ESP Bundle"
+
+    # Inheritance is followed through the index, members re-owned to the
+    # requested type and tagged with where they came from; bases outside the
+    # cache are still listed so the host can supply them.
+    lib(
+        "gfxlike@1.0.0-cccccccccccc",
+        "GfxLike",
+        "class GfxBase : public Print {\npublic:\n  void drawPixel(int x, int y);\n"
+        "  void setTextSize(uint8_t s), setTextColor(uint16_t c);\n};\n",
+    )
+    lib(
+        "oledlike@1.0.0-dddddddddddd",
+        "OledLike",
+        "class Oled : public GfxBase {\npublic:\n  bool begin();\n};\n",
+    )
+    # cache grew -> index rebuilds
+    r = client.get("/api/intellisense/type/Oled")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["bases"] == ["GfxBase", "Print"]
+    by_name = {s["name"]: s for s in body["symbols"]}
+    assert set(by_name) == {"begin", "drawPixel", "setTextSize", "setTextColor"}
+    assert "inheritedFrom" not in by_name["begin"]
+    assert by_name["setTextSize"]["inheritedFrom"] == "GfxBase"
+    assert all(s["owner"] == "Oled" for s in body["symbols"])
 
     assert client.get("/api/intellisense/type/Nope").status_code == 404
     assert client.get("/api/intellisense/type/not-a-type!").status_code == 400

@@ -29,6 +29,16 @@ import { requestElectricalResolve } from './spice/electricalResolveHook';
  *   Default SPI     → SPI0  (GPIO16=MISO, GPIO19=MOSI, GPIO18=SCK, GPIO17=CS)
  */
 
+/**
+ * GPIOs wired to an on-module PIO peripheral rather than to the canvas.
+ *
+ * On the Pico W the CYW43439 hangs off GP23 (WL_ON), GP24 (WL_HOST_WAKE / gSPI
+ * data), GP25 (WL_CS) and GP29 (WL_CLK). They are internal to the module, so no
+ * SPICE net exists for them and the spice-driven input path must not touch
+ * them — see the guard in setupGpioListeners().
+ */
+const PIO_PERIPHERAL_PINS = new Set([23, 24, 25, 29]);
+
 const F_CPU = 125_000_000; // 125 MHz
 const CYCLE_NANOS = 1e9 / F_CPU; // nanoseconds per cycle (~8 ns)
 const FPS = 60;
@@ -784,6 +794,14 @@ export class RP2040Simulator {
         // on a mode/pull change (an external value change via setInputValue does
         // not alter `value` for an input pin), so we can split cleanly.
         if (state >= GPIOPinState.Input) {
+          // Pins that belong to an attached PIO peripheral are NOT canvas pins.
+          // WL_HOST_WAKE (GPIO24) is driven by attachPioPeripheral() with
+          // setInputValue() from hostWakeLevel(); seeding a pull level here
+          // overwrites it the moment the CYW43 driver configures the pad as an
+          // input. The host then stops polling the chip, no association event is
+          // ever delivered, and the sketch sits forever at status=1 (CONNECTING)
+          // while `active()` still reads True. Leave them to the peripheral.
+          if (this.pioPeripheral && PIO_PERIPHERAL_PINS.has(pin)) return;
           // INPUT pin. Surface the internal pull so NetlistBuilder stamps the
           // weak resistor; the actual logic level is injected from the SPICE
           // solve by connectDigitalInputsToMcu. We do NOT mark the pin as an MCU
