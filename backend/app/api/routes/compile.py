@@ -44,14 +44,44 @@ _COMPILE_SEMAPHORE = asyncio.Semaphore(2)
 _TARGET_LOCKS: dict[str, asyncio.Lock] = {}
 
 
+def _build_identity(board_fqbn: str) -> str:
+    """The identity of the persistent BUILD DIRECTORY this FQBN compiles in.
+
+    The lock below has to be keyed on the shared resource, and that resource is
+    the build dir — which `_prepare_persistent_project_dir` keys on
+    (idf_target, variant), NOT on the FQBN. Several FQBNs map to one variant:
+    arduino-esp32's boards.txt gives both `esp32` and `esp32cam`
+    `build.variant=esp32`, so they land in the SAME directory.
+
+    Keying the lock on the FQBN therefore left the two of them free to run at
+    once inside one build dir. Measured: compiling `esp32:esp32:esp32` and
+    `esp32:esp32:esp32cam` concurrently returned BYTE-IDENTICAL firmware (same
+    sha256, 285504 bytes) and the esp32cam request got the other sketch's
+    binary — its serial printed the other example's output. In the app that
+    looked like an example running someone else's program: two gallery tabs
+    open, and the second one shows the first one's log and does nothing.
+
+    Falls back to the raw FQBN if the compiler cannot resolve the pair, which
+    is the previous behaviour and never less strict than it needs to be for a
+    board whose variant we could not read.
+    """
+    try:
+        target = espidf_compiler._idf_target(board_fqbn)
+        variant = espidf_compiler._arduino_variant(board_fqbn, target)
+        return f"{target}::{variant}"
+    except Exception:  # noqa: BLE001 - identity is best-effort; FQBN is a safe fallback
+        return board_fqbn
+
+
 def _target_lock(board_fqbn: str) -> asyncio.Lock:
-    """Lazy-initialised per-target lock so concurrent compiles to the same
-    board serialise. Different boards still run in parallel up to the
-    semaphore cap."""
-    lock = _TARGET_LOCKS.get(board_fqbn)
+    """Lazy-initialised lock so concurrent compiles that SHARE A BUILD DIR
+    serialise. Boards with genuinely different build dirs still run in
+    parallel up to the semaphore cap."""
+    key = _build_identity(board_fqbn)
+    lock = _TARGET_LOCKS.get(key)
     if lock is None:
         lock = asyncio.Lock()
-        _TARGET_LOCKS[board_fqbn] = lock
+        _TARGET_LOCKS[key] = lock
     return lock
 
 

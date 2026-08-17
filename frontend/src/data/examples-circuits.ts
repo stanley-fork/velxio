@@ -1424,13 +1424,22 @@ void loop() {
 }`,
     components: [
       UNO,
+      // The battery the description promises. Without it the divider's top end
+      // hung in the air, so A0 sat at 0 V and the sketch printed
+      // "Battery: 0.0 V / WARNING: Battery low!" forever — the one thing this
+      // example exists to show never happened.
+      { type: 'wokwi-battery-9v', id: 'bat', x: 250, y: 120, properties: {} },
       { type: 'wokwi-resistor', id: 'r1', x: 350, y: 80, properties: { value: '20000' } },
       { type: 'wokwi-resistor', id: 'r2', x: 350, y: 200, properties: { value: '10000' } },
     ],
     wires: [
+      w('w0', ['bat', '+'], ['r1', '1'], '#ff0000'),
       w('w1', ['r1', '2'], ['r2', '1']),
       w('w2', ['r2', '2'], ['arduino-uno', 'GND'], '#000000'),
       w('w3', ['r1', '2'], ['arduino-uno', 'A0'], '#ffaa00'),
+      // Battery negative shares the Arduino's ground — without a common
+      // reference the ADC has nothing to measure against.
+      w('w4', ['bat', '−'], ['arduino-uno', 'GND'], '#000000'),
     ],
   },
 

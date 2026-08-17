@@ -1449,9 +1449,13 @@ D_led1 led1_sense_mid 0 LED_RED
 
 exports[`netlist snapshot — circuits (41 examples) > battery-voltage-monitor 1`] = `
 "* Velxio circuit
-R_r2 n0 n1 10000
+V_bat n0 bat_int DC 9
+R_bat_esr bat_int n2 1.5
+R_r1 n0 n1 20000
+R_r2 n1 n2 10000
 R_autopull_n0 n0 0 100Meg
 R_autopull_n1 n1 0 100Meg
+R_autopull_n2 n2 0 100Meg
 .op
 .end"
 `;
