@@ -1,5 +1,6 @@
 import { defineConfig } from 'vitest/config';
 import path from 'path';
+import fs from 'fs';
 
 /**
  * Vitest configuration — split out from `vite.config.ts` (Phase 1d-tests J).
@@ -28,6 +29,24 @@ import path from 'path';
  *     `@pro/data/proExamples`, so without this alias every test that loads
  *     examples.ts would explode with "Cannot find package '@pro/...'".
  */
+/**
+ * Engine packages the pro overlay imports (`esp32js` and friends). A pro test
+ * file lives at `../../pro/frontend/src/pro/...`, OUTSIDE this package, so Node
+ * resolution walks up from THERE and never reaches this project's
+ * node_modules — the import dies with "Cannot find package 'esp32js'". Aliasing
+ * them keeps overlay tests able to drive the real engine.
+ *
+ * Resolved lazily per name: on a pure-OSS clone the packages aren't installed
+ * and no test imports them (the pro glob matches nothing), so a missing entry
+ * is simply left unaliased rather than pointing at a path that isn't there.
+ */
+const ENGINE_PACKAGES = ['esp32js', 'esp32s3js', 'esp32c3js', 'esp32c6js', 'rp2350js'];
+const engineAliases: Record<string, string> = {};
+for (const name of ENGINE_PACKAGES) {
+  const dir = path.resolve(__dirname, 'node_modules', name);
+  if (fs.existsSync(dir)) engineAliases[name] = dir;
+}
+
 const proOverlayPath =
   process.env.VITE_PRO_BUILD && process.env.PRO_OVERLAY_PATH
     ? path.resolve(process.env.PRO_OVERLAY_PATH)
@@ -38,6 +57,7 @@ export default defineConfig({
     alias: {
       '@velxio': path.resolve(__dirname, 'src'),
       '@pro': proOverlayPath,
+      ...engineAliases,
     },
   },
   // Allow vitest to import test files / sources from outside this

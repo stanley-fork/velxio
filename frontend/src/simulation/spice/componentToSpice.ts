@@ -1206,7 +1206,24 @@ const MAPPERS: Record<string, Mapper> = {
   // The DO (digital threshold) pin is ignored for analog simulation.
   photoresistor: (comp, netLookup) => {
     const lux = Number(comp.properties.lux ?? 500);
-    const Rdark = parseValueWithUnits(comp.properties.dark, 1_000_000);
+    // `dark` goes through the SPICE suffix convention, where M is MILLI and
+    // mega is `Meg`. A dark resistance below 1k is not a photoresistor — it
+    // is almost always "1M" written meaning 1 megaohm, which parses to
+    // 0.001 ohm and shorts AO straight to VCC. The symptom is nasty because
+    // it looks like the part works: the ADC just reads full scale forever and
+    // the lux control does nothing (every value is still a short). Clamp to
+    // the documented default and say so, rather than emitting a short.
+    const darkRaw = parseValueWithUnits(comp.properties.dark, 1_000_000);
+    let Rdark = darkRaw;
+    if (!(darkRaw >= 1_000)) {
+      Rdark = 1_000_000;
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[spice] ${comp.id}: dark resistance ${JSON.stringify(comp.properties.dark)} ` +
+          `parsed as ${darkRaw} ohm — too low for a photoresistor. SPICE reads M as ` +
+          `milli; write "1Meg" for 1 megaohm. Using 1Meg.`,
+      );
+    }
     const k = Number(comp.properties.k ?? 5);
     const Rldr = Rdark / (1 + (k * lux) / 1000);
     const vcc = netLookup('VCC');
