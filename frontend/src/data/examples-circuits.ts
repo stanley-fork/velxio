@@ -553,7 +553,10 @@ void loop() {
     components: [
       UNO,
       { type: 'wokwi-resistor', id: 'rb1', x: 350, y: 60, properties: { value: '47000' } },
-      { type: 'wokwi-resistor', id: 'rb2', x: 350, y: 180, properties: { value: '10000' } },
+      // 47k/15k puts the base at 1.2 V -> Ve 0.51 V -> Ic 0.51 mA -> collector at
+      // ~2.6 V, i.e. the mid-rail bias the sketch comment promises, so the
+      // output can swing both ways instead of clipping against a rail.
+      { type: 'wokwi-resistor', id: 'rb2', x: 350, y: 180, properties: { value: '15000' } },
       { type: 'wokwi-resistor', id: 'rc', x: 450, y: 60, properties: { value: '4700' } },
       { type: 'wokwi-resistor', id: 're', x: 450, y: 280, properties: { value: '1000' } },
       { type: 'wokwi-bjt-2n2222', id: 'q1', x: 450, y: 170, properties: {} },
@@ -564,9 +567,15 @@ void loop() {
         y: 140,
         properties: { waveform: 'sine', frequency: 1000, amplitude: 0.05, offset: 0 },
       },
-      // Small "coupling" resistor from SG to the base node so SG can wiggle
-      // the biased base without DC-shifting it.
-      { type: 'wokwi-resistor', id: 'rin', x: 300, y: 140, properties: { value: '10000' } },
+      // Coupling CAPACITOR from the generator to the base. It has to be a cap:
+      // a resistor here sits in parallel with Rb2 for DC (the generator is 0 V
+      // at DC), which is what the 10k "coupling resistor" used to do —
+      // 10k || 10k = 5k dropped the base from 0.88 V to 0.48 V, below the
+      // ~0.65 V a 2N2222 needs, so the transistor sat in cutoff, the collector
+      // stayed pinned at Vcc and analogRead printed a flat 1021-1023 forever.
+      // 1 uF is 159 ohm at the generator's 1 kHz: it passes the signal and
+      // blocks the DC that was wrecking the bias.
+      { type: 'wokwi-capacitor', id: 'cin', x: 300, y: 140, properties: { value: '1u' } },
     ],
     wires: [
       // Bias divider: 5V → Rb1 → (base) → Rb2 → GND
@@ -581,8 +590,8 @@ void loop() {
       w('w7', ['q1', 'E'], ['re', '1']),
       w('w8', ['re', '2'], ['arduino-uno', 'GND'], '#000000'),
       // AC input into base through coupling R
-      w('w9', ['sg1', 'SIG'], ['rin', '1']),
-      w('w10', ['rin', '2'], ['q1', 'B']),
+      w('w9', ['sg1', 'SIG'], ['cin', '1']),
+      w('w10', ['cin', '2'], ['q1', 'B']),
       w('w11', ['sg1', 'GND'], ['arduino-uno', 'GND'], '#000000'),
       // A0 probes the collector
       w('w12', ['q1', 'C'], ['arduino-uno', 'A0'], '#ffaa00'),

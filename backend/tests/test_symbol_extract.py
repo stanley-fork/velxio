@@ -123,6 +123,41 @@ def test_scan_library_constants_and_enums(fake_lib: Path) -> None:
 
 # ── spec parsing / normalization (used by the route) ──────────────────────
 
+def test_access_label_survives_a_nested_enum(tmp_path: Path) -> None:
+    """`public:` followed by a nested typedef enum used to take the enum branch
+    of the walker without ever applying the access label, so the class stayed
+    private and every method after the enum vanished. AccelStepper shipped 4
+    of its ~50 public methods that way; DallasTemperature shipped 0."""
+    lib = tmp_path / "steplib@1.0.0-abcdefabcdef"
+    src = lib / "src"
+    src.mkdir(parents=True)
+    (lib / "library.properties").write_text("name=Step Lib\nversion=1.0.0\n", encoding="utf-8")
+    (src / "Step.h").write_text(
+        """\
+class Stepper {
+public:
+    typedef enum { FUNCTION = 0, DRIVER = 1 } MotorInterfaceType;
+    Stepper(uint8_t iface = DRIVER);
+    void moveTo(long absolute);
+    bool run();
+protected:
+    void step(long n);
+private:
+    int _pin;
+public:
+    void setMaxSpeed(float speed);
+};
+""",
+        encoding="utf-8",
+    )
+    result = scan_library(lib)
+    methods = _by_kind(result, "method")
+    assert set(methods) == {"moveTo", "run", "setMaxSpeed"}
+    assert all(m["owner"] == "Stepper" for m in methods.values())
+    assert "step" not in methods and "_pin" not in methods
+    assert {"FUNCTION", "DRIVER"} <= set(_by_kind(result, "constant"))
+
+
 def test_parse_spec() -> None:
     assert parse_spec("Adafruit GFX Library@1.12.6") == ("Adafruit GFX Library", "1.12.6")
     assert parse_spec("FastLED") == ("FastLED", None)
@@ -170,3 +205,63 @@ def test_route_registers_symbols_path() -> None:
     from app.api.routes import intellisense
 
     assert any(r.path == "/symbols/{spec}" for r in intellisense.router.routes)
+
+
+def test_type_endpoint_returns_only_the_declaring_class_members(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """/type/{name} is the completion-safe long-tail path: only the members
+    of that class, never a library's module-level constants. And when two
+    libraries declare the same class, the one NAMED after it wins over a
+    fork/bundle that vendors a trimmed copy."""
+    fastapi = pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+    from app.api.routes import intellisense
+
+    root = tmp_path / "libcache"
+
+    def lib(dirname: str, display: str, header: str) -> None:
+        d = root / dirname / "src"
+        d.mkdir(parents=True)
+        (root / dirname / "library.properties").write_text(
+            f"name={display}\nversion=1.0.0\n", encoding="utf-8"
+        )
+        (d / "Lib.h").write_text(header, encoding="utf-8")
+
+    # The canonical library: named after the class, full API + a macro.
+    lib(
+        "pubsubclient@2.8-aaaaaaaaaaaa",
+        "PubSubClient",
+        "#define MQTT_MAX_PACKET_SIZE 256\n"
+        "class PubSubClient {\npublic:\n  void setServer(const char*, int);\n"
+        "  bool publish(const char*, const char*);\n  bool connected();\n};\n",
+    )
+    # A bundle that vendors a trimmed copy under another name.
+    lib(
+        "espbundle@1.0.0-bbbbbbbbbbbb",
+        "ESP Bundle",
+        "class PubSubClient {\npublic:\n  bool publish(const char*, const char*);\n};\n"
+        "class BundleThing {\npublic:\n  void go();\n};\n",
+    )
+    monkeypatch.setenv("VELXIO_LIBCACHE_DIR", str(root))
+
+    app = fastapi.FastAPI()
+    app.include_router(intellisense.router, prefix="/api/intellisense")
+    client = TestClient(app)
+
+    r = client.get("/api/intellisense/type/PubSubClient")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["id"] == "PubSubClient"          # the canonical one, not the bundle
+    names = {s["name"] for s in body["symbols"]}
+    assert names == {"setServer", "publish", "connected"}
+    assert all(s["owner"] == "PubSubClient" for s in body["symbols"])
+    assert "MQTT_MAX_PACKET_SIZE" not in names    # module-level never leaks
+
+    r = client.get("/api/intellisense/type/BundleThing")
+    assert r.status_code == 200 and r.json()["id"] == "ESP Bundle"
+
+    assert client.get("/api/intellisense/type/Nope").status_code == 404
+    assert client.get("/api/intellisense/type/not-a-type!").status_code == 400
+    # the index is persisted and reused
+    assert (root / ".symbols" / "_types.json").is_file()

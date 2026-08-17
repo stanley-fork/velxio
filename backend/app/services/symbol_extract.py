@@ -368,23 +368,38 @@ def _scan_text(text: str, add: Callable[[dict], Optional[dict]], detail: str) ->
     stack: list[dict] = []
     i, n = 0, len(text)
 
-    def handle_statement(stmt: str) -> None:
+    def apply_access(stmt: str) -> str:
+        """Consume `public:` / `private:` / `protected:` labels at the head of
+        a statement, updating the enclosing class scope, and return the rest.
+        Must run for EVERY statement inside a class, including the ones that
+        open a nested enum/struct/brace: `public:\n typedef enum {` used to
+        take the enum branch without ever seeing its `public:`, leaving the
+        class in its default private access and dropping every method that
+        followed (AccelStepper lost its whole API that way)."""
         if not stack or stack[-1]["kind"] != "classlike":
-            return
+            return stmt
         scope = stack[-1]
         candidate = stmt
         for m in _ACCESS_RE.finditer(stmt):
             scope["access"] = m.group(1)
             candidate = stmt[m.end():]
-        if scope["access"] != "public":
+        return candidate
+
+    def handle_statement(stmt: str) -> None:
+        candidate = apply_access(stmt)
+        if not stack or stack[-1]["kind"] != "classlike":
             return
-        _try_method(candidate.strip(), scope, add, detail)
+        if stack[-1]["access"] != "public":
+            return
+        _try_method(candidate.strip(), stack[-1], add, detail)
 
     while i < n:
         c = text[i]
         if c == "{":
             stmt = "".join(buf).strip()
             buf = []
+            # Access labels apply whichever branch the statement takes below.
+            stmt = apply_access(stmt)
             if "template" not in stmt:
                 em = _ENUM_RE.search(stmt)
                 if em and re.search(r"\benum\b", stmt):

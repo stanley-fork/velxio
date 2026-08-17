@@ -750,30 +750,45 @@ while True:
     boardType: "esp32",
     languageMode: 'micropython',
     files: [
-      { name: "main.py", content: `from machine import Pin, UART
+      { name: "main.py", content: `from machine import Pin
+import sys
+import select
 
-uart = UART(0, 9600)
-# There is no named "LED" pin on this port — GPIO2 is the DevKit v1 onboard
-# LED position, and the Velxio canvas wires an LED + 220R there.
+# Upstream drives this from a phone over an HC-05, which reaches the ESP32 as
+# plain serial — the "Bluetooth" part is just the transport. Velxio has no HC-05
+# on the canvas, so the Serial Monitor IS that link: type \`on\` / \`off\` into it.
+#
+# It has to be sys.stdin rather than UART(0). UART0 is the REPL's own channel on
+# this port, so bytes typed into the monitor are consumed by the REPL and
+# uart.read() never sees them — and \`UART(0, 9600)\` also retunes the very port
+# the monitor is talking to at 115200. The example looked alive (it printed
+# "Bluetooth Control Ready") and then ignored every command.
+#
+# There is no named "LED" pin on this port — GPIO2 is the DevKit v1 onboard LED
+# position, and the Velxio canvas wires an LED + 220R there.
 led = Pin(2, Pin.OUT)
 
+poll = select.poll()
+poll.register(sys.stdin, select.POLLIN)
+
 print("Bluetooth Control Ready")
+print("Type 'on' or 'off' in the Serial Monitor.")
 
 while True:
-    if uart.any() > 0:
-        data = uart.read().decode().strip()   # decode bytes → string
+    # 100 ms timeout instead of a busy spin, so the loop yields to the emulator.
+    if poll.poll(100):
+        data = sys.stdin.readline().strip()
+        if not data:
+            continue
         print("Received:", data)
 
         if "on" in data.lower():
             led.value(1)
             print("LED ON")
-            uart.write("LED ON\\n")
 
         elif "off" in data.lower():
             led.value(0)
             print("LED OFF")
-            uart.write("LED OFF\\n")
-
 ` },
     ],
     code: '',
