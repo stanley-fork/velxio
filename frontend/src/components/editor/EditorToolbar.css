@@ -47,6 +47,15 @@
   overflow: hidden;
 }
 
+/* Empty (nothing renders here today), it must NOT grow: a spacer that eats
+   the surplus width turns it into a black hole between the Run group and
+   Libraries whenever the bar gets roomier — closing the AI chat is exactly
+   that. Packed, the surplus collects at ONE place instead: the boundary in
+   front of the canvas controls, which already carries a divider. */
+.toolbar-center-slot:empty {
+  flex: 0 0 0;
+}
+
 /* ── Divider ─────────────────────────────────────── */
 .tb-divider {
   width: 1px;

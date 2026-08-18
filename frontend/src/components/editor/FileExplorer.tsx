@@ -773,6 +773,11 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({ onSaveClick, onNewCl
 
   return (
     <div className="file-explorer">
+      {/* Stacked, not side by side: the title owns the first line and the
+          actions the second. Side by side, the three buttons and the word
+          set the pane's minimum width between them — and every px the
+          explorer does not need goes to the code editor. Vertical room is
+          what this panel has to spare. */}
       <div className="file-explorer-header">
         <span className="file-explorer-title">{t('editor.fileExplorer.workspace')}</span>
         <div className="file-explorer-header-actions">
@@ -834,90 +839,101 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({ onSaveClick, onNewCl
                 }}
                 title={`${boardDisplayName(board)} — ${t('editor.fileExplorer.clickToEdit')}`}
               >
-                <button
-                  className="fe-collapse-btn"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toggleCollapse(board.id);
-                  }}
-                  title={isOpen ? t('editor.fileExplorer.collapse') : t('editor.fileExplorer.expand')}
-                >
-                  <IcoChevron open={isOpen} />
-                </button>
-
-                <span className="fe-board-icon" style={{ color }}>
-                  {BOARD_ICON[board.boardKind] ?? PRO_FALLBACK_ICON}
-                </span>
-
-                {renamingSection?.id === board.id && renamingSection.kind === 'board' ? (
-                  <input
-                    ref={sectionRenameInputRef}
-                    className="file-explorer-rename-input fe-section-rename-input"
-                    value={sectionRenameValue}
-                    onChange={(e) => setSectionRenameValue(e.target.value)}
-                    onBlur={commitSectionRename}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') commitSectionRename();
-                      if (e.key === 'Escape') cancelSectionRename();
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                ) : (
+                {/* Actions ride ABOVE the name, not beside it: sharing the
+                    line, three buttons plus the status dot left a board name
+                    like "M5 Cardputer ADV" a stub of the row and set a floor
+                    under the pane's width. */}
+                <div className="fe-board-actions-row">
+                  {/* The run/compile dot rides here too: on the name row it
+                      cost the name another 11px, and it is not hover-gated,
+                      so this row is never empty. */}
                   <span
-                    className="fe-board-label"
-                    onDoubleClick={(e) => {
+                    className="fe-status-dot"
+                    style={{ background: statusColor }}
+                    title={
+                      board.running
+                        ? t('editor.fileExplorer.status.running')
+                        : board.compiledProgram
+                          ? t('editor.fileExplorer.status.compiled')
+                          : t('editor.fileExplorer.status.idle')
+                    }
+                  />
+                  <span className="fe-board-actions-spacer" />
+                  <button
+                    className="fe-board-new-btn"
+                    title="Rename board (or double-click the name)"
+                    onClick={(e) => {
                       e.stopPropagation();
                       startBoardRename(board);
                     }}
-                    title="Double-click to rename"
                   >
-                    {boardDisplayName(board)}
+                    <IcoPencil />
+                  </button>
+                  <button
+                    className="fe-board-new-btn"
+                    title={t('editor.fileExplorer.newFileInBoard')}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      startCreateFile(board.id, groupId);
+                    }}
+                  >
+                    <IcoNewFile />
+                  </button>
+                  <button
+                    className="fe-board-new-btn"
+                    title={t('editor.fileExplorer.newFolderInBoard', 'New folder')}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      startCreateFolder(board.id, groupId);
+                    }}
+                  >
+                    <IcoNewFolder />
+                  </button>
+                </div>
+
+                <div className="fe-board-name-row">
+                  <button
+                    className="fe-collapse-btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleCollapse(board.id);
+                    }}
+                    title={isOpen ? t('editor.fileExplorer.collapse') : t('editor.fileExplorer.expand')}
+                  >
+                    <IcoChevron open={isOpen} />
+                  </button>
+
+                  <span className="fe-board-icon" style={{ color }}>
+                    {BOARD_ICON[board.boardKind] ?? PRO_FALLBACK_ICON}
                   </span>
-                )}
 
-                <span
-                  className="fe-status-dot"
-                  style={{ background: statusColor }}
-                  title={
-                    board.running
-                      ? t('editor.fileExplorer.status.running')
-                      : board.compiledProgram
-                        ? t('editor.fileExplorer.status.compiled')
-                        : t('editor.fileExplorer.status.idle')
-                  }
-                />
+                  {renamingSection?.id === board.id && renamingSection.kind === 'board' ? (
+                    <input
+                      ref={sectionRenameInputRef}
+                      className="file-explorer-rename-input fe-section-rename-input"
+                      value={sectionRenameValue}
+                      onChange={(e) => setSectionRenameValue(e.target.value)}
+                      onBlur={commitSectionRename}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') commitSectionRename();
+                        if (e.key === 'Escape') cancelSectionRename();
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  ) : (
+                    <span
+                      className="fe-board-label"
+                      onDoubleClick={(e) => {
+                        e.stopPropagation();
+                        startBoardRename(board);
+                      }}
+                      title="Double-click to rename"
+                    >
+                      {boardDisplayName(board)}
+                    </span>
+                  )}
 
-                {/* Rename + new-file buttons — visible on hover */}
-                <button
-                  className="fe-board-new-btn"
-                  title="Rename board (or double-click the name)"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    startBoardRename(board);
-                  }}
-                >
-                  <IcoPencil />
-                </button>
-                <button
-                  className="fe-board-new-btn"
-                  title={t('editor.fileExplorer.newFileInBoard')}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    startCreateFile(board.id, groupId);
-                  }}
-                >
-                  <IcoNewFile />
-                </button>
-                <button
-                  className="fe-board-new-btn"
-                  title={t('editor.fileExplorer.newFolderInBoard', 'New folder')}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    startCreateFolder(board.id, groupId);
-                  }}
-                >
-                  <IcoNewFolder />
-                </button>
+                </div>
               </div>
 
               {/* Files under this board, as a folder tree */}
@@ -1159,59 +1175,65 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({ onSaveClick, onNewCl
                 }}
                 title={`${chipName} — ${t('editor.fileExplorer.clickToEdit')}`}
               >
-                <button
-                  className="fe-collapse-btn"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toggleCollapse(chip.id);
-                  }}
-                  title={isOpen ? t('editor.fileExplorer.collapse') : t('editor.fileExplorer.expand')}
-                >
-                  <IcoChevron open={isOpen} />
-                </button>
+                {/* Same two-row shape as a board section: the rename button
+                    sits above, the chip's name gets the full row. */}
+                <div className="fe-board-actions-row">
+                  {!(renamingSection?.id === chip.id && renamingSection.kind === 'chip') && (
+                    <button
+                      className="fe-board-new-btn"
+                      title="Rename chip (or double-click the name)"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        startChipRename(chip.id, chipName);
+                      }}
+                    >
+                      <IcoPencil />
+                    </button>
+                  )}
+                </div>
 
-                <span className="fe-board-icon" style={{ color: '#c4b5fd' }}>
-                  <IcoChip />
-                </span>
-
-                {renamingSection?.id === chip.id && renamingSection.kind === 'chip' ? (
-                  <input
-                    ref={sectionRenameInputRef}
-                    className="file-explorer-rename-input fe-section-rename-input"
-                    value={sectionRenameValue}
-                    onChange={(e) => setSectionRenameValue(e.target.value)}
-                    onBlur={commitSectionRename}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') commitSectionRename();
-                      if (e.key === 'Escape') cancelSectionRename();
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                ) : (
-                  <span
-                    className="fe-board-label"
-                    onDoubleClick={(e) => {
-                      e.stopPropagation();
-                      startChipRename(chip.id, chipName);
-                    }}
-                    title="Double-click to rename"
-                  >
-                    {chipName}
-                  </span>
-                )}
-
-                {!(renamingSection?.id === chip.id && renamingSection.kind === 'chip') && (
+                <div className="fe-board-name-row">
                   <button
-                    className="fe-board-new-btn"
-                    title="Rename chip (or double-click the name)"
+                    className="fe-collapse-btn"
                     onClick={(e) => {
                       e.stopPropagation();
-                      startChipRename(chip.id, chipName);
+                      toggleCollapse(chip.id);
                     }}
+                    title={isOpen ? t('editor.fileExplorer.collapse') : t('editor.fileExplorer.expand')}
                   >
-                    <IcoPencil />
+                    <IcoChevron open={isOpen} />
                   </button>
-                )}
+
+                  <span className="fe-board-icon" style={{ color: '#c4b5fd' }}>
+                    <IcoChip />
+                  </span>
+
+                  {renamingSection?.id === chip.id && renamingSection.kind === 'chip' ? (
+                    <input
+                      ref={sectionRenameInputRef}
+                      className="file-explorer-rename-input fe-section-rename-input"
+                      value={sectionRenameValue}
+                      onChange={(e) => setSectionRenameValue(e.target.value)}
+                      onBlur={commitSectionRename}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') commitSectionRename();
+                        if (e.key === 'Escape') cancelSectionRename();
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  ) : (
+                    <span
+                      className="fe-board-label"
+                      onDoubleClick={(e) => {
+                        e.stopPropagation();
+                        startChipRename(chip.id, chipName);
+                      }}
+                      title="Double-click to rename"
+                    >
+                      {chipName}
+                    </span>
+                  )}
+                </div>
               </div>
 
               {isOpen && (

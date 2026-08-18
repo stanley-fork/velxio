@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { decideEngine, getInstantEngine } from '../lib/instantEngine';
 import {
+  getBoardSeedFiles,
   getProBoard,
   getGuestSetup,
   isProBoardSimulator,
@@ -1681,8 +1682,24 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
           simulator: simulatorMap.get(nextActive) ?? s.simulator,
         };
       });
-      // Create the editor file group for this board
-      useEditorStore.getState().createFileGroup(`group-${id}`);
+      // Create the editor file group for this board. A board that ships its
+      // own seed code (vendor library boards: M5Stack, UNIHIKER, ...) gets it
+      // here — the editor's family default is an LED_BUILTIN blink / an
+      // RPi.GPIO script, neither of which runs on such a board, so the very
+      // first Run on a freshly placed board would fail. QEMU-Linux boards seed
+      // their guest script ('python'); everything else starts in Arduino mode.
+      const seedMode = isPiBoardKind(boardKind) ? 'python' : 'arduino';
+      useEditorStore
+        .getState()
+        .createFileGroup(`group-${id}`, getBoardSeedFiles(boardKind, seedMode));
+      // The seed sketch includes the board's vendor library, so declare it in
+      // the board's manifest (= the compile resolution scope) right away.
+      const seedLibs = getProBoard(boardKind)?.defaultLibraries;
+      if (seedLibs?.length) {
+        set((s) => ({
+          boards: s.boards.map((b) => (b.id === id ? { ...b, libraries: [...seedLibs] } : b)),
+        }));
+      }
       // If this board is now the active one (it's the first board, or the
       // previously-active board was removed), point the editor at its file
       // group too. The canvas board picker calls addBoard directly WITHOUT
@@ -2236,10 +2253,17 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         ),
       }));
 
-      // Replace file group with appropriate default files and activate it
+      // Replace file group with appropriate default files and activate it.
+      // A board's own seed for the target mode wins over the family default:
+      // the MicroPython fallback is a Pico `Pin(25)` blink, which is a dead
+      // pin on an M5Stack.
       const editorStore = useEditorStore.getState();
       editorStore.deleteFileGroup(board.activeFileGroupId);
-      editorStore.createFileGroup(board.activeFileGroupId, mode);
+      const modeSeed = getBoardSeedFiles(
+        board.boardKind,
+        mode === 'micropython' || mode === 'espidf' ? mode : 'arduino',
+      );
+      editorStore.createFileGroup(board.activeFileGroupId, modeSeed ?? mode);
       editorStore.setActiveGroup(board.activeFileGroupId);
     },
 

@@ -47,7 +47,21 @@ export const SEO_ROUTES: SeoRoute[] = [
       url: `${DOMAIN}/`,
     },
   },
-  { path: '/editor', priority: 0.9, changefreq: 'weekly' },
+  {
+    path: '/editor',
+    priority: 0.9,
+    changefreq: 'weekly',
+    // With seoMeta the route is prerendered, so nginx serves /editor/ as a
+    // real page and 301s /editor to it. Without it both forms answered 200
+    // with the homepage head, and Google indexed /editor AND /editor/ as
+    // two pages with different impressions.
+    seoMeta: {
+      title: 'Multi-Board Simulator Editor — Arduino, ESP32, RP2040, RISC-V | Velxio',
+      description:
+        'Write, compile and simulate Arduino, ESP32, Raspberry Pi Pico, ESP32-C3, and Raspberry Pi 3 code in your browser. 19 boards, 5 CPU architectures, 48+ components. Free and open-source.',
+      url: `${DOMAIN}/editor`,
+    },
+  },
   {
     path: '/examples',
     priority: 0.8,
@@ -222,24 +236,31 @@ export const SEO_ROUTES: SeoRoute[] = [
   {
     path: '/v2',
     priority: 0.9,
+    // Superseded release page. Canonical points at the home (seoMeta.url)
+    // and noindex keeps it out of the sitemap: /v2 and /v2-5 were taking
+    // two brand sitelink slots (5.9k impressions, 29 clicks) that the
+    // editor and the simulator landings should hold. The page still
+    // renders for old links.
+    noindex: true,
     changefreq: 'monthly',
     seoMeta: {
       title: 'Velxio 2.0 — Multi-Board Embedded Simulator | ESP32, Raspberry Pi, Arduino, RISC-V',
       description:
         'Velxio 2.0 is here. Simulate Arduino, ESP32, Raspberry Pi Pico, and Raspberry Pi 3 in your browser. 19 boards, 68+ examples, realistic sensor simulation. Free and open-source.',
-      url: `${DOMAIN}/v2`,
+      url: `${DOMAIN}/`,
     },
   },
   {
     path: '/v2-5',
     priority: 0.9,
+    noindex: true, // see /v2
     changefreq: 'monthly',
     seoMeta: {
       title:
         'Velxio 2.5 — Arduino + SPICE Analog Circuit Simulator in Your Browser | ngspice-WASM',
       description:
         'Velxio 2.5 brings real-time analog circuit simulation via ngspice-WASM. Hybrid digital + analog co-simulation: resistors, capacitors, inductors, op-amps, transistors, voltmeters, ammeters — wired to Arduino, ESP32, RP2040 GPIO/ADC. 40+ circuit examples. Free and open-source.',
-      url: `${DOMAIN}/v2-5`,
+      url: `${DOMAIN}/`,
     },
   },
   {

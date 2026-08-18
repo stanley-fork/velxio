@@ -104,8 +104,12 @@ export const AppHeader: React.FC<AppHeaderProps> = ({ editorMenu, editorToolbar 
     return null;
   }
 
+  // Compare with the trailing slash ignored: /editor is served (and
+  // canonicalized) as /editor/ since it is prerendered, while client-side
+  // navigation still lands on /editor.
+  const samePath = (a: string, b: string) => a.replace(/\/+$/, '') === b.replace(/\/+$/, '');
   const isActive = (path: string) =>
-    location.pathname === localize(path) ? ' header-nav-link-active' : '';
+    samePath(location.pathname, localize(path)) ? ' header-nav-link-active' : '';
 
   return (
     <header ref={headerRef} className={"app-header" + (editorToolbar ? ' app-header--with-toolbar' : '')}>
@@ -159,7 +163,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({ editorMenu, editorToolbar 
             <Link to={localize('/examples')} className={'header-nav-link' + isActive('/examples')}>
               {t('header.nav.examples')}
             </Link>
-            <Link to={localize('/editor')} className={'header-nav-link' + isActive('/editor')}>
+            <Link to={localize('/editor/')} className={'header-nav-link' + isActive('/editor')}>
               {t('header.nav.editor')}
             </Link>
             {import.meta.env.VITE_PRO_BUILD && (
@@ -243,7 +247,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({ editorMenu, editorToolbar 
           <LanguageSwitcher />
 
           {/* Share button — visible when a project is loaded */}
-          {currentProject && location.pathname === '/editor' && (
+          {currentProject && samePath(location.pathname, localize('/editor')) && (
             <button
               onClick={() => setShowShareModal(true)}
               style={{

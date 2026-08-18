@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { generateUUID } from '../utils/uuid';
 import { isPiBoardKind } from '../types/board';
+import { getProBoard } from '../lib/proBoardRegistry';
 
 export interface WorkspaceFile {
   id: string;
@@ -491,7 +492,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         const mainId = `${groupId}-main`;
         let fileName: string;
         let content: string;
-        const isEsp32 = groupId.includes('esp32');
+        // ESP32 by id ('group-esp32-c3') or by the overlay board's declared
+        // family — an overlay kind can be an ESP32 with no 'esp32' in its name
+        // (m5stack-core, cardputer-adv), and those used to be seeded the Pico's
+        // `Pin(25)` blink, a dead pin on both.
+        const isEsp32 =
+          groupId.includes('esp32') ||
+          getProBoard(boardIdPart)?.esp32Family !== undefined ||
+          getProBoard(boardIdPart.replace(/-\d+$/, ''))?.esp32Family !== undefined;
         if (languageMode === 'espidf') {
           fileName = 'main.c';
           content = DEFAULT_ESPIDF_CONTENT;

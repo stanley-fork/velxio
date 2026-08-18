@@ -82,8 +82,8 @@ export const ExamplesGallery: React.FC<ExamplesGalleryProps> = ({ onLoadExample 
   // Overlay boards and their examples register asynchronously — re-derive the
   // filter options when either lands, so a pro board's tab appears without a
   // reload.
-  useSyncExternalStore(subscribeProExamples, getProExamplesVersion);
-  useSyncExternalStore(subscribeProBoards, getProBoardsVersion);
+  useSyncExternalStore(subscribeProExamples, getProExamplesVersion, getProExamplesVersion);
+  useSyncExternalStore(subscribeProBoards, getProBoardsVersion, getProBoardsVersion);
 
   // The static tabs cover the OSS boards; every other board kind that appears
   // in the (possibly overlay-extended) gallery gets a tab of its own, labelled

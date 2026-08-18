@@ -138,6 +138,30 @@ export interface ProBoardDef {
     bridge: unknown;
   }) => () => void;
 
+  /**
+   * Seed code a freshly placed board starts with, per language mode.
+   *
+   * Without this the editor falls back to the family default — the Arduino
+   * `LED_BUILTIN` blink, the Pico `Pin(25)` blink, or the Raspberry Pi
+   * `RPi.GPIO` script — and NONE of those run on a board that has no such
+   * LED, no RPi.GPIO and its own vendor library (an M5Stack needs
+   * `M5.begin()`, the UNIHIKER needs pinpong/unihiker). The user's very
+   * first Run then fails on a board they have not touched yet. Keep each
+   * entry as close to the vendor's own first example as the emulator
+   * allows, and self-contained: a freshly placed board has nothing wired
+   * to it, so the code must do something visible on the board itself.
+   *
+   * Keys are the board's language modes plus 'python' for QEMU-Linux
+   * (piFamily) boards, whose seed is the guest script.
+   */
+  defaultFiles?: Partial<
+    Record<'arduino' | 'micropython' | 'espidf' | 'python', Array<{ name: string; content: string }>>
+  >;
+  /** Library manifest seeded together with `defaultFiles.arduino` — the seed
+   *  sketch includes the vendor library, so the board must declare it or the
+   *  first compile resolves against nothing. */
+  defaultLibraries?: string[];
+
   /** Sidebar / toolbar accents (fall back to a neutral chip icon). */
   icon?: string;
   color?: string;
@@ -224,6 +248,19 @@ export function registerBoardBuiltins(kind: string, attach: BuiltinsAttach): voi
  *  own `attachBuiltins` first, then anything registered for an OSS kind. */
 export function getBoardBuiltins(kind: string): BuiltinsAttach | undefined {
   return registry.get(kind)?.attachBuiltins ?? boardBuiltins.get(kind);
+}
+
+/**
+ * Seed files for a board kind in a given language mode, or undefined when the
+ * board carries no seed of its own (the editor's family default applies).
+ * `mode` is 'python' for QEMU-Linux boards — see ProBoardDef.defaultFiles.
+ */
+export function getBoardSeedFiles(
+  kind: string,
+  mode: 'arduino' | 'micropython' | 'espidf' | 'python',
+): Array<{ name: string; content: string }> | undefined {
+  const files = registry.get(kind)?.defaultFiles?.[mode];
+  return files && files.length ? files : undefined;
 }
 
 export function listProBoards(): ProBoardDef[] {
