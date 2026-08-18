@@ -72,7 +72,11 @@
       "contextMenu": {
         "rename": "Rinomina",
         "delete": "Elimina"
-      }
+      },
+      "lastSaved": "ultimo salvataggio",
+      "saving": "salvataggio…",
+      "saved": "salvato",
+      "saveFailed": "salvataggio non riuscito"
     },
     "fileTabs": {
       "unsavedChanges": "Modifiche non salvate",

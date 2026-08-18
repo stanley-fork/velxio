@@ -74,7 +74,11 @@
       "contextMenu": {
         "rename": "Rename",
         "delete": "Delete"
-      }
+      },
+      "lastSaved": "last saved",
+      "saving": "saving…",
+      "saved": "saved",
+      "saveFailed": "save failed"
     },
     "fileTabs": {
       "unsavedChanges": "Unsaved changes",

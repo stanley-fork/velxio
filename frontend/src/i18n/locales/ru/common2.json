@@ -72,7 +72,11 @@
       "contextMenu": {
         "rename": "Переименовать",
         "delete": "Удалить"
-      }
+      },
+      "lastSaved": "последнее сохранение",
+      "saving": "сохранение…",
+      "saved": "сохранено",
+      "saveFailed": "ошибка сохранения"
     },
     "fileTabs": {
       "unsavedChanges": "Несохранённые изменения",

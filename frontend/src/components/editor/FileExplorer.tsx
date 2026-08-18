@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { useEditorStore, chipFileGroupId } from '../../store/useEditorStore';
+import type { AutoSaveState } from '../../hooks/useAutoSaveProject';
 import type { WorkspaceFile } from '../../store/useEditorStore';
 import { useSimulatorStore } from '../../store/useSimulatorStore';
 import {
@@ -94,6 +96,26 @@ const IcoNewWorkspace = () => (
     <line x1="9" y1="14" x2="15" y2="14" />
   </svg>
 );
+
+/** Tooltip for the Save button: the plain action when no project is
+ *  loaded, otherwise the auto-save status and the last save time. */
+function saveButtonTitle(t: TFunction, autoSave?: AutoSaveState): string {
+  const base = t('editor.fileExplorer.saveProject');
+  if (!autoSave) return base;
+  const when = autoSave.lastSavedAt
+    ? ` — ${t('editor.fileExplorer.lastSaved', 'last saved')} ${new Date(autoSave.lastSavedAt).toLocaleTimeString()}`
+    : '';
+  switch (autoSave.status) {
+    case 'dirty':
+      return `${base} — ${t('editor.fileExplorer.unsavedChanges')}${when}`;
+    case 'saving':
+      return `${base} — ${t('editor.fileExplorer.saving', 'saving…')}`;
+    case 'error':
+      return `${base} — ${t('editor.fileExplorer.saveFailed', 'save failed')}${autoSave.errorMessage ? `: ${autoSave.errorMessage}` : ''}`;
+    default:
+      return `${base} — ${t('editor.fileExplorer.saved', 'saved')}${when}`;
+  }
+}
 
 const IcoSave = () => (
   <svg
@@ -346,9 +368,22 @@ interface ContextMenu {
 interface FileExplorerProps {
   onSaveClick: () => void;
   onNewClick: () => void;
+  /** Auto-save state of the loaded project. When present, the Save button
+   *  is the save indicator: green = saved, orange = unsaved changes,
+   *  pulsing = saving, red = save failed. Replaces the text pill the header
+   *  used to render ("Unsaved changes"), which ate toolbar width. */
+  autoSave?: AutoSaveState;
 }
 
-export const FileExplorer: React.FC<FileExplorerProps> = ({ onSaveClick, onNewClick }) => {
+const SAVE_STATUS_CLASS: Record<AutoSaveState['status'], string> = {
+  idle: 'is-saved',
+  saved: 'is-saved',
+  dirty: 'is-dirty',
+  saving: 'is-saving',
+  error: 'is-error',
+};
+
+export const FileExplorer: React.FC<FileExplorerProps> = ({ onSaveClick, onNewClick, autoSave }) => {
   const { t } = useTranslation();
   // Hidden <input type="file"> we trigger via ref when the user clicks
   // the Open project button.  Accepts both .vlx (Velxio native) and .zip
@@ -763,8 +798,9 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({ onSaveClick, onNewCl
             style={{ display: 'none' }}
           />
           <button
-            className="file-explorer-save-btn"
-            title={t('editor.fileExplorer.saveProject')}
+            className={`file-explorer-save-btn${autoSave ? ` ${SAVE_STATUS_CLASS[autoSave.status]}` : ''}`}
+            title={saveButtonTitle(t, autoSave)}
+            aria-label={saveButtonTitle(t, autoSave)}
             onClick={onSaveClick}
           >
             <IcoSave />
@@ -1077,11 +1113,12 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({ onSaveClick, onNewCl
                     <span
                       style={{
                         marginLeft: 'auto',
-                        fontSize: 10,
+                        fontSize: 9,
+                        lineHeight: '14px',
                         color: '#9d9d9d',
                         background: '#2d2d2d',
-                        borderRadius: 8,
-                        padding: '1px 7px',
+                        borderRadius: 7,
+                        padding: '0 5px',
                       }}
                       title={
                         board.libraries && board.libraries.length

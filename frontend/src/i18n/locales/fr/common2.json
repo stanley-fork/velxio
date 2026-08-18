@@ -72,7 +72,11 @@
       "contextMenu": {
         "rename": "Renommer",
         "delete": "Supprimer"
-      }
+      },
+      "lastSaved": "dernier enregistrement",
+      "saving": "enregistrement…",
+      "saved": "enregistré",
+      "saveFailed": "échec de l'enregistrement"
     },
     "fileTabs": {
       "unsavedChanges": "Modifications non enregistrées",

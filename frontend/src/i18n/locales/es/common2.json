@@ -74,7 +74,11 @@
       "contextMenu": {
         "rename": "Renombrar",
         "delete": "Eliminar"
-      }
+      },
+      "lastSaved": "guardado por última vez",
+      "saving": "guardando…",
+      "saved": "guardado",
+      "saveFailed": "error al guardar"
     },
     "fileTabs": {
       "unsavedChanges": "Cambios sin guardar",

@@ -72,7 +72,11 @@
       "contextMenu": {
         "rename": "Umbenennen",
         "delete": "Löschen"
-      }
+      },
+      "lastSaved": "zuletzt gespeichert",
+      "saving": "wird gespeichert…",
+      "saved": "gespeichert",
+      "saveFailed": "Speichern fehlgeschlagen"
     },
     "fileTabs": {
       "unsavedChanges": "Ungespeicherte Änderungen",

@@ -72,7 +72,11 @@
       "contextMenu": {
         "rename": "重命名",
         "delete": "删除"
-      }
+      },
+      "lastSaved": "上次保存",
+      "saving": "保存中…",
+      "saved": "已保存",
+      "saveFailed": "保存失败"
     },
     "fileTabs": {
       "unsavedChanges": "未保存的更改",

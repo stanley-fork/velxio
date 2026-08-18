@@ -13,20 +13,32 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 10px;
+  gap: 4px;
+  padding: 0 4px 0 6px;
   height: 46px;
   color: #9d9d9d;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.3px;
   border-bottom: 1px solid #333;
   flex-shrink: 0;
+}
+
+/* The title gives way before the actions do: at narrow pane widths the
+   three buttons must stay reachable, the word can truncate. */
+.file-explorer-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .file-explorer-header-actions {
   display: flex;
   align-items: center;
   gap: 2px;
+  flex-shrink: 0;
 }
 
 .file-explorer-new-btn {
@@ -39,8 +51,14 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 20px;
+  height: 20px;
+}
+
+.file-explorer-new-btn svg,
+.file-explorer-save-btn svg {
+  width: 16px;
+  height: 16px;
 }
 
 .file-explorer-new-btn:hover {
@@ -58,8 +76,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 20px;
+  height: 20px;
 }
 
 .file-explorer-save-btn:hover {
@@ -67,23 +85,49 @@
   color: var(--color-action-primary);
 }
 
+/* The Save button doubles as the auto-save indicator once a project is
+   loaded (replaces the "Unsaved changes" text pill in the header). */
+.file-explorer-save-btn.is-saved {
+  color: #3fb950;
+}
+.file-explorer-save-btn.is-dirty {
+  color: #f0883e;
+}
+.file-explorer-save-btn.is-saving {
+  color: #3fb950;
+  animation: velxio-pulse 1s ease-in-out infinite;
+}
+.file-explorer-save-btn.is-error {
+  color: #f85149;
+}
+.file-explorer-save-btn.is-saved:hover,
+.file-explorer-save-btn.is-dirty:hover,
+.file-explorer-save-btn.is-error:hover {
+  filter: brightness(1.25);
+}
+
 .file-explorer-list {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 0;
+  padding: 2px 0;
   scrollbar-width: thin;
   scrollbar-color: #3c3c3c transparent;
 }
 
+/* Rows are deliberately compact (VS Code density): the explorer is a narrow
+   pane and every px of padding, indent or icon here is a px the code editor
+   does not get. */
 .file-explorer-item {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 8px;
+  gap: 4px;
+  padding: 3px 6px;
   cursor: pointer;
   color: #ccc;
   border-radius: 3px;
-  margin: 1px 4px;
+  margin: 0 2px;
+  font-size: 11px;
+  line-height: 16px;
   white-space: nowrap;
   overflow: hidden;
   user-select: none;
@@ -103,9 +147,15 @@
 }
 
 .file-explorer-icon {
-  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
   flex-shrink: 0;
   opacity: 0.8;
+}
+
+.file-explorer-icon svg {
+  width: 16px;
+  height: 16px;
 }
 
 .file-explorer-name {
@@ -115,8 +165,8 @@
 }
 
 .file-explorer-dot {
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: #e8a87c;
   flex-shrink: 0;
@@ -127,7 +177,7 @@
   background: #3c3c3c;
   border: 1px solid var(--color-action-primary);
   color: #fff;
-  font-size: 12px;
+  font-size: 11px;
   padding: 1px 4px;
   border-radius: 2px;
   outline: none;
@@ -183,12 +233,12 @@
 .fe-board-header {
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 5px 6px 5px 4px;
+  gap: 4px;
+  padding: 3px 4px 3px 2px;
   cursor: pointer;
   color: #aaa;
   border-radius: 3px;
-  margin: 0 4px;
+  margin: 0 2px;
   user-select: none;
   position: relative;
 }
@@ -261,8 +311,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   flex-shrink: 0;
   opacity: 0;
   transition: opacity 0.1s;
@@ -271,6 +321,11 @@
 .fe-board-header:hover .fe-board-new-btn,
 .fe-board-header-active .fe-board-new-btn {
   opacity: 1;
+}
+
+.fe-board-new-btn svg {
+  width: 16px;
+  height: 16px;
 }
 
 .fe-board-new-btn:hover {
@@ -283,8 +338,10 @@
 }
 
 .fe-file-item {
-  /* --fe-depth: nesting level inside the board's folder tree (0 = root). */
-  padding-left: calc(26px + var(--fe-depth, 0) * 14px) !important;
+  /* --fe-depth: nesting level inside the board's folder tree (0 = root).
+     Root files sit just inside the board header's chevron, not under its
+     icon — the deeper indent read as wasted margin in a 150px pane. */
+  padding-left: calc(16px + var(--fe-depth, 0) * 12px) !important;
 }
 
 /* ── Folder rows ────────────────────────────────────────────────────────── */

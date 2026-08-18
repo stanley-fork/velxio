@@ -1503,22 +1503,30 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedComponentId, recordRemoveComponent]);
 
-  // Handle component selection from modal
-  const handleSelectComponent = (metadata: ComponentMetadata) => {
-    // Anchor new components to the visible top-left of the canvas, so they
-    // appear in the user's current viewport regardless of pan/zoom (instead
-    // of growing off-screen at fixed world coords like (400, 100 + row*250)).
+  // Where the next thing added from the picker lands — components AND boards
+  // share this, so both start at the same corner and cascade over the same
+  // occupied slots (a board dropped in the corner counts as parking there for
+  // the next part, and vice versa).
+  //
+  // Anchored to the visible top-left of the canvas, so it appears in the
+  // user's current viewport regardless of pan/zoom (instead of growing
+  // off-screen at fixed world coords like (400, 100 + row*250)). From that
+  // corner it cascades down-right, taking the first FREE slot — see
+  // utils/dropSlot for why it is keyed on what is parked there rather than on
+  // how many items the project has.
+  const nextDropSlot = (): { x: number; y: number } => {
     const rect = canvasRef.current?.getBoundingClientRect();
     const z = zoomRef.current || 1;
     const screenMargin = 60; // px on screen — keeps the part off the toolbar/edge
     const worldOrigin = rect
       ? toWorld(rect.left + screenMargin, rect.top + screenMargin)
       : { x: 100, y: 100 };
+    return pickDropSlot(worldOrigin, [...components, ...boards], { step: 36 / z });
+  };
 
-    // Cascade down-right from that corner, taking the first FREE slot — see
-    // utils/dropSlot for why it is keyed on what is parked there rather than
-    // on how many components the project has.
-    const { x, y } = pickDropSlot(worldOrigin, components, { step: 36 / z });
+  // Handle component selection from modal
+  const handleSelectComponent = (metadata: ComponentMetadata) => {
+    const { x, y } = nextDropSlot();
 
     const component = createComponentFromMetadata(metadata, x, y);
     trackAddComponent(metadata.id);
@@ -3581,13 +3589,15 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
             return;
           }
           trackSelectBoard(kind);
-          const sameKind = boards.filter((b) => b.boardKind === kind);
-          const newBoardId = sameKind.length === 0 ? kind : `${kind}-${sameKind.length + 1}`;
-          const x = boardPosition.x + boards.length * 60 + 420;
-          const y = boardPosition.y + boards.length * 30;
+          // Same landing rule as components: the visible corner, first free
+          // slot. Boards used to be placed 420 world-px right of the ACTIVE
+          // board plus 60/30 px per board already on the canvas — a fixed
+          // world offset that ignored pan/zoom (so the new board could land
+          // off-screen) and that kept marching further out as boards were
+          // added, even after they had been moved away or removed.
+          const { x, y } = nextDropSlot();
           addBoard(kind, x, y);
           // file group is created inside addBoard
-          void newBoardId;
         }}
       />
 
