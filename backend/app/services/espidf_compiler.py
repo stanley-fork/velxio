@@ -526,7 +526,7 @@ class ESPIDFCompiler:
 
     # Targets that only exist in ESP-IDF v5.x — the pinned v4.4.7 tree
     # predates them, so they build against idf5_path instead of idf_path.
-    _IDF5_TARGETS: frozenset[str] = frozenset({'esp32c6'})
+    _IDF5_TARGETS: frozenset[str] = frozenset({'esp32c6', 'esp32p4', 'esp32c5'})
 
     # Flash offset where each chip's boot ROM expects the 2nd-stage
     # bootloader. ESP32 / ESP32-S2 use 0x1000; every newer chip (S3, C2,
@@ -535,6 +535,8 @@ class ESPIDFCompiler:
     _BOOTLOADER_OFFSETS: dict[str, int] = {
         'esp32': 0x1000,
         'esp32s2': 0x1000,
+        'esp32p4': 0x2000,
+        'esp32c5': 0x2000,
     }
 
     def _is_esp32c3(self, board_fqbn: str) -> bool:
@@ -545,6 +547,16 @@ class ESPIDFCompiler:
         """Return True if FQBN targets ESP32-C6 (RISC-V, IDF v5.x only)."""
         f = board_fqbn.lower()
         return 'esp32c6' in f or 'esp32-c6' in f
+
+    def _is_esp32p4(self, board_fqbn: str) -> bool:
+        """Return True if FQBN targets ESP32-P4 (RISC-V, IDF v5.x only)."""
+        f = board_fqbn.lower()
+        return 'esp32p4' in f or 'esp32-p4' in f
+
+    def _is_esp32c5(self, board_fqbn: str) -> bool:
+        """Return True if FQBN targets ESP32-C5 (RISC-V, IDF v5.x only)."""
+        f = board_fqbn.lower()
+        return 'esp32c5' in f or 'esp32-c5' in f
 
     def _idf_root(self, use_idf5: bool) -> str:
         """The ESP-IDF tree a compile builds against."""
@@ -599,6 +611,9 @@ class ESPIDFCompiler:
         error rather than being pattern-translated into something it
         isn't.
         """
+        if idf_target == 'esp32c5':
+            # No arduino-esp32 core supports the C5 yet — IDF-native only.
+            return False
         if idf_target in self._IDF5_TARGETS:
             return self.has_arduino5
         return self.has_arduino or self.has_arduino5
@@ -750,6 +765,10 @@ class ESPIDFCompiler:
             return 'esp32c6'
         if self._is_esp32s3(board_fqbn):
             return 'esp32s3'
+        if self._is_esp32p4(board_fqbn):
+            return 'esp32p4'
+        if self._is_esp32c5(board_fqbn):
+            return 'esp32c5'
         # Default to esp32 (Xtensa LX6) for the original ESP32 / ESP32-S2
         return 'esp32'
 
@@ -2237,7 +2256,7 @@ class ESPIDFCompiler:
             # resolve. The old xtensa-only glob wrongly rejected RISC-V-only
             # roots such as the v5.x install used for esp32c6.
             xtensa_glob = 'tools/xtensa-esp32-elf/*/xtensa-esp32-elf/bin'
-            if idf_target in ('esp32c3', 'esp32c6'):
+            if idf_target in ('esp32c3', 'esp32c6', 'esp32p4', 'esp32c5'):
                 required_globs: tuple[str, ...] = (
                     'tools/riscv32-esp-elf/*/riscv32-esp-elf/bin',
                 )
@@ -2553,8 +2572,11 @@ class ESPIDFCompiler:
 
         # ESP32-C3 / ESP32-C6 have no external PSRAM controller — silently
         # disable so a stale field from an upgraded project doesn't trip up
-        # the build.
-        if idf_target in ('esp32c3', 'esp32c6'):
+        # the build. P4/C5 modules DO carry PSRAM, but the in-browser engines
+        # run without it for now (the P4 engine models PSRAM as optional and
+        # firmware built with SPIRAM would fail honestly on a board that does
+        # not declare it) — keep it off until the engines validate it.
+        if idf_target in ('esp32c3', 'esp32c6', 'esp32p4', 'esp32c5'):
             normalized['psram'] = 'disabled'
 
         # ESP32-C3 / ESP32-C6 top out at 160 MHz — clamp the historical 240
@@ -2615,7 +2637,7 @@ class ESPIDFCompiler:
         drops: tuple[str, ...] = ()
         if not arduino_mode:
             drops += self._IDF5_PUREIDF_DROP_PREFIXES
-        elif idf_target in ('esp32c3', 'esp32c6'):
+        elif idf_target in ('esp32c3', 'esp32c6', 'esp32c5'):
             # Arduino v5 on a single-core RISC-V chip: the running-core
             # options are hidden by `depends on !FREERTOS_UNICORE`, so drop
             # just those two (keep the rest of the Arduino/BT symbols).
@@ -2623,10 +2645,19 @@ class ESPIDFCompiler:
                 'CONFIG_ARDUINO_RUNNING_CORE',
                 'CONFIG_ARDUINO_EVENT_RUNNING_CORE',
             )
-        if idf_target in ('esp32c3', 'esp32c6'):
+        if idf_target in ('esp32c3', 'esp32c6', 'esp32c5'):
             drops += (
                 'CONFIG_SPIRAM',
                 'CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240',
+            )
+        if idf_target == 'esp32p4':
+            # The P4's CPU-frequency kconfig choices (360/400) do not overlap
+            # the classic 240/160/80/40 set the template renders — drop the
+            # whole group and let IDF's own default stand. SPIRAM stays off
+            # (see _normalize_options).
+            drops += (
+                'CONFIG_SPIRAM',
+                'CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ',
             )
         if idf_target != 'esp32':
             drops += ('CONFIG_ESPTOOLPY_FLASHFREQ_26M',)
@@ -2737,6 +2768,18 @@ class ESPIDFCompiler:
         if use_idf5:
             rendered = self._fixup_sdkconfig_for_idf5(
                 rendered, idf_target, arduino_mode
+            )
+        if idf_target == 'esp32p4':
+            # The in-browser esp32p4js engine runs the ONLY published P4 mask
+            # ROM (rev0), and from silicon v3.0 IDF switches ROM symbol tables
+            # (esp32p4.rom.eco5.ld moves rom_spiflash_legacy_data) — firmware
+            # built for v3 reads a flash descriptor the rev0 ROM never wrote
+            # and rejects every partition. Pin the build to rev0 so images
+            # boot on the engine (project/esp32p4-js-emulator/STATUS.md).
+            rendered += (
+                '\n# Velxio: esp32p4js runs the rev0 mask ROM\n'
+                'CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y\n'
+                'CONFIG_ESP32P4_REV_MIN_0=y\n'
             )
         return rendered
 

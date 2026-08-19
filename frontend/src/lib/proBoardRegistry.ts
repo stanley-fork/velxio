@@ -54,7 +54,7 @@ export interface ProBoardDef {
   /** ESP32 run-path routing: the base chip the board carries. Routes the run
    *  through the ESP32 bridge path and picks the machine/engine type. Omit for
    *  boards that provide createSimulator (RP2350 class) or AVR/RP2040. */
-  esp32Family?: 'esp32' | 'esp32-s3' | 'esp32-c3' | 'esp32-c6';
+  esp32Family?: 'esp32' | 'esp32-s3' | 'esp32-c3' | 'esp32-c6' | 'esp32-p4' | 'esp32-c5';
   /** QEMU-Linux run-path routing: route this kind through the Raspberry Pi
    *  bridge (backend qemu WebSocket, VFS panel, boot terminal). The overlay
    *  must also register a matching backend profile for the kind. */
@@ -105,6 +105,10 @@ export interface ProBoardDef {
    *  setMicrophoneSource (I2S RX sample injection): shows the canvas-header
    *  Mic toggle that streams the computer's microphone into it. */
   builtInMicrophone?: boolean;
+  /** The board carries a camera fed from the host webcam (CameraToggle in the
+   *  canvas header; the bridge implements pushCameraFrame). An object form
+   *  caps the injected JPEG size for drivers with tight frame buffers. */
+  builtInCamera?: boolean | { maxFrameBytes?: number };
   /** Display-controller identity for panel autodetect probes. Vendor
    *  libraries (M5GFX and friends) identify a board by reading the panel's
    *  RDDID over SPI with the display's own chip-select — and reject the

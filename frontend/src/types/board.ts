@@ -137,6 +137,13 @@ export interface BoardInstance {
    *  so a project doesn't silently change behaviour between runs. */
   enginePinned?: 'instant' | 'linux';
   compiledProgram: string | null; // hex for AVR/RP2040, null for Pi (runs Python)
+  /**
+   * Fingerprint of the sources (+ build options) `compiledProgram` was built
+   * from — see utils/sourceFingerprint.ts. Lets the UI tell a build that
+   * matches the code on screen from a stale one (the Flash dialog warns
+   * and rebuilds). Undefined for builds recorded before this field existed.
+   */
+  compiledSourceHash?: string | null;
   serialOutput: string;
   serialBaudRate: number;
   serialMonitorOpen: boolean;

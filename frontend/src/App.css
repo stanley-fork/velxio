@@ -656,3 +656,12 @@ body {
 .editor-corner-box .header-username-text {
   display: none;
 }
+
+/* Flash dialog: indeterminate bar while the sketch compiles before a flash. */
+@keyframes flash-indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+.flash-indeterminate {
+  animation: flash-indeterminate 1.4s ease-in-out infinite;
+}

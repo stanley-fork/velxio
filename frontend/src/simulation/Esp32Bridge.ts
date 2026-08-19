@@ -45,6 +45,15 @@ import { generateUUID } from '../utils/uuid';
 export function toQemuBoardType(kind: BoardKind): 'esp32' | 'esp32-s3' | 'esp32-c3' | 'esp32-c6' {
   // Overlay-registered boards carry their base chip in the registry.
   const proFam = getProBoard(kind)?.esp32Family;
+  // Chips with NO QEMU machine anywhere (backend esp_qemu_manager knows
+  // esp32/s3/c3 only; c6 is at least mapped): reaching this bridge means the
+  // JS engine was skipped for a chip that has no other path — fail loudly
+  // instead of booting the wrong machine and wedging on the first register.
+  if (proFam === 'esp32-p4' || proFam === 'esp32-c5') {
+    throw new Error(
+      `${kind}: the ${proFam} has no QEMU machine - it runs only on its in-browser engine`,
+    );
+  }
   if (proFam) return proFam;
   if (kind === 'esp32-s3' || kind === 'xiao-esp32-s3' || kind === 'arduino-nano-esp32')
     return 'esp32-s3';

@@ -74,6 +74,14 @@ export interface WebFlashImpl {
    * MicroPython projects can't be flashed and the UI says so.
    */
   flashMicroPython?(req: MicroPythonFlashRequest): Promise<WebFlashResult>;
+  /**
+   * Ask the browser for the serial port NOW, from a user gesture, without
+   * flashing. The Flash dialog calls this at the click, then compiles (which
+   * can take minutes — long past any gesture window), then flashes to the
+   * port already granted. Optional — without it the dialog compiles first
+   * and asks for a second click to connect.
+   */
+  preparePort?(boardKind: string): Promise<void>;
 }
 
 let _impl: WebFlashImpl | null = null;
@@ -113,3 +121,32 @@ export function webFlashMpyAvailable(boardKind: string): boolean {
   if (!_impl?.flashMicroPython) return false;
   return webFlashAvailable(boardKind);
 }
+
+// ── Hardware-flash entitlement gate ─────────────────────────────────────
+// Whether THIS build may flash real hardware at all. OSS default: allowed.
+// The desktop overlay installs a gate that requires a paid (non-trial)
+// license — issue #207 "upload to board" ships in the paid desktop app.
+// The Flash dialog keeps its menu entry either way and, when blocked,
+// renders the upgrade panel instead of the port picker.
+
+export interface HardwareFlashGate {
+  /** Called at open time (and re-evaluated on each render). */
+  allowed(): boolean;
+  /** Where "See plans" goes; opened externally on desktop. */
+  upgradeUrl: string;
+}
+
+let _gate: HardwareFlashGate | null = null;
+
+export function installHardwareFlashGate(gate: HardwareFlashGate | null): void {
+  _gate = gate;
+}
+
+export function hardwareFlashAllowed(): boolean {
+  return _gate ? _gate.allowed() : true;
+}
+
+export function hardwareFlashUpgradeUrl(): string {
+  return _gate?.upgradeUrl ?? '/pricing';
+}
+

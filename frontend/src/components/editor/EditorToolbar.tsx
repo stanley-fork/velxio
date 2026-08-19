@@ -12,6 +12,7 @@ import { CircuitVerificationModal } from '../simulator/CircuitVerificationModal'
 import type { BoardKind, LanguageMode } from '../../types/board';
 import { BOARD_KIND_FQBN, BOARD_SUPPORTS_ESPIDF, BOARD_SUPPORTS_MICROPYTHON, isPiBoardKind, boardDisplayName } from '../../types/board';
 import { compileCode } from '../../services/compilation';
+import { compileOptionsForBoard } from '../../utils/boardCompile';
 import {
   compileRom,
   isChipProgramFile,
@@ -590,20 +591,10 @@ export const EditorToolbar = ({
             })),
           ]);
         },
-        // Per-board ESP32 build options + SPIFFS uploads. Undefined for AVR
-        // / RP2040 boards (ignored on those paths by the backend).
-        {
-          boardOptions: activeBoard?.boardOptions,
-          spiffsFiles: activeBoard?.spiffsFiles,
-          boardKind: kind ?? undefined,
-          exampleId: useProjectStore.getState().currentExampleId,
-          // P2.4 — THIS board's declared manifest (compile scope). Per-board so
-          // two boards can use different libraries without clashing.
-          libraries: activeBoard?.libraries?.length ? activeBoard.libraries : null,
-          // Pure ESP-IDF mode (issue #139): tell the backend to compile the
-          // user's app_main() sources without the arduino-esp32 component.
-          language: activeBoard?.languageMode === 'espidf' ? 'espidf' : undefined,
-        },
+        // Per-board ESP32 build options + SPIFFS uploads + manifest +
+        // language — one definition shared with the Flash dialog's
+        // compile-before-flash (utils/boardCompile.ts).
+        compileOptionsForBoard(activeBoard),
       );
 
       // After the build settles, append the structured analysis on top of

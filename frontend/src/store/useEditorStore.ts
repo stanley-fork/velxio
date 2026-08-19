@@ -47,10 +47,10 @@ while True:
     time.sleep(1)
 `;
 
-// NOTE: avoid Pin.toggle() — it was only added to the ESP32 port in
-// MicroPython v1.21 (Oct 2023). The firmware Velxio ships is v1.20.0
-// (April 2023), so Pin.toggle() raises AttributeError there.
-// See https://github.com/davidmonterocrespo24/velxio/issues/122
+// The shipped ESP32-family MicroPython is v1.28.0 (IDF 5.x drivers — the
+// same generation the compile pipeline and the JS engines are validated
+// against), so Pin.toggle() and friends exist now; this seed just stays on
+// the lowest-common API. History: #122 (v1.20 had no Pin.toggle).
 const DEFAULT_ESP32_MICROPYTHON_CONTENT = `# MicroPython Blink for ESP32
 from machine import Pin
 import time

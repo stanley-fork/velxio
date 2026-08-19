@@ -35,13 +35,22 @@ JOB_BY_KEY: dict[str, str] = {}  # content_hash → job_id, for deduplication
 JOB_TTL_S = 1800  # purge results 30 min after completion
 
 # ── Concurrency control ──────────────────────────────────────────────────────
-# Cap simultaneous ESP-IDF compiles. The VPS is modest (saw load avg 30 with
-# 6 ninja processes peeling each other apart). Two parallel compiles to
-# different targets are fine; concurrent compiles to the SAME target would
-# corrupt the persistent build dir, so we serialize those with a per-target
-# lock layered on top.
-_COMPILE_SEMAPHORE = asyncio.Semaphore(2)
+# Two lanes. HEAVY = ESP-IDF (cmake + ninja, minutes on a cold cache): capped
+# at 2 — the VPS is modest (saw load avg 30 with 6 ninja processes peeling
+# each other apart). LIGHT = arduino-cli boards (AVR, RP2040, STM32...):
+# seconds each, so they get their own slots and never queue behind an
+# ESP-IDF cold build. Before the split a single Semaphore(2) gated both, and
+# a Uno blink could sit "compiling" for minutes while two ESP32 builds ran.
+# Concurrent compiles to the SAME ESP-IDF target would corrupt the persistent
+# build dir, so those are serialized with a per-target lock layered on top.
+_HEAVY_SEMAPHORE = asyncio.Semaphore(2)
+_LIGHT_SEMAPHORE = asyncio.Semaphore(3)
 _TARGET_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _is_heavy_compile(board_fqbn: str) -> bool:
+    """ESP32 boards compile with ESP-IDF when the toolchain is present."""
+    return board_fqbn.startswith("esp32:") and espidf_compiler.available
 
 
 def _build_identity(board_fqbn: str) -> str:
@@ -513,7 +522,16 @@ async def _compile_job(
         current["stdout_buffer"] = new
 
     try:
-        async with _COMPILE_SEMAPHORE:
+        lane = _HEAVY_SEMAPHORE if _is_heavy_compile(request.board_fqbn) else _LIGHT_SEMAPHORE
+        if lane.locked():
+            # Tell the user's console WHY nothing is happening yet: every
+            # slot of this lane is busy. The frontend streams stdout while
+            # the job is still 'pending'.
+            on_progress_line(
+                "[queue] All build slots are busy — waiting for a free one "
+                "(your build starts automatically)...\n"
+            )
+        async with lane:
             async with _target_lock(request.board_fqbn):
                 # Job may have been purged or replaced while we were queued.
                 # Re-fetch and bail out if so.
