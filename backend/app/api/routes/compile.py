@@ -617,7 +617,18 @@ async def compile_sketch(
     files = _resolve_files(request)
     started = time.monotonic()
     try:
-        response = await _run_compile(request, files, requester_id=user_id)
+        # Shielded: when the client (or a proxy timeout - nginx 504s a cold
+        # ESP-IDF build well before it finishes) drops the connection,
+        # Starlette cancels this handler. Without the shield the cancellation
+        # killed the build subprocess MID-WRITE and left truncated .obj files
+        # in the persistent per-target build cache, poisoning every LATER
+        # build of that target ("ranlib: file truncated", seen twice on
+        # staging the day the P4 lane landed). The shield lets the build run
+        # to completion and keep the cache consistent; only the response is
+        # lost.
+        response = await asyncio.shield(
+            asyncio.ensure_future(_run_compile(request, files, requester_id=user_id))
+        )
     except Exception as e:
         await record_compile(
             user_id=user_id,

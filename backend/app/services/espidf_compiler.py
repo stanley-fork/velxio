@@ -657,6 +657,29 @@ class ESPIDFCompiler:
     # Cache: boards.txt is a few hundred KB and never changes at runtime.
     _variant_cache: dict = {}
 
+    @staticmethod
+    def _fqbn_board_id_and_options(board_fqbn: str) -> tuple[str, dict]:
+        """Split an arduino FQBN into (board_id, menu-option dict).
+
+        arduino-cli syntax: ``vendor:arch:board_id[:Menu1=val1,Menu2=val2]``.
+        The espidf lane must understand the 4-part option-suffix form too,
+        not just plain 3-part FQBNs — the C3-LCDkit board def pins
+        ``CDCOnBoot=cdc`` this way (the real kit has no UART bridge; its only
+        console is the USB Serial/JTAG port). Menu keys a caller does not
+        recognise are simply ignored.
+        """
+        parts = board_fqbn.split(':')
+        opts: dict = {}
+        if len(parts) >= 4 and parts[3]:
+            for kv in parts[3].split(','):
+                if '=' in kv:
+                    k, v = kv.split('=', 1)
+                    opts[k.strip()] = v.strip()
+            board_id = parts[2]
+        else:
+            board_id = parts[-1]
+        return board_id.split('?')[0].strip(), opts
+
     def _arduino_variant(self, board_fqbn: str, idf_target: str) -> str:
         """The Arduino VARIANT for this FQBN, from arduino-esp32's boards.txt.
 
@@ -670,7 +693,7 @@ class ESPIDFCompiler:
         is read rather than guessed; anything not found falls back to the chip,
         which is the previous behaviour.
         """
-        board_id = board_fqbn.split(':')[-1].split('?')[0].strip()
+        board_id, _ = self._fqbn_board_id_and_options(board_fqbn)
         if not board_id:
             return idf_target
         key = (board_id, idf_target)
@@ -726,10 +749,16 @@ class ESPIDFCompiler:
           ESP32S3 expose UART0's default RX pin (GPIO44) as a plain Dx pin,
           so building them with Serial on UART0 is not just unfaithful: a
           pinMode() on that pin tears the UART driver down mid-sketch.
+
+        A ``CDCOnBoot`` menu option in the FQBN suffix overrides the board's
+        boards.txt default, mirroring arduino-cli
+        (``<id>.menu.CDCOnBoot.cdc.build.cdc_on_boot=1``): the C3-LCDkit pins
+        ``esp32:esp32:esp32c3:CDCOnBoot=cdc`` so its console matches the real
+        kit, which only exposes the USB Serial/JTAG port.
         """
-        board_id = board_fqbn.split(':')[-1].split('?')[0].strip()
+        board_id, menu_opts = self._fqbn_board_id_and_options(board_fqbn)
         if board_id in self._board_flags_cache:
-            return self._board_flags_cache[board_id]
+            return self._apply_menu_overrides(self._board_flags_cache[board_id], menu_opts)
         flags = {'board': None, 'cdc_on_boot': False}
         roots = [
             r
@@ -755,6 +784,19 @@ class ESPIDFCompiler:
             if flags['board'] is not None:
                 break
         self._board_flags_cache[board_id] = flags
+        return self._apply_menu_overrides(flags, menu_opts)
+
+    @staticmethod
+    def _apply_menu_overrides(flags: dict, menu_opts: dict) -> dict:
+        """Overlay FQBN menu options on the boards.txt base flags.
+
+        Only ``CDCOnBoot`` is understood today (``cdc`` -> 1, ``default`` ->
+        the boards.txt value). Returns a copy so the per-board cache never
+        holds an override.
+        """
+        cdc = menu_opts.get('CDCOnBoot')
+        if cdc == 'cdc':
+            return {**flags, 'cdc_on_boot': True}
         return flags
 
     def _idf_target(self, board_fqbn: str) -> str:
@@ -793,6 +835,28 @@ class ESPIDFCompiler:
         logger.info(
             '[espidf] Declared managed components: %s', ', '.join(sorted(deps))
         )
+
+    # include -> managed component (name, version). Each of these headers
+    # ships in a registry component that neither the template nor
+    # arduino-esp32's own manifest depends on, so a sketch using it dies
+    # with "No such file or directory" unless the dependency is declared
+    # (the esp_camera.h lesson, generalized for the Espressif devkit
+    # boards' display/touch stacks).
+    _MANAGED_COMPONENT_INCLUDES: tuple[tuple[str, str, str], ...] = (
+        (r'esp_camera\.h', 'espressif/esp32-camera', '^2.0.4'),
+        (r'esp_lcd_st77916\.h', 'espressif/esp_lcd_st77916', '*'),
+        (r'esp_lcd_touch_cst816s\.h', 'espressif/esp_lcd_touch_cst816s', '*'),
+        (r'esp_lcd_gc9a01\.h', 'espressif/esp_lcd_gc9a01', '*'),
+        (r'esp_lcd_ek79007\.h', 'espressif/esp_lcd_ek79007', '*'),
+    )
+
+    def _detect_managed_components(self, code: str) -> dict:
+        """Managed components the source explicitly #includes."""
+        deps: dict[str, str] = {}
+        for pattern, name, version in self._MANAGED_COMPONENT_INCLUDES:
+            if re.search(r'#include\s*[<"]' + pattern + r'[">]', code):
+                deps[name] = version
+        return deps
 
     def _detect_camera_usage(self, code: str) -> bool:
         """Does the sketch use the ESP32 camera driver?
@@ -2576,8 +2640,16 @@ class ESPIDFCompiler:
         # run without it for now (the P4 engine models PSRAM as optional and
         # firmware built with SPIRAM would fail honestly on a board that does
         # not declare it) — keep it off until the engines validate it.
-        if idf_target in ('esp32c3', 'esp32c6', 'esp32p4', 'esp32c5'):
+        if idf_target in ('esp32c3', 'esp32c6', 'esp32c5'):
             normalized['psram'] = 'disabled'
+
+        # The P4-Function-EV module always carries 32 MB AP-hex PSRAM and
+        # esp_lcd allocates DSI framebuffers from it unconditionally - the
+        # board's flagship peripheral needs it. Default ON unless the
+        # request explicitly says otherwise (the UI only sends the field
+        # once the user opens the board-options modal).
+        if idf_target == 'esp32p4' and 'psram' not in (opts or {}):
+            normalized['psram'] = 'enabled'
 
         # ESP32-C3 / ESP32-C6 top out at 160 MHz — clamp the historical 240
         # default (and any stale higher value) instead of failing the build.
@@ -2653,10 +2725,9 @@ class ESPIDFCompiler:
         if idf_target == 'esp32p4':
             # The P4's CPU-frequency kconfig choices (360/400) do not overlap
             # the classic 240/160/80/40 set the template renders — drop the
-            # whole group and let IDF's own default stand. SPIRAM stays off
-            # (see _normalize_options).
+            # whole group and let IDF's own default stand. SPIRAM renders
+            # with the P4's own hex-mode symbols (see the PSRAM chunk).
             drops += (
-                'CONFIG_SPIRAM',
                 'CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ',
             )
         if idf_target != 'esp32':
@@ -2738,6 +2809,15 @@ class ESPIDFCompiler:
         psram_chunks: list[str] = []
         if psram_mode == 'disabled':
             psram_chunks.append('CONFIG_SPIRAM=n')
+        elif idf_target == 'esp32p4':
+            # The P4 has its own Kconfig.spiram: 16-line AP hex is the only
+            # line mode, and the classic speed/mode symbols (80M, QUAD/OCT)
+            # do not exist — emitting them breaks kconfgen. 200M is the
+            # tree's default and rev0-safe (250M needs rev >= 3).
+            psram_chunks.append('CONFIG_SPIRAM=y')
+            psram_chunks.append('CONFIG_SPIRAM_USE_MALLOC=y')
+            psram_chunks.append('CONFIG_SPIRAM_MODE_HEX=y')
+            psram_chunks.append('CONFIG_SPIRAM_SPEED_200M=y')
         else:
             psram_chunks.append('CONFIG_SPIRAM=y')
             psram_chunks.append('CONFIG_SPIRAM_USE_MALLOC=y')
@@ -3420,6 +3500,18 @@ class ESPIDFCompiler:
                     'stdout': '',
                     'stderr': '',
                 }
+            # Registry components the sources #include (esp_lcd_st77916 for
+            # the VoCat display example, etc.) — same resolution the arduino
+            # branch gets; without the manifest the header simply does not
+            # exist and the build dies at the first #include.
+            pure_src = '\n'.join(
+                str(f.get('content', '')) for f in files if str(f.get('name', '')).endswith(
+                    ('.ino', '.cpp', '.c', '.h', '.hpp')
+                )
+            )
+            managed_pure = self._detect_managed_components(pure_src)
+            if managed_pure:
+                self._add_managed_components(project_dir, managed_pure)
         elif arduino_mode:
             # Arduino-as-component mode: copy sketch as .cpp
             sketch_cpp = project_dir / 'main' / 'sketch.ino.cpp'
@@ -3544,16 +3636,27 @@ class ESPIDFCompiler:
                     ('.ino', '.cpp', '.c', '.h', '.hpp')
                 )
             )
-            if self._detect_camera_usage(sketch_src):
-                self._add_managed_components(
-                    project_dir, {'espressif/esp32-camera': '^2.0.4'}
-                )
+            managed = self._detect_managed_components(sketch_src)
+            if managed:
+                self._add_managed_components(project_dir, managed)
         else:
             # Pure ESP-IDF mode (no Arduino component usable for this
             # target). Remove Arduino main.cpp to avoid conflict.
             main_cpp = project_dir / 'main' / 'main.cpp'
             if main_cpp.exists():
                 main_cpp.unlink()
+
+            # Pure-IDF sources need the same include->component resolution the
+            # arduino branch gets (e.g. the VoCat display example includes
+            # esp_lcd_st77916.h from the component registry).
+            idf_src = '\n'.join(
+                f.get('content', '') for f in files if str(f.get('name', '')).endswith(
+                    ('.ino', '.cpp', '.c', '.h', '.hpp')
+                )
+            )
+            managed_idf = self._detect_managed_components(idf_src)
+            if managed_idf:
+                self._add_managed_components(project_dir, managed_idf)
 
             if self._contains_app_main(main_content):
                 # The user's code is already a plain ESP-IDF program —

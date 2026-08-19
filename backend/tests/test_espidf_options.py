@@ -463,3 +463,44 @@ def test_ninja_log_step_count(tmp_path) -> None:
         encoding='utf-8',
     )
     assert _ninja_log_step_count(build_dir) == 2
+
+
+# ── FQBN menu-option suffix (CDCOnBoot) ──────────────────────────────────
+
+
+def test_fqbn_board_id_plain(compiler: ESPIDFCompiler) -> None:
+    assert compiler._fqbn_board_id_and_options('esp32:esp32:esp32c3') == (
+        'esp32c3', {},
+    )
+
+
+def test_fqbn_board_id_with_menu_suffix(compiler: ESPIDFCompiler) -> None:
+    board_id, opts = compiler._fqbn_board_id_and_options(
+        'esp32:esp32:esp32c3:CDCOnBoot=cdc'
+    )
+    assert board_id == 'esp32c3'
+    assert opts == {'CDCOnBoot': 'cdc'}
+
+
+def test_fqbn_menu_suffix_multiple_options(compiler: ESPIDFCompiler) -> None:
+    board_id, opts = compiler._fqbn_board_id_and_options(
+        'esp32:esp32:esp32s3:CDCOnBoot=cdc,PSRAM=opi'
+    )
+    assert board_id == 'esp32s3'
+    assert opts == {'CDCOnBoot': 'cdc', 'PSRAM': 'opi'}
+
+
+def test_menu_override_cdc_flips_flag(compiler: ESPIDFCompiler) -> None:
+    base = {'board': 'ESP32C3_DEV', 'cdc_on_boot': False}
+    out = compiler._apply_menu_overrides(base, {'CDCOnBoot': 'cdc'})
+    assert out['cdc_on_boot'] is True
+    # The cache's base dict must never be mutated by an override.
+    assert base['cdc_on_boot'] is False
+
+
+def test_menu_override_default_keeps_boards_txt_value(
+    compiler: ESPIDFCompiler,
+) -> None:
+    base = {'board': 'ESP32C3_DEV', 'cdc_on_boot': False}
+    assert compiler._apply_menu_overrides(base, {'CDCOnBoot': 'default'}) is base
+    assert compiler._apply_menu_overrides(base, {}) is base

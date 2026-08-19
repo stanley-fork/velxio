@@ -97,6 +97,60 @@ export const ONLINE_ONLY_BOARD_ADS: OnlineOnlyBoardAd[] = [
       '</g></svg>',
   },
   {
+    id: 'esp-vocat',
+    label: 'ESP-VoCat',
+    description: 'Espressif AI voice devkit: ESP32-S3, ST77916 1.8" touch LCD, dual mic + speaker, IMU — in-browser emulation',
+    thumbnailSvg:
+      '<svg width="72" height="72" viewBox="0 0 72 72" xmlns="http://www.w3.org/2000/svg">' +
+      '<rect x="10" y="8" width="52" height="56" rx="10" fill="#131316"/>' +
+      '<path d="M14 12 L22 4 L26 12 Z" fill="#131316"/>' +
+      '<path d="M58 12 L50 4 L46 12 Z" fill="#131316"/>' +
+      '<rect x="17" y="16" width="38" height="38" rx="8" fill="#1a1a1e" stroke="#3a3b40"/>' +
+      '<rect x="20" y="19" width="32" height="32" rx="6" fill="#0c4a5e"/>' +
+      '<circle cx="29" cy="32" r="3" fill="#e8f4f8"/><circle cx="43" cy="32" r="3" fill="#e8f4f8"/>' +
+      '<path d="M32 40 Q36 44 40 40" stroke="#e8f4f8" stroke-width="1.6" fill="none" stroke-linecap="round"/>' +
+      '<circle cx="20" cy="60" r="1.6" fill="#060608"/><circle cx="52" cy="60" r="1.6" fill="#060608"/>' +
+      '<g fill="#26282c"><rect x="30" y="58" width="12" height="3" rx="1.5"/></g>' +
+      '</svg>',
+  },
+  {
+    id: 'esp32-p4',
+    label: 'ESP32-P4-Function-EV',
+    description: 'Espressif flagship RISC-V: dual-core 400MHz, MIPI-DSI display, MIPI-CSI camera, WiFi via ESP32-C6 — in-browser emulation',
+    thumbnailSvg:
+      '<svg width="72" height="72" viewBox="0 0 72 72" xmlns="http://www.w3.org/2000/svg">' +
+      '<rect x="6" y="10" width="60" height="52" rx="4" fill="#7a1f1f"/>' +
+      '<rect x="26" y="24" width="20" height="20" rx="2" fill="#101418"/>' +
+      '<text x="36" y="37" text-anchor="middle" font-size="7" font-family="monospace" fill="#e8e8e8">P4</text>' +
+      '<rect x="52" y="16" width="10" height="10" rx="1" fill="#b8bec6"/>' +
+      '<text x="57" y="23" text-anchor="middle" font-size="4.5" font-family="monospace" fill="#2d3138">C6</text>' +
+      '<rect x="10" y="14" width="12" height="4" rx="1" fill="#d8b44a"/>' +
+      '<rect x="10" y="54" width="12" height="4" rx="1" fill="#d8b44a"/>' +
+      '<rect x="30" y="56" width="22" height="4" rx="1" fill="#26282c"/>' +
+      '<rect x="60" y="34" width="6" height="14" rx="1" fill="#8a8f96"/>' +
+      '</svg>',
+  },
+  {
+    id: 'esp-sensairshuttle',
+    label: 'ESP-SensAirShuttle',
+    description: 'Espressif ESP32-C5 sensing devkit: BME690 gas sensor + BMM350 magnetometer shuttles, 1.9" touch LCD, WiFi 6 dual-band — in-browser emulation',
+    thumbnailSvg:
+      '<svg width="72" height="72" viewBox="0 0 72 72" xmlns="http://www.w3.org/2000/svg">' +
+      '<rect x="8" y="12" width="56" height="48" rx="4" fill="#131316"/>' +
+      '<rect x="12" y="18" width="26" height="34" rx="2" fill="#1a1a1e" stroke="#3a3b40"/>' +
+      '<rect x="14" y="20" width="22" height="30" fill="#0c4a5e"/>' +
+      '<rect x="44" y="16" width="16" height="18" rx="2" fill="#186329"/>' +
+      '<circle cx="52" cy="22" r="2.6" fill="#101418"/>' +
+      '<rect x="47" y="27" width="10" height="4" rx="1" fill="#b8bec6"/>' +
+      '<rect x="44" y="38" width="16" height="18" rx="2" fill="#186329"/>' +
+      '<rect x="47" y="42" width="6" height="6" rx="1" fill="#101418"/>' +
+      '<text x="53" y="53" text-anchor="middle" font-size="4.5" font-family="monospace" fill="#c8ccd2">C5</text>' +
+      '<g fill="#d8b44a"><rect x="9" y="20" width="2.4" height="2.4"/><rect x="9" y="26" width="2.4" height="2.4"/>' +
+      '<rect x="9" y="32" width="2.4" height="2.4"/><rect x="9" y="38" width="2.4" height="2.4"/>' +
+      '<rect x="9" y="44" width="2.4" height="2.4"/></g>' +
+      '</svg>',
+  },
+  {
     id: 'm5stack-core',
     label: 'M5Stack Core Basic',
     description: 'ESP32 all-in-one: 2" LCD, 3 buttons, speaker, microSD',
@@ -186,7 +240,6 @@ export const ONLINE_ONLY_BOARD_ADS: OnlineOnlyBoardAd[] = [
     description: 'Thumb-size RP2040 (Seeed Studio) - in-browser emulation',
     thumbnailSvg: '<svg width="72" height="72" viewBox="0 0 72 72" xmlns="http://www.w3.org/2000/svg"><rect x="18" y="8" width="36" height="56" rx="7" fill="#17181c" stroke="#4a7dbd" stroke-width="1.6"/><rect x="28" y="5" width="16" height="8" rx="2" fill="#b9bec7"/><rect x="27" y="26" width="18" height="14" rx="2" fill="#b9bec7"/><g fill="#d8b23a"><circle cx="20" cy="20" r="2"/><circle cx="20" cy="28" r="2"/><circle cx="20" cy="36" r="2"/><circle cx="20" cy="44" r="2"/><circle cx="20" cy="52" r="2"/><circle cx="52" cy="20" r="2"/><circle cx="52" cy="28" r="2"/><circle cx="52" cy="36" r="2"/><circle cx="52" cy="44" r="2"/><circle cx="52" cy="52" r="2"/></g><text x="36" y="59" text-anchor="middle" font-size="6" font-family="monospace" fill="#e8e8ec">RP</text></svg>',
   },
-,
   {
     id: 'unihiker-m10',
     label: 'UNIHIKER M10',
@@ -231,7 +284,7 @@ export const ONLINE_ONLY_COMPONENT_ADS: OnlineOnlyComponentAd[] = [
     description: '64 white LEDs, daisy-chainable \u2014 in-browser emulation',
     category: 'output',
     thumbnailSvg: "<svg width=\"64\" height=\"64\" viewBox=\"0 0 64 64\" xmlns=\"http://www.w3.org/2000/svg\"><defs><filter id=\"glow\" x=\"-50%\" y=\"-50%\" width=\"200%\" height=\"200%\"><feGaussianBlur stdDeviation=\"0.7\"/></filter></defs><polygon points=\"5.0,20.0 32.0,32.0 32.0,50.0 5.0,38.0\" fill=\"#a6aab2\"/><polygon points=\"32.0,32.0 59.0,20.0 59.0,38.0 32.0,50.0\" fill=\"#c1c5cd\"/><line x1=\"10.9\" y1=\"25.6\" x2=\"10.9\" y2=\"38.6\" stroke=\"#8b8f97\" stroke-width=\"1.4\" stroke-linecap=\"round\" opacity=\"0.7\"/><line x1=\"18.0\" y1=\"28.8\" x2=\"18.0\" y2=\"41.8\" stroke=\"#8b8f97\" stroke-width=\"1.4\" stroke-linecap=\"round\" opacity=\"0.7\"/><line x1=\"25.0\" y1=\"31.9\" x2=\"25.0\" y2=\"44.9\" stroke=\"#8b8f97\" stroke-width=\"1.4\" stroke-linecap=\"round\" opacity=\"0.7\"/><rect x=\"42.5\" y=\"38.0\" width=\"6\" height=\"4\" rx=\"1\" fill=\"#8b8f97\" opacity=\"0.75\"/><polygon points=\"32.0,8.0 59.0,20.0 32.0,32.0 5.0,20.0\" fill=\"#cfd2d8\"/><polygon points=\"32.0,9.4 55.8,20.0 32.0,30.6 8.2,20.0\" fill=\"#f5f6f9\"/><g filter=\"url(#glow)\"><polygon points=\"32.0,9.8 34.1,10.8 32.0,11.7 29.9,10.8\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"35.0,11.1 37.1,12.1 35.0,13.0 32.8,12.1\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"37.9,12.4 40.1,13.4 37.9,14.4 35.8,13.4\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"40.9,13.8 43.0,14.7 40.9,15.7 38.8,14.7\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"43.9,15.1 46.0,16.0 43.9,17.0 41.7,16.0\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"46.9,16.4 49.0,17.4 46.9,18.3 44.7,17.4\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"49.8,17.7 52.0,18.7 49.8,19.6 47.7,18.7\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"52.8,19.0 54.9,20.0 52.8,21.0 50.7,20.0\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"29.0,11.1 31.2,12.1 29.0,13.0 26.9,12.1\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"32.0,12.4 34.1,13.4 32.0,14.4 29.9,13.4\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"35.0,13.8 37.1,14.7 35.0,15.7 32.8,14.7\" fill=\"#aecdff\" opacity=\"1.0\"/><polygon points=\"37.9,15.1 40.1,16.0 37.9,17.0 35.8,16.0\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"40.9,16.4 43.0,17.4 40.9,18.3 38.8,17.4\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"43.9,17.7 46.0,18.7 43.9,19.6 41.7,18.7\" fill=\"#aecdff\" opacity=\"1.0\"/><polygon points=\"46.9,19.0 49.0,20.0 46.9,21.0 44.7,20.0\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"49.8,20.4 52.0,21.3 49.8,22.3 47.7,21.3\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"26.1,12.4 28.2,13.4 26.1,14.4 23.9,13.4\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"29.0,13.8 31.2,14.7 29.0,15.7 26.9,14.7\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"32.0,15.1 34.1,16.0 32.0,17.0 29.9,16.0\" fill=\"#aecdff\" opacity=\"1.0\"/><polygon points=\"35.0,16.4 37.1,17.4 35.0,18.3 32.8,17.4\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"37.9,17.7 40.1,18.7 37.9,19.6 35.8,18.7\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"40.9,19.0 43.0,20.0 40.9,21.0 38.8,20.0\" fill=\"#aecdff\" opacity=\"1.0\"/><polygon points=\"43.9,20.4 46.0,21.3 43.9,22.3 41.7,21.3\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"46.9,21.7 49.0,22.6 46.9,23.6 44.7,22.6\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"23.1,13.8 25.2,14.7 23.1,15.7 21.0,14.7\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"26.1,15.1 28.2,16.0 26.1,17.0 23.9,16.0\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"29.0,16.4 31.2,17.4 29.0,18.3 26.9,17.4\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"32.0,17.7 34.1,18.7 32.0,19.6 29.9,18.7\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"35.0,19.0 37.1,20.0 35.0,21.0 32.8,20.0\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"37.9,20.4 40.1,21.3 37.9,22.3 35.8,21.3\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"40.9,21.7 43.0,22.6 40.9,23.6 38.8,22.6\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"43.9,23.0 46.0,24.0 43.9,24.9 41.7,24.0\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"20.1,15.1 22.3,16.0 20.1,17.0 18.0,16.0\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"23.1,16.4 25.2,17.4 23.1,18.3 21.0,17.4\" fill=\"#aecdff\" opacity=\"1.0\"/><polygon points=\"26.1,17.7 28.2,18.7 26.1,19.6 23.9,18.7\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"29.0,19.0 31.2,20.0 29.0,21.0 26.9,20.0\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"32.0,20.4 34.1,21.3 32.0,22.3 29.9,21.3\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"35.0,21.7 37.1,22.6 35.0,23.6 32.8,22.6\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"37.9,23.0 40.1,24.0 37.9,24.9 35.8,24.0\" fill=\"#aecdff\" opacity=\"1.0\"/><polygon points=\"40.9,24.3 43.0,25.3 40.9,26.2 38.8,25.3\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"17.2,16.4 19.3,17.4 17.1,18.3 15.0,17.4\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"20.1,17.7 22.3,18.7 20.1,19.6 18.0,18.7\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"23.1,19.0 25.2,20.0 23.1,21.0 21.0,20.0\" fill=\"#aecdff\" opacity=\"1.0\"/><polygon points=\"26.1,20.4 28.2,21.3 26.1,22.3 23.9,21.3\" fill=\"#aecdff\" opacity=\"1.0\"/><polygon points=\"29.0,21.7 31.2,22.6 29.0,23.6 26.9,22.6\" fill=\"#aecdff\" opacity=\"1.0\"/><polygon points=\"32.0,23.0 34.1,24.0 32.0,24.9 29.9,24.0\" fill=\"#aecdff\" opacity=\"1.0\"/><polygon points=\"35.0,24.3 37.1,25.3 35.0,26.2 32.8,25.3\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"37.9,25.6 40.1,26.6 37.9,27.6 35.8,26.6\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"14.2,17.7 16.3,18.7 14.2,19.6 12.0,18.7\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"17.1,19.0 19.3,20.0 17.1,21.0 15.0,20.0\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"20.1,20.4 22.3,21.3 20.1,22.3 18.0,21.3\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"23.1,21.7 25.2,22.6 23.1,23.6 21.0,22.6\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"26.1,23.0 28.2,24.0 26.1,24.9 23.9,24.0\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"29.0,24.3 31.2,25.3 29.0,26.2 26.9,25.3\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"32.0,25.6 34.1,26.6 32.0,27.6 29.9,26.6\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"35.0,27.0 37.1,27.9 35.0,28.9 32.8,27.9\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"11.2,19.0 13.3,20.0 11.2,21.0 9.1,20.0\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"14.2,20.4 16.3,21.3 14.2,22.3 12.0,21.3\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"17.2,21.7 19.3,22.6 17.1,23.6 15.0,22.6\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"20.1,23.0 22.3,24.0 20.1,24.9 18.0,24.0\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"23.1,24.3 25.2,25.3 23.1,26.2 21.0,25.3\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"26.1,25.6 28.2,26.6 26.1,27.6 23.9,26.6\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"29.0,27.0 31.2,27.9 29.0,28.9 26.9,27.9\" fill=\"#cccfd6\" opacity=\"0.9\"/><polygon points=\"32.0,28.3 34.1,29.2 32.0,30.2 29.9,29.2\" fill=\"#cccfd6\" opacity=\"0.9\"/></g></svg>",
-  },,
+  },
   {
     id: 'seeed-round-display',
     label: 'Round Display for XIAO (1.28", GC9A01)',
