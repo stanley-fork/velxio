@@ -1393,6 +1393,71 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
         (w) => w.start.componentId === component.id || w.end.componentId === component.id,
       );
 
+      // 4×4 membrane keypad on an ESP32-family board: the row/column matrix
+      // scan is µs-timing-critical — firmware drives one row LOW and reads
+      // the columns back within the same loop pass, far faster than the
+      // browser↔QEMU round trip — so the matrix is emulated server-side.
+      // Attach it as a 'matrix-keypad' sensor (rows/cols GPIO lists) and
+      // stream only the pressed-key set; the QEMU worker drives the column
+      // pins synchronously from its GPIO callbacks.
+      if (component.metadataId === 'membrane-keypad') {
+        const pinGpio: Record<string, number> = {};
+        let keypadBoardId: string | null = null;
+        connectedWires.forEach((wire) => {
+          const isStartSelf = wire.start.componentId === component.id;
+          const selfEndpoint = isStartSelf ? wire.start : wire.end;
+          const otherEndpoint = isStartSelf ? wire.end : wire.start;
+          if (!isBoardComponent(otherEndpoint.componentId)) return;
+          const boardInstance = boards.find((b) => b.id === otherEndpoint.componentId);
+          const lookupKey = boardInstance ? boardInstance.boardKind : otherEndpoint.componentId;
+          const gpio = boardPinToNumber(lookupKey, otherEndpoint.pinName);
+          if (gpio !== null && gpio >= 0) {
+            pinGpio[selfEndpoint.pinName] = gpio;
+            keypadBoardId = otherEndpoint.componentId;
+          }
+        });
+        const kpRows = ['R1', 'R2', 'R3', 'R4'].map((p) => pinGpio[p] ?? -1);
+        const kpCols = ['C1', 'C2', 'C3', 'C4'].map((p) => pinGpio[p] ?? -1);
+        const kpBridge = keypadBoardId ? getEsp32Bridge(keypadBoardId) : null;
+        if (kpBridge && kpRows.every((g) => g >= 0) && kpCols.every((g) => g >= 0)) {
+          const anchorPin = kpRows[0];
+          kpBridge.sendSensorAttach('matrix-keypad', anchorPin, {
+            rows: kpRows,
+            cols: kpCols,
+          });
+          const pressed = new Set<string>();
+          const sendPressed = () =>
+            kpBridge.sendSensorUpdate(anchorPin, {
+              pressed: [...pressed].map((s) => s.split(',').map(Number)),
+            });
+          // Attach synchronously — this effect re-runs on every boards[]
+          // mutation (serial output!), and a delayed attach would open a
+          // listener-less window every re-run in which a key press is lost
+          // entirely. No sendSensorDetach on cleanup for the same reason:
+          // the worker-side install is idempotent, and detach+reattach on
+          // unrelated re-renders would wipe the pressed-key state mid-scan.
+          const kpEl = document.getElementById(component.id);
+          if (kpEl) {
+            const onPress = (e: Event) => {
+              const { row, column } = (e as CustomEvent).detail;
+              pressed.add(`${row},${column}`);
+              sendPressed();
+            };
+            const onRelease = (e: Event) => {
+              const { row, column } = (e as CustomEvent).detail;
+              pressed.delete(`${row},${column}`);
+              sendPressed();
+            };
+            kpEl.addEventListener('button-press', onPress);
+            kpEl.addEventListener('button-release', onRelease);
+            cleanups.push(() => {
+              kpEl.removeEventListener('button-press', onPress);
+              kpEl.removeEventListener('button-release', onRelease);
+            });
+          }
+        }
+      }
+
       connectedWires.forEach((wire) => {
         const isStartSelf = wire.start.componentId === component.id;
         const selfEndpoint = isStartSelf ? wire.start : wire.end;

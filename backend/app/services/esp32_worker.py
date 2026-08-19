@@ -634,6 +634,75 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
     _sensors: dict[int, dict] = {}
     _sensors_lock = threading.Lock()
 
+    # ── Matrix keypad (server-side row/column emulation) ─────────────────────
+    # A 4×4 membrane keypad scan is µs-timing-critical: firmware drives one
+    # row LOW and reads the columns back within the same loop pass — far
+    # faster than the browser↔QEMU round trip, so the matrix must be
+    # emulated HERE. The frontend attaches a 'matrix-keypad' sensor with the
+    # row/col GPIO lists and streams the pressed-key set; _on_dir_change /
+    # _on_pin_change recompute the column levels synchronously (both run on
+    # the QEMU thread, so qemu_picsimlab_set_pin lands before the firmware's
+    # digitalRead() that follows its digitalWrite(row, LOW)).
+    #
+    # Active-row model (validated live against the alarm-keypad project):
+    # neither the write-pin nor the dir callback alone is reliable across
+    # passes — the write callback only fires when the OUTPUT LATCH changes
+    # (after the first pass the latch stays LOW, so re-driving the row is a
+    # no-change write), and the row's level while INPUT is not modelled. What
+    # IS delivered every pass is the ENABLE toggle: pinMode(OUTPUT) → dir=1,
+    # pinMode(INPUT) → dir=0. Since a matrix scan drives exactly one row at a
+    # time and the latch is LOW during the scan window, "the row whose dir
+    # went 1 most recently" IS the active row. The write hook stays as a
+    # belt-and-braces trigger for the first pass (latch 1→0).
+    _keypad_by_row: dict[int, dict] = {}   # row gpio → keypad state dict
+    _keypad_cols_owned: set[int] = set()   # col gpios driven by the worker
+
+    def _keypad_install(gpio: int, sensor_data: dict) -> None:
+        rows = [int(r) for r in sensor_data.get('rows', [])]
+        cols = [int(cg) for cg in sensor_data.get('cols', [])]
+        # Idempotent: the canvas effect re-attaches on unrelated re-renders
+        # (boards[] mutates with serial output). Same wiring => keep the
+        # existing state dict — wiping it would drop pressed keys mid-scan.
+        existing = _keypad_by_row.get(rows[0]) if rows else None
+        if (existing is not None and existing['rows'] == rows
+                and existing['cols'] == cols):
+            sensor_data['keypad'] = existing
+            return
+        kp = {
+            'rows': rows, 'cols': cols,
+            'pressed': set(),               # {(row_idx, col_idx)}
+            'active_row': -1,               # index of the row being scanned
+            'col_level': [1] * len(cols),   # last level applied per col
+        }
+        sensor_data['keypad'] = kp
+        for r in rows:
+            _keypad_by_row[r] = kp
+        for cg in cols:
+            _keypad_cols_owned.add(cg)
+        # Idle columns HIGH — firmware scans them as INPUT_PULLUP.
+        for cg in cols:
+            lib.qemu_picsimlab_set_pin(cg + 1, 1)
+        _log(f'matrix-keypad installed rows={rows} cols={cols} (anchor gpio={gpio})')
+
+    def _keypad_uninstall(sensor_data: dict) -> None:
+        kp = sensor_data.get('keypad')
+        if not kp:
+            return
+        for r in kp['rows']:
+            _keypad_by_row.pop(r, None)
+        for cg in kp['cols']:
+            _keypad_cols_owned.discard(cg)
+            lib.qemu_picsimlab_set_pin(cg + 1, 1)
+
+    def _keypad_recompute(kp: dict) -> None:
+        cols, pressed = kp['cols'], kp['pressed']
+        active = kp.get('active_row', -1)
+        for j, cg in enumerate(cols):
+            lvl = 0 if (active >= 0 and (active, j) in pressed) else 1
+            if kp['col_level'][j] != lvl:
+                kp['col_level'][j] = lvl
+                lib.qemu_picsimlab_set_pin(cg + 1, lvl)
+
     # ── Generic sync-handler registry ────────────────────────────────────────
     # Each entry implements step() -> bool.  step() is called once per
     # GPIO_IN read sync (every digitalRead() / pulseIn() iteration in firmware).
@@ -832,6 +901,21 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
             return
         gpio = int(_PINMAP[slot]) if 1 <= slot <= _GPIO_COUNT else slot
         _pin_state[gpio] = value & 1
+        # Matrix keypad: a row LATCH changed — only fires on actual latch
+        # transitions (first pass 1→0), so it complements the per-pass dir
+        # trigger below rather than replacing it.
+        _kp = _keypad_by_row.get(gpio)
+        if _kp is not None:
+            try:
+                _idx = _kp['rows'].index(gpio)
+            except ValueError:
+                _idx = -1
+            if _idx >= 0:
+                if (value & 1) == 0:
+                    _kp['active_row'] = _idx
+                elif _kp.get('active_row', -1) == _idx:
+                    _kp['active_row'] = -1
+                _keypad_recompute(_kp)
         # Flush pending SPI bytes BEFORE announcing this pin change so the
         # frontend processes them under the pin state (e.g. the ILI9341 DC line)
         # that was in effect when they were sent. With CS events gated off for
@@ -947,6 +1031,22 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
         # ── DHT22: track direction changes + trigger sync response ───────
         if slot >= 1:
             gpio = int(_PINMAP[slot]) if slot <= _GPIO_COUNT else slot
+            # Matrix keypad: rows toggle OUTPUT(scan)/INPUT(idle) every pass,
+            # and the ENABLE toggle is the one signal delivered EVERY pass
+            # (the latch write is a no-change after the first pass). dir=1
+            # marks this row as the actively scanned one; dir=0 releases it.
+            _kp = _keypad_by_row.get(gpio)
+            if _kp is not None and direction in (0, 1):
+                try:
+                    _idx = _kp['rows'].index(gpio)
+                except ValueError:
+                    _idx = -1
+                if _idx >= 0:
+                    if direction == 1:
+                        _kp['active_row'] = _idx
+                    elif _kp.get('active_row', -1) == _idx:
+                        _kp['active_row'] = -1
+                    _keypad_recompute(_kp)
             with _sensors_lock:
                 sensor = _sensors.get(gpio)
             if sensor is not None and sensor.get('type') == 'dht22':
@@ -1414,9 +1514,11 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                 'saw_low': False,
                 'responding': False,
             }
+            if sensor_type == 'matrix-keypad':
+                _keypad_install(gpio, sensor_data)
             # For I2C sensors, also create the slave state machine immediately
             # so _on_i2c_event can find it when the firmware's Wire.begin() runs.
-            if sensor_type == 'mpu6050':
+            elif sensor_type == 'mpu6050':
                 i2c_addr = int(s.get('addr', 0x68))
                 slave = _MPU6050Slave(i2c_addr)
                 _i2c_slaves[i2c_addr] = slave
@@ -1773,7 +1875,11 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
 
         if c == 'set_pin':
             # Identity pinmap: slot = gpio_num + 1
-            lib.qemu_picsimlab_set_pin(int(cmd['pin']) + 1, int(cmd['value']))
+            # Keypad-owned columns are driven synchronously by
+            # _keypad_recompute; a stale async gpio_in from the browser's
+            # generic matrix simulation must not clobber them.
+            if int(cmd['pin']) not in _keypad_cols_owned:
+                lib.qemu_picsimlab_set_pin(int(cmd['pin']) + 1, int(cmd['value']))
 
         elif c == 'set_adc':
             raw_v = int(int(cmd['millivolts']) * 4095 / 3300)
@@ -1858,7 +1964,9 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                     'saw_low': False,
                     'responding': False,
                 }
-                if sensor_type == 'mpu6050':
+                if sensor_type == 'matrix-keypad':
+                    _keypad_install(gpio, sensor_data)
+                elif sensor_type == 'mpu6050':
                     i2c_addr = int(cmd.get('addr', 0x68))
                     slave = _MPU6050Slave(i2c_addr)
                     _i2c_slaves[i2c_addr] = slave
@@ -1974,7 +2082,15 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                             sensor[k] = v
                     stype = sensor.get('type')
                     slave = sensor.get('slave')
-                    if stype == 'mpu6050' and slave is not None:
+                    if stype == 'matrix-keypad':
+                        kp = sensor.get('keypad')
+                        if kp is not None and 'pressed' in cmd:
+                            kp['pressed'] = {
+                                (int(rc[0]), int(rc[1]))
+                                for rc in (cmd.get('pressed') or [])
+                            }
+                            _keypad_recompute(kp)
+                    elif stype == 'mpu6050' and slave is not None:
                         slave.update(
                             accel_x=float(sensor.get('accelX', 0)),
                             accel_y=float(sensor.get('accelY', 0)),
@@ -1996,6 +2112,8 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
             gpio = int(cmd['pin'])
             with _sensors_lock:
                 sensor = _sensors.pop(gpio, None)
+                if sensor and sensor.get('type') == 'matrix-keypad':
+                    _keypad_uninstall(sensor)
                 if sensor and 'i2c_addr' in sensor:
                     _i2c_slaves.pop(sensor['i2c_addr'], None)
                 if sensor and 'epaper_component_id' in sensor:
