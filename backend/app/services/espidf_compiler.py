@@ -219,7 +219,13 @@ def _run_with_streaming(
 # coldest. Each variant is a full ESP-IDF build tree (~240 MB). Distinct
 # variants = distinct (board options x resolved library set). The global ccache
 # means an evicted-then-rebuilt variant warms up in seconds.
-_MAX_BUILD_VARIANTS = 12
+# Was 12. Each variant is a FULL ~1 GB build tree holding its own copies of
+# the same ESP-IDF component objects, so 46 of them had grown to 25 GB while
+# ccache - the cache that actually serves EVERY target and variant - sat
+# capped at 8 GB, permanently full (99.97%, 153 evictions, 47% hit rate).
+# Fewer trees, a bigger shared cache: a variant that gets evicted rebuilds
+# quickly FROM ccache, but a ccache miss recompiles from source.
+_MAX_BUILD_VARIANTS = 6
 
 
 def _evict_cold_variants(target_dir: Path, keep: int) -> None:
@@ -3038,10 +3044,17 @@ class ESPIDFCompiler:
             psram_chunks.append('CONFIG_SPIRAM_USE_MALLOC=y')
             psram_chunks.append('CONFIG_SPIRAM_MODE_HEX=y')
             psram_chunks.append('CONFIG_SPIRAM_SPEED_200M=y')
+            # The boot-time memory test walks the WHOLE 32 MB before app_main;
+            # on emulated silicon that is tens of millions of guest accesses of
+            # pure startup latency ("Disable this for slightly faster startup",
+            # Kconfig.spiram.common). The RAM is modelled, not physical - there
+            # is nothing to find.
+            psram_chunks.append('CONFIG_SPIRAM_MEMTEST=n')
         else:
             psram_chunks.append('CONFIG_SPIRAM=y')
             psram_chunks.append('CONFIG_SPIRAM_USE_MALLOC=y')
             psram_chunks.append('CONFIG_SPIRAM_SPEED_80M=y')
+            psram_chunks.append('CONFIG_SPIRAM_MEMTEST=n')  # see the P4 note
             if psram_mode == 'opi':
                 psram_chunks.append('CONFIG_SPIRAM_MODE_OCT=y')
             else:
@@ -3960,6 +3973,11 @@ class ESPIDFCompiler:
             f'-DIDF_TARGET={idf_target}',
             '-DCMAKE_BUILD_TYPE=Release',
             f'-DSDKCONFIG_DEFAULTS={project_dir / "sdkconfig.defaults"}',
+            # IDF re-validates its python env on every configure (~1s of a
+            # ~9s configure). The image pins that env at build time and the
+            # entrypoint has already exercised it, so tell IDF it was checked
+            # externally - the same escape hatch idf.py uses for itself.
+            '-DPYTHON_DEPS_CHECKED=1',
             str(project_dir),
         ]
 

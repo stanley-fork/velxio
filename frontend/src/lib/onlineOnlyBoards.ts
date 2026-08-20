@@ -102,15 +102,15 @@ export const ONLINE_ONLY_BOARD_ADS: OnlineOnlyBoardAd[] = [
     description: 'Espressif AI voice devkit: ESP32-S3, ST77916 1.8" touch LCD, dual mic + speaker, IMU — in-browser emulation',
     thumbnailSvg:
       '<svg width="72" height="72" viewBox="0 0 72 72" xmlns="http://www.w3.org/2000/svg">' +
-      '<rect x="10" y="8" width="52" height="56" rx="10" fill="#131316"/>' +
-      '<path d="M14 12 L22 4 L26 12 Z" fill="#131316"/>' +
-      '<path d="M58 12 L50 4 L46 12 Z" fill="#131316"/>' +
-      '<rect x="17" y="16" width="38" height="38" rx="8" fill="#1a1a1e" stroke="#3a3b40"/>' +
-      '<rect x="20" y="19" width="32" height="32" rx="6" fill="#0c4a5e"/>' +
-      '<circle cx="29" cy="32" r="3" fill="#e8f4f8"/><circle cx="43" cy="32" r="3" fill="#e8f4f8"/>' +
-      '<path d="M32 40 Q36 44 40 40" stroke="#e8f4f8" stroke-width="1.6" fill="none" stroke-linecap="round"/>' +
-      '<circle cx="20" cy="60" r="1.6" fill="#060608"/><circle cx="52" cy="60" r="1.6" fill="#060608"/>' +
-      '<g fill="#26282c"><rect x="30" y="58" width="12" height="3" rx="1.5"/></g>' +
+      '<path d="M14 30 L20 6 Q22 3 25 5 L38 12 Z" fill="#1e1e24" stroke="#050506" stroke-width="0.8" stroke-linejoin="round"/>' +
+      '<path d="M58 30 L52 6 Q50 3 47 5 L34 12 Z" fill="#1e1e24" stroke="#050506" stroke-width="0.8" stroke-linejoin="round"/>' +
+      '<circle cx="36" cy="40" r="28" fill="#26262c" stroke="#050506"/>' +
+      '<circle cx="36" cy="40" r="25" fill="none" stroke="#53545c" stroke-width="1.4" opacity="0.75"/>' +
+      '<circle cx="36" cy="40" r="21" fill="#0c4a5e" stroke="#101015" stroke-width="1.6"/>' +
+      '<circle cx="30" cy="36" r="2.6" fill="#e8f4f8"/><circle cx="42" cy="36" r="2.6" fill="#e8f4f8"/>' +
+      '<path d="M31 45 Q36 49 41 45" stroke="#e8f4f8" stroke-width="1.5" fill="none" stroke-linecap="round"/>' +
+      '<circle cx="20" cy="14" r="1.5" fill="#08080a"/><circle cx="52" cy="14" r="1.5" fill="#08080a"/>' +
+      '<circle cx="36" cy="13" r="1.8" fill="#38c172"/>' +
       '</svg>',
   },
   {
@@ -119,7 +119,7 @@ export const ONLINE_ONLY_BOARD_ADS: OnlineOnlyBoardAd[] = [
     description: 'Espressif flagship RISC-V: dual-core 400MHz, MIPI-DSI display, MIPI-CSI camera, WiFi via ESP32-C6 — in-browser emulation',
     thumbnailSvg:
       '<svg width="72" height="72" viewBox="0 0 72 72" xmlns="http://www.w3.org/2000/svg">' +
-      '<rect x="6" y="10" width="60" height="52" rx="4" fill="#7a1f1f"/>' +
+      '<rect x="6" y="10" width="60" height="52" rx="4" fill="#17181c" stroke="#3a3d42"/>' +
       '<rect x="26" y="24" width="20" height="20" rx="2" fill="#101418"/>' +
       '<text x="36" y="37" text-anchor="middle" font-size="7" font-family="monospace" fill="#e8e8e8">P4</text>' +
       '<rect x="52" y="16" width="10" height="10" rx="1" fill="#b8bec6"/>' +

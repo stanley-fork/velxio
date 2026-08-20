@@ -140,6 +140,9 @@ class ArduinoCLIService:
 
     def __init__(self, cli_path: str = "arduino-cli"):
         self.cli_path = cli_path
+        # Cached `core list` output; see _is_core_installed. Invalidated
+        # wherever a core is installed so a fresh install is seen immediately.
+        self._installed_cores: str | None = None
         self._ensure_board_urls()
         self._ensure_core_installed()
 
@@ -235,12 +238,24 @@ class ArduinoCLIService:
         return None
 
     def _is_core_installed(self, core_id: str) -> bool:
-        """Check whether a core is currently installed."""
-        result = subprocess.run(
-            [self.cli_path, "core", "list"],
-            capture_output=True, text=True
-        )
-        return core_id in result.stdout
+        """Check whether a core is currently installed.
+
+        Memoized: this shells out to `arduino-cli core list` (~1.5 s measured)
+        and it used to run on EVERY compile of a non-AVR board, from inside an
+        async handler - so it blocked the event loop for the whole process, not
+        just the caller. Cores only appear via install_core() below, which
+        refreshes the set, and they are never removed at runtime.
+        """
+        if self._installed_cores is None:
+            try:
+                result = subprocess.run(
+                    [self.cli_path, "core", "list"],
+                    capture_output=True, text=True, timeout=60,
+                )
+                self._installed_cores = result.stdout
+            except (subprocess.SubprocessError, OSError):
+                return False  # unknown: let the caller try to install
+        return core_id in self._installed_cores
 
     async def ensure_core_for_board(self, fqbn: str) -> dict:
         """
@@ -259,6 +274,8 @@ class ArduinoCLIService:
         version = self.CORE_INSTALL_VERSIONS.get(core_id)
         install_spec = f"{core_id}@{version}" if version else core_id
         print(f"[arduino-cli] Auto-installing core {install_spec} for board {fqbn}...")
+
+        self._installed_cores = None  # a core is about to appear
 
         def _install():
             return subprocess.run(

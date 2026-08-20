@@ -257,6 +257,17 @@ COPY --from=espidf-builder /root/.espressif /root/.espressif
 
 COPY --from=espidf-builder /opt/arduino-esp32 /opt/arduino-esp32
 
+# Memoize ldgen. It re-parses every component's linker.lf with pyparsing on
+# EVERY build - measured at 15.2 s here, 41% of a whole ESP-IDF compile of a
+# one-file sketch - and its output is a pure function of its inputs. The
+# wrapper delegates to the untouched upstream script on a miss.
+COPY backend/scripts/ldgen_cache.py /tmp/ldgen_cache.py
+RUN if [ -f /opt/esp-idf/tools/ldgen/ldgen.py ]; then \
+      mv /opt/esp-idf/tools/ldgen/ldgen.py /opt/esp-idf/tools/ldgen/ldgen_upstream.py && \
+      cp /tmp/ldgen_cache.py /opt/esp-idf/tools/ldgen/ldgen.py && \
+      chmod +x /opt/esp-idf/tools/ldgen/ldgen.py; \
+    fi; rm -f /tmp/ldgen_cache.py
+
 ENV IDF_PATH=/opt/esp-idf
 ENV IDF_TOOLS_PATH=/root/.espressif
 ENV ARDUINO_ESP32_PATH=/opt/arduino-esp32
@@ -297,7 +308,7 @@ ENV CCACHE_NOHASHDIR=1
 # runtime by the volume mount. ccache reads CCACHE_MAXSIZE / CCACHE_COMPRESS
 # / CCACHE_COMPRESSLEVEL on every invocation and they override any conf-file
 # value, so the cap actually applies at runtime.
-ENV CCACHE_MAXSIZE=8G
+ENV CCACHE_MAXSIZE=20G
 ENV CCACHE_COMPRESS=1
 ENV CCACHE_COMPRESSLEVEL=6
 RUN mkdir -p /var/cache/ccache /var/lib/velxio-build /root/Arduino
