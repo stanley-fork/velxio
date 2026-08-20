@@ -59,20 +59,50 @@ class BuildIdentityTests(unittest.TestCase):
             'compile concurrently up to the semaphore cap.',
         )
 
-    def test_unknown_boards_share_the_default_pair(self):
-        """An unrecognised FQBN resolves to the default (esp32, esp32) pair.
+    def test_non_esp32_boards_never_share_a_lock(self):
+        """Only the ESP-IDF lane has a shared persistent build dir.
 
-        That is not a hole: those compiles genuinely land in the same build dir,
-        because the compiler derives the dir from the same two functions. Sharing
-        a lock here is the safe direction — serialising more than necessary only
-        costs throughput, while serialising less corrupts a build.
+        This assertion was inverted until now: it required every unrecognised
+        FQBN to collapse onto the default (esp32, esp32) pair, on the reasoning
+        that over-serialising is the safe direction. `_build_identity` stopped
+        doing that deliberately — `_idf_target` defaults ANY unknown board to
+        'esp32', so an AVR / RP2040 / STM32 compile inherited the ESP32 key and
+        queued behind unrelated ESP-IDF builds it shares nothing with. There is
+        no correctness argument for that wait: those boards go through
+        arduino-cli, which has no shared build dir to corrupt.
         """
         a = compile_module._build_identity('definitely:not:a:board')
         b = compile_module._build_identity('also:not:a:board')
-        self.assertEqual(a, b)
+        self.assertNotEqual(
+            a,
+            b,
+            'non-ESP32 FQBNs have no shared build dir, so each keeps its own '
+            'identity instead of collapsing onto the ESP32 default.',
+        )
+        self.assertIsNot(
+            compile_module._target_lock('arduino:avr:uno'),
+            compile_module._target_lock('rp2040:rp2040:rpipico'),
+            'an AVR build must not queue behind an ESP-IDF one.',
+        )
+
+    def test_a_non_esp32_board_still_serialises_with_itself(self):
+        """Dropping the shared key must not drop the per-board lock too."""
         self.assertIs(
-            compile_module._target_lock('definitely:not:a:board'),
-            compile_module._target_lock('also:not:a:board'),
+            compile_module._target_lock('arduino:avr:uno'),
+            compile_module._target_lock('arduino:avr:uno'),
+        )
+
+    def test_unknown_esp32_boards_still_share_the_default_pair(self):
+        """The over-serialising fallback stays where it protects something.
+
+        An unrecognised `esp32:` FQBN still resolves through _idf_target to the
+        default pair and lands in that build dir, so it must keep sharing the
+        lock — serialising more than necessary costs throughput, serialising
+        less corrupts a build.
+        """
+        self.assertIs(
+            compile_module._target_lock('esp32:esp32:definitely-not-a-board'),
+            compile_module._target_lock('esp32:esp32:also-not-a-board'),
         )
 
 
