@@ -17,6 +17,7 @@
  * `ad.id in BOARD_KIND_LABELS`, and registration inserts the label.
  */
 import type React from 'react';
+import type { ESP32BoardOptions } from '../types/boardOptions';
 import {
   BOARD_KIND_LABELS,
   BOARD_KIND_FQBN,
@@ -165,6 +166,20 @@ export interface ProBoardDef {
    *  sketch includes the vendor library, so the board must declare it or the
    *  first compile resolves against nothing. */
   defaultLibraries?: string[];
+
+  /**
+   * Build options this board is physically born with, merged over the family
+   * defaults whenever the project has not saved its own.
+   *
+   * A module carries the RAM and flash it carries: the ESP32-S3-EYE always has
+   * 8 MB of octal PSRAM, and its camera driver allocates the frame buffer with
+   * MALLOC_CAP_SPIRAM. Compiled with the conservative family default
+   * (CONFIG_SPIRAM=n) the sketch builds fine and then dies at run time with
+   * `cam_dma_config(509): frame buffer malloc failed` — a hardware fact
+   * reported as a mysterious driver error. Boards that ship the RAM say so
+   * here; everything else keeps sending no options at all.
+   */
+  defaultBoardOptions?: Partial<ESP32BoardOptions>;
 
   /** Sidebar / toolbar accents (fall back to a neutral chip icon). */
   icon?: string;

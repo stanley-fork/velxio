@@ -908,6 +908,38 @@ class ESPIDFCompiler:
                 deps[name] = version
         return deps
 
+    # IDF components that ship INSIDE the IDF tree (not the registry) and are
+    # NOT on an Arduino sketch's include path by default. arduino-esp32 3.x
+    # keeps most of its requires PRIVATE, so a sketch that includes one of
+    # these dies with "No such file or directory" while the very same header
+    # resolves fine from a user library (whose merged component requires it).
+    # Hit while writing the ESP32-S3-EYE camera example: esp_lcd_panel_io.h
+    # compiled only when an unrelated Adafruit library happened to be present.
+    _IDF_COMPONENT_INCLUDES: tuple[tuple[str, str], ...] = (
+        (r'esp_lcd_panel_io\.h', 'esp_lcd'),
+        (r'esp_lcd_panel_ops\.h', 'esp_lcd'),
+        (r'esp_lcd_panel_vendor\.h', 'esp_lcd'),
+        (r'esp_lcd_types\.h', 'esp_lcd'),
+        (r'esp_lcd_mipi_dsi\.h', 'esp_lcd'),
+        (r'esp_cache\.h', 'esp_mm'),
+        (r'esp_ldo_regulator\.h', 'esp_hw_support'),
+        (r'esp_psram\.h', 'esp_psram'),
+    )
+
+    def _detect_idf_components(self, code: str) -> list[str]:
+        """IDF-tree components the source #includes, that exist in this IDF."""
+        wanted: list[str] = []
+        for pattern, comp in self._IDF_COMPONENT_INCLUDES:
+            if comp in wanted:
+                continue
+            if not re.search(r'#include\s*[<"]' + pattern + r'[">]', code):
+                continue
+            if self.idf_path and os.path.isdir(
+                os.path.join(self.idf_path, 'components', comp)
+            ):
+                wanted.append(comp)
+        return wanted
+
     def _detect_camera_usage(self, code: str) -> bool:
         """Does the sketch use the ESP32 camera driver?
 
@@ -3897,6 +3929,30 @@ class ESPIDFCompiler:
             managed = self._detect_managed_components(sketch_src)
             if managed:
                 self._add_managed_components(project_dir, managed)
+
+            # Same idea for components that live in the IDF tree rather than the
+            # registry: they need to be in main's REQUIRES or the sketch cannot
+            # see their headers.
+            idf_comps = self._detect_idf_components(sketch_src)
+            if idf_comps:
+                cmake_path = project_dir / 'main' / 'CMakeLists.txt'
+                cmake_text = cmake_path.read_text(encoding='utf-8')
+                missing = [c for c in idf_comps if c not in cmake_text]
+                if missing:
+                    for old_req in [
+                        r'REQUIRES ${_arduino_comp_name}',
+                        f'REQUIRES {arduino_comp_name}',
+                    ]:
+                        if old_req in cmake_text:
+                            cmake_text = cmake_text.replace(
+                                old_req, old_req + ' ' + ' '.join(missing), 1
+                            )
+                            cmake_path.write_text(cmake_text, encoding='utf-8')
+                            logger.info(
+                                f'[espidf] main REQUIRES += {" ".join(missing)} '
+                                '(IDF components the sketch includes)'
+                            )
+                            break
         else:
             # Pure ESP-IDF mode (no Arduino component usable for this
             # target). Remove Arduino main.cpp to avoid conflict.
