@@ -117,7 +117,9 @@ export const BOARD_PIN_GROUPS: Record<AllBoardKinds, BoardPinGroup> = {
   'wemos-lolin32-lite': {
     vcc: 3.3,
     gnd: ['GND'],
-    vcc_pins: ['3V3'],
+    // The element silkscreens the rail "3V" (Esp32Element.ts PINS_WEMOS_LOLIN32);
+    // "3V3" is kept for saved projects that named it that way.
+    vcc_pins: ['3V', '3V3'],
     aux: { volts: 5, pins: ['5V'] },
   },
   'esp32-s3': {
