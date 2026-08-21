@@ -217,11 +217,26 @@ class Esp32BridgeShim {
     this.bridge.sendSerialBytes(Array.from(new TextEncoder().encode(text)));
   }
   /**
-   * Feed bytes into a hardware UART's RX from an external part (GPS module,
+   * Feed RAW BYTES into a hardware UART's RX. Use this, not `feedUart`, for
+   * anything that is not text.
+   *
+   * `feedUart`/`serialWrite` take a string and run it through TextEncoder,
+   * which is UTF-8: every byte >= 0x80 comes out as TWO bytes. That is
+   * invisible for NMEA or AT chatter and silently fatal for a binary frame —
+   * a reply of `AA 55 04 00 FF FD 01 FD 55 AA` reaches the guest as
+   * `C2 AA 55 04 00 C3 BF C3 BD 01 C3 BD 55 C2 AA` and no parser recovers.
+   * Byte-oriented device models (framed UART protocols with checksums and
+   * 0xAA/0x55 sync words) need the bytes to arrive as written.
+   */
+  sendSerialBytes(bytes: number[], uart = 0): void {
+    this.bridge.sendSerialBytes(bytes, uart);
+  }
+  /**
+   * Feed TEXT into a hardware UART's RX from an external part (GPS module,
    * a wired peer board via Interconnect, …). Uniform seam across simulators
    * (`sim.feedUart(uart, data)`). The backend QEMU worker routes the bytes
    * into the requested UART (0 = Serial / GPIO3, 2 = Serial2 / GPIO16 on
-   * the classic ESP32 pinout).
+   * the classic ESP32 pinout). Text only — see `sendSerialBytes` above.
    */
   feedUart(uart: number, data: string): boolean {
     this.bridge.sendSerialBytes(Array.from(new TextEncoder().encode(data)), uart);
@@ -800,10 +815,17 @@ class Stm32BridgeShim {
     this.bridge.sendPinEvent(pin, state);
   }
 
+  /** Raw-byte counterpart of `feedUart` — see the note on the ESP32 shim:
+   *  feedUart is UTF-8 and mangles any byte >= 0x80, so binary protocols
+   *  must use this. */
+  sendSerialBytes(bytes: number[], uart = 0): void {
+    this.bridge.sendSerialBytes(bytes, uart);
+  }
   /**
-   * Feed bytes into a hardware USART's RX from an external part (GPS module,
+   * Feed TEXT into a hardware USART's RX from an external part (GPS module,
    * a wired peer board via Interconnect, …). Uniform seam across simulators
    * (`sim.feedUart(uart, data)`). uart 0 = USART1 (PA10 RX), 1 = USART2 (PA3).
+   * Text only — see `sendSerialBytes` above.
    */
   feedUart(uart: number, data: string): boolean {
     this.bridge.sendSerialBytes(Array.from(new TextEncoder().encode(data)), uart);
