@@ -183,6 +183,9 @@ export class RP2040Simulator {
   // ── Generic PIO/gSPI bus peripheral (e.g. the pro WiFi co-processor). Null
   //    in OSS (no factory installed); attached for boards a factory supports.
   private pioPeripheral: PioPeripheral | null = null;
+  /** Board id the PIO peripheral was created for, so a rebooting guest can be
+   *  handed a freshly powered chip (see powerCyclePioPeripheral). */
+  private pioBoardId: string | null = null;
   private pioHookedFifos: Array<{ restore: () => void }> = [];
   // The board kind this simulator runs (set by attachPioPeripheral). A
   // 'pi-pico-w' boots the RPI_PICO_W firmware (with the `network` module)
@@ -386,6 +389,7 @@ export class RP2040Simulator {
     // RP2040, so those hooks now point at the discarded instance. Re-install
     // them on the new PIO FIFOs or the peripheral never sees the bus traffic.
     if (this.pioPeripheral) {
+      this.powerCyclePioPeripheral();
       this.pioHookedFifos = [];
       this.installPioPeripheralHooks();
     }
@@ -418,6 +422,7 @@ export class RP2040Simulator {
     // factory-not-installed-yet) so loadMicroPython still picks the W firmware
     // for a pi-pico-w board.
     this.boardKind = boardKind;
+    this.pioBoardId = boardId;
     if (this.pioPeripheral) return this.pioPeripheral;
     const peripheral = createPioPeripheral(boardKind, boardId);
     if (!peripheral) return null;
@@ -433,6 +438,48 @@ export class RP2040Simulator {
 
     this.installPioPeripheralHooks();
     return peripheral;
+  }
+
+  /**
+   * Give a rebooting guest a chip that has also rebooted.
+   *
+   * The CYW43439 emulator is stateful: the bus handshake result, the backplane
+   * window, the SDPCM sequence counters and credit, the event mask, the link
+   * state. attachPioPeripheral is idempotent and the store only calls it at
+   * board-add, so that state SURVIVED every later Run while the guest driver
+   * started over from scratch. The second Run then had a fresh driver talking
+   * to a chip mid-conversation: the handshake "passed" against stale
+   * registers, IOCTL replies came back zeroed, and the first call that waited
+   * on the chip blocked forever. Only the first Run after a page load worked.
+   *
+   * Called from the paths that rebuild the MCU, before the FIFO hooks are
+   * re-installed, so the new chip is what gets wired to the new PIO.
+   */
+  private powerCyclePioPeripheral(): void {
+    if (!this.pioPeripheral || !this.pioBoardId) return;
+    const kind = this.boardKind;
+    const boardId = this.pioBoardId;
+    try {
+      this.pioPeripheral.detach?.();
+    } catch {
+      /* the old chip is being thrown away either way */
+    }
+    for (const h of this.pioHookedFifos) {
+      try {
+        h.restore();
+      } catch {
+        /* noop */
+      }
+    }
+    this.pioHookedFifos = [];
+    this.pioPeripheral = null;
+    const fresh = createPioPeripheral(kind, boardId);
+    if (!fresh) return;
+    this.pioPeripheral = fresh;
+    fresh.onHostWake((active: boolean) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      try { (this.rp2040 as any)?.gpio?.[24]?.setInputValue(active); } catch { /* noop */ }
+    });
   }
 
   /** Detach the PIO peripheral (called from teardown). */

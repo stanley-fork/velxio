@@ -3740,11 +3740,21 @@ class ESPIDFCompiler:
         # it inside that branch broke pure ESP-IDF compiles with
         # UnboundLocalError at the result step (2026-08-05 regression).
         merged_libs_report: dict[str, str] = {}
+        _all_text = '\n'.join(f.get('content', '') for f in files)
         if pure_idf:
-            _all_text = '\n'.join(f.get('content', '') for f in files)
             has_wifi = self._detect_idf_wifi_usage(_all_text)
         else:
-            has_wifi = self._detect_wifi_usage(main_content)
+            # Scan the WHOLE project, not just the entry sketch. A header that
+            # includes WiFi.h is as much a WiFi project as an .ino that does,
+            # and judging it WiFi-less used to be fatal: the QEMU worker then
+            # left the radio out of the machine and the firmware's first touch
+            # of the MAC panicked with LoadStorePIFAddrError (issue #260).
+            # The pure-IDF branch above always read every file; this one had
+            # been reading only main_content.
+            has_wifi = self._detect_wifi_usage(_all_text)
+            # Normalization still rewrites only the entry sketch: it edits
+            # string literals in place, and the SSID that matters is the one
+            # WiFi.begin() is called with.
             main_content = self._normalize_wifi_for_qemu(main_content)
 
         # Arduino-as-component only when compile() decided so: the core must

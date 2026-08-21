@@ -40,6 +40,7 @@ import ctypes
 import json
 import os
 import queue
+import re
 import sys
 import tempfile
 import threading
@@ -171,6 +172,75 @@ def _log(msg: str) -> None:
 # ─── GPIO pinmap (identity: slot i → GPIO i-1) ──────────────────────────────
 # ESP32 has 40 GPIOs (0-39), ESP32-C3 only has 22 (0-21).
 # The pinmap is rebuilt after reading config (see main()), defaulting to ESP32.
+
+# QEMU machines whose SoC model instantiates a WiFi MAC. The S3 machine does
+# not (hw/xtensa/esp32s3.c never calls qemu_find_nic_info), so it must not be
+# handed a NIC — see the radio block in start().
+_WIFI_MACHINES = {'esp32-picsimlab'}
+
+
+# The classic ESP32's WiFi MAC, at its DPORT address and at the APB alias the
+# IDF driver actually uses (0x3ff73000 - DR_REG_DPORT_APB_BASE + APB_REG_BASE).
+# One page each, matching the region hw/misc/esp32_wifi.c maps.
+_WIFI_MAC_RANGES = ((0x3ff73000, 0x3ff74000), (0x60033000, 0x60034000))
+
+
+def wifi_nic_arg(machine: str, wifi_enabled: bool,
+                 hostfwd_port: int = 0) -> str | None:
+    """The `-nic` value for this machine, or None if it models no radio.
+
+    The radio is attached whether or not the sketch appears to use it, because
+    a real ESP32 has one either way. It used to be conditional on wifi_enabled,
+    which made a source-scanning GUESS load-bearing: the fork only instantiates
+    the MAC when a NIC is present (`qemu_find_nic_info(TYPE_ESP32_WIFI)` in
+    hw/xtensa/esp32.c), so a sketch the scanner misread as WiFi-less ran on a
+    machine with nothing mapped at DR_REG_WIFI_BASE. The firmware's first
+    register touch then took an unmapped-peripheral fault — `Guru Meditation
+    Error (LoadStorePIFAddrError)`, EXCVADDR 0x60033c00 — which reads as a
+    Velxio crash and says nothing about WiFi. That is issue #260, and one bad
+    guess was all it took.
+
+    Measured before making it unconditional, on a sketch that never touches
+    WiFi: boot time, guest-clock-vs-real-time and container CPU all unchanged
+    over 4 paired runs. The AP's beacon timer runs on QEMU_CLOCK_REALTIME —
+    the reason -icount is off for Xtensa — but idle beacons cost nothing here.
+
+    `wifi_enabled` still gates the host forward, which exposes the GUEST's
+    server to the host and so belongs to a sketch that actually serves.
+    """
+    if 'c3' in machine:
+        model = 'esp32c3_wifi'
+    elif machine in _WIFI_MACHINES:
+        model = 'esp32_wifi'
+    else:
+        # The S3 machine models no radio (hw/xtensa/esp32s3.c never looks for
+        # the NIC), so handing it one would leave an unconsumed netdev.
+        return None
+    arg = f'user,model={model},net=192.168.4.0/24'
+    if wifi_enabled and hostfwd_port:
+        arg += f',hostfwd=tcp::{hostfwd_port}-192.168.4.15:80'
+    return arg
+
+
+def _explain_pif_fault(chunk: bytes) -> str | None:
+    """Turn a LoadStorePIFAddrError dump into a sentence about what it means.
+
+    The panic reports an address and nothing else, so a user reading it has no
+    way to know the chip was reaching for a peripheral this machine does not
+    model. A week of debugging went into issue #260 for exactly that reason.
+    Returns the line to print once EXCVADDR has been seen, or None if this
+    chunk does not carry it yet.
+    """
+    m = re.search(rb'EXCVADDR\s*:\s*0x([0-9a-fA-F]+)', chunk)
+    if not m:
+        return None
+    addr = int(m.group(1), 16)
+    where = ('the WiFi MAC' if any(lo <= addr < hi for lo, hi in _WIFI_MAC_RANGES)
+             else 'a peripheral')
+    return (f'\r\n[velxio] That panic is not a bug in your sketch: the firmware '
+            f'read {where} at 0x{addr:08x}, which this emulated machine does not '
+            f'provide. Nothing is mapped there, so the CPU faulted.\r\n')
+
 
 _GPIO_COUNT = 40
 _PINMAP = (ctypes.c_int16 * (_GPIO_COUNT + 1))(
@@ -453,13 +523,14 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
         args_list.extend([b'-icount', b'3'])
 
     # ── WiFi NIC (slirp user-mode networking) ──────────────────────────────
-    if wifi_enabled:
-        nic_model = 'esp32c3_wifi' if 'c3' in machine else 'esp32_wifi'
-        nic_arg = f'user,model={nic_model},net=192.168.4.0/24'
-        if wifi_hostfwd_port:
-            nic_arg += f',hostfwd=tcp::{wifi_hostfwd_port}-192.168.4.15:80'
+    # Always present on machines that model a radio — see wifi_nic_arg().
+    nic_arg = wifi_nic_arg(machine, wifi_enabled, wifi_hostfwd_port)
+    if nic_arg:
         args_list.extend([b'-nic', nic_arg.encode()])
-        _log(f'WiFi enabled: -nic {nic_arg}')
+        _log(f'WiFi radio attached (sketch wants WiFi: {wifi_enabled}): -nic {nic_arg}')
+    elif wifi_enabled:
+        _log(f'WiFi requested but machine {machine} models no radio — '
+             'the sketch will fault if it touches the MAC')
 
     argc = len(args_list)
     argv = (ctypes.c_char_p * argc)(*args_list)
@@ -499,6 +570,12 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
     _camera_frame_count = [0]               # ESP32-CAM frame trace counter
     _CRASH_STR      = b'Cache disabled but cached memory region accessed'
     _REBOOT_STR     = b'Rebooting...'
+    # A LoadStorePIFAddrError is always the guest touching a peripheral this
+    # machine does not model, but the panic dump says only "memory". The
+    # address arrives a few lines after the cause, so the cause is latched
+    # here until EXCVADDR shows up. See _explain_pif_fault.
+    _PIF_STR        = b'LoadStorePIFAddrError'
+    _pif_pending    = [False]
 
     # ── Signal routing (GPIO Matrix mirror) ───────────────────────────────
     # The SignalRouter owns the per-GPIO routing table that the firmware
@@ -1103,6 +1180,13 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                     _reboot_count[0] += 1
                     _emit({'type': 'system', 'event': 'reboot',
                            'count': _reboot_count[0]})
+                if _PIF_STR in chunk:
+                    _pif_pending[0] = True
+                elif _pif_pending[0]:
+                    note = _explain_pif_fault(chunk)
+                    if note:
+                        _pif_pending[0] = False
+                        _emit({'type': 'serial_output', 'data': note, 'uart': 0})
                 # WiFi progress logging (only in debug — helps diagnose prod issues)
                 if wifi_enabled:
                     line = chunk.decode('utf-8', errors='replace').strip()

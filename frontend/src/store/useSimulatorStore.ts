@@ -2013,37 +2013,20 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         const b64 = uint8ArrayToBase64(padToFlashSize(firmware, board.boardKind));
         esp32Bridge.loadFirmware(b64);
 
-        // Queue code injection for after REPL boots. Multi-file projects:
-        // every .py file other than the entry point gets materialized to the
-        // MicroPython filesystem (via a prelude executed inside the same raw
-        // REPL paste) before main.py runs, so `import mylib` resolves.
-        // Without this, ESP32 projects with helper modules crashed at runtime
-        // with ModuleNotFoundError.
+        // Queue the project for after the REPL boots. Multi-file projects:
+        // every .py file other than the entry point is materialized onto the
+        // MicroPython filesystem before main runs, so `import mylib` resolves.
+        //
+        // They travel as FILES, not as source inlined into the program. Inlining
+        // is what issue #219 was: a 36 KB library became one Python string
+        // literal, so compiling it asked a PSRAM-less ESP32 for one contiguous
+        // 36 KB allocation and the board answered MemoryError. The bridge now
+        // writes each one in bounded steps — see simulation/micropythonSession.ts.
         const mainFile = files.find((f) => f.name === 'main.py') ?? files[0];
         if (mainFile) {
           const auxFiles = files.filter(
             (f) => f !== mainFile && f.name.endsWith('.py'),
           );
-          // A packaged module ("umqtt/simple.py" — how micropython-lib ships
-          // umqtt.simple) needs its directory created first: MicroPython's
-          // open() does not mkdir, so without this the prelude died with
-          // ENOENT before main.py ever ran.
-          const mkdirs = new Set<string>();
-          for (const f of auxFiles) {
-            const segs = f.name.split('/').slice(0, -1);
-            for (let i = 1; i <= segs.length; i++) mkdirs.add(segs.slice(0, i).join('/'));
-          }
-          const mkdirLines = [...mkdirs].sort().map(
-            (d) => `try:\n    __import__('os').mkdir(${JSON.stringify(d)})\nexcept OSError:\n    pass`,
-          );
-          const preludeLines = mkdirLines.concat(auxFiles.map((f) => {
-            // JSON.stringify produces an ASCII-safe Python-compatible
-            // string literal (both languages share the same \n \r \t \" \\
-            // escapes, and JSON does not emit any escape Python rejects).
-            const lit = JSON.stringify(f.content);
-            const path = JSON.stringify(f.name);
-            return `with open(${path},'w') as _f:\n    _f.write(${lit})`;
-          }));
 
           // Does this run get a real, WORKING network driver? Two gates:
           //  - the sketch must want WiFi (must match what startBoard()
@@ -2060,8 +2043,25 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
           const bridgeMpyWifi = (
             esp32Bridge as { micropythonWifiSupported?: boolean }
           ).micropythonWifiSupported;
-          const wifiOn =
-            (board.hasWifi ?? sketchUsesWifi(files)) && bridgeMpyWifi !== false;
+          // Does this run get the REAL network driver? Only one thing decides
+          // it now: whether the backend behind this board models the radio.
+          //
+          // It used to also require the sketch to look like a WiFi sketch,
+          // because without a NIC `network.WLAN(STA_IF)` hangs forever on
+          // status bits nothing sets, and the stub was the lesser evil. The
+          // QEMU worker attaches the radio unconditionally since #260 — the
+          // chip has one whether or not the sketch uses it — so that condition
+          // no longer describes anything real, and keeping it would put the
+          // stub in front of a working device whenever the scan misread the
+          // sketch. That is the #262 failure, from the other direction.
+          //
+          // Known gap, not introduced here: QEMU's S3 machine models no radio
+          // at all, so a MicroPython sketch that calls WLAN() on an S3 through
+          // the backend waits on a device that is not there. That was already
+          // true when this was gated on the sketch — such a sketch set hasWifi
+          // and took the real driver either way. A sketch that never imports
+          // network is unaffected, which is why this widening is safe.
+          const wifiOn = bridgeMpyWifi !== false;
 
           // WiFi compat shim: replace `network`, `ntptime`, `urequests`
           // with smart stubs BEFORE user main.py imports them.
@@ -2229,9 +2229,10 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
             'sys.modules["requests"] = _StubURequests()',
           ].join('\n');
 
-          const prelude = wifiStub + '\n' +
-            (preludeLines.length ? preludeLines.join('\n') + '\n' : '');
-          esp32Bridge.setPendingMicroPythonCode(prelude + mainFile.content);
+          esp32Bridge.setPendingMicroPythonProgram({
+            files: auxFiles.map((f) => ({ name: f.name, content: f.content })),
+            main: wifiStub + '\n' + mainFile.content,
+          });
         }
       } else {
         // Browser-side firmware+filesystem path. Any simulator exposing
@@ -2480,17 +2481,18 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
           }
           esp32Bridge.setSensors(sensors);
 
-          // Use WiFi flag set by the compiler (most reliable — avoids stale file group issues).
-          // Fall back to scanning the active file group if the flag hasn't been set yet.
-          let hasWifi = board.hasWifi;
-          if (hasWifi === undefined) {
-            const editorState = useEditorStore.getState();
-            const rawFiles = editorState.fileGroups[board.activeFileGroupId];
-            const boardFiles = rawFiles && rawFiles.length > 0 ? rawFiles : editorState.files;
-            // Shared with loadMicroPythonProgram's stub decision — the two
-            // must not disagree about whether a NIC exists.
-            hasWifi = sketchUsesWifi(boardFiles);
-          }
+          // Either signal saying "WiFi" is enough. The compiler's flag comes
+          // from the build that actually ran, which is why it is consulted at
+          // all; the source scan reads every file in the group, which the
+          // compiler's Arduino path did not until #260. Neither is authoritative
+          // alone, and an OR cannot be talked out of a true by a stale or
+          // narrower false — which is the direction that used to hurt.
+          const editorState = useEditorStore.getState();
+          const rawFiles = editorState.fileGroups[board.activeFileGroupId];
+          const boardFiles = rawFiles && rawFiles.length > 0 ? rawFiles : editorState.files;
+          // Shared with loadMicroPythonProgram's stub decision so the two
+          // cannot disagree about whether this sketch wants WiFi.
+          const hasWifi = (board.hasWifi ?? false) || sketchUsesWifi(boardFiles);
           esp32Bridge.wifiEnabled = hasWifi;
 
           // microSD — if a card is on the canvas, build a FAT16 image (project
@@ -2587,12 +2589,22 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         // Notify an attached PIO peripheral (the pro CYW43 WiFi co-processor)
         // that the simulation started, with the board's source files so it can
         // detect WiFi usage and open its network bridge. No-op in OSS.
-        if (rpSim instanceof RP2040Simulator) {
+        //
+        // Overlay boards carry the same peripheral: the Pimoroni Pico Plus 2 W
+        // and Badger 2350 have the RM2 (the same CYW43439 die) on an RP2350
+        // simulator, which is NOT an RP2040Simulator. Without this branch they
+        // associated to the local virtual AP but never got the network bridge
+        // opened, so real internet and the Pro custom-AP config never applied
+        // — WiFi that reached an IP and could reach nothing.
+        const pioSim = rpSim as
+          | (typeof rpSim & { getPioPeripheral?: () => { onSimulationStart?: (f: unknown[]) => void } | null })
+          | null;
+        if (typeof pioSim?.getPioPeripheral === 'function') {
           const editorState = useEditorStore.getState();
           const rawFiles = editorState.fileGroups[board.activeFileGroupId];
           const boardFiles =
             rawFiles && rawFiles.length > 0 ? rawFiles : editorState.files;
-          rpSim.getPioPeripheral()?.onSimulationStart?.(boardFiles);
+          pioSim.getPioPeripheral()?.onSimulationStart?.(boardFiles);
         }
       }
 

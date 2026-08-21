@@ -35,6 +35,7 @@
  */
 
 import type { BoardKind } from '../types/board';
+import { MicroPythonSession, type MpyProgram } from './micropythonSession';
 import { getProBoard } from '../lib/proBoardRegistry';
 import { generateUUID } from '../utils/uuid';
 
@@ -230,14 +231,11 @@ export class Esp32Bridge {
   private _pendingFirmware: string | null = null;
   private _pendingSensors: Array<Record<string, unknown>> = [];
 
-  // MicroPython REPL injection — 4-stage state machine
-  //   idle → banner_seen → prompt_seen → raw_repl_entered → done
-  // Each stage waits for a specific string in the serial buffer before
-  // proceeding.  This avoids the race where code is sent before raw REPL
-  // mode is confirmed and ends up echoed by the normal REPL.
-  private _pendingMicroPythonCode: string | null = null;
-  private _serialBuffer = '';
-  private _replState: 'idle' | 'banner_seen' | 'prompt_seen' | 'raw_repl_entered' = 'idle';
+  // MicroPython: the queued project, and the session that boots the board to
+  // its raw REPL, writes the project's files onto the board filesystem and
+  // starts the program. See simulation/micropythonSession.ts.
+  private _pendingMicroPythonProgram: MpyProgram | null = null;
+  private _mpySession: MicroPythonSession | null = null;
   micropythonMode = false;
 
   constructor(boardId: string, boardKind: BoardKind) {
@@ -395,9 +393,10 @@ export class Esp32Bridge {
         case 'serial_output': {
           const text = (msg.data.data as string) ?? '';
           const uart = msg.data.uart as number | undefined;
-          if (this.onSerialData) {
-            for (const ch of text) this.onSerialData(ch, uart);
-          }
+          // What the console shows can be narrower than what the wire carried:
+          // a MicroPython upload filters its own protocol out (see below). The
+          // waveform below still gets every byte — they really were on the pin.
+          let shown = text;
           // Synthesize the per-byte UART waveform on the TX GPIO so the
           // oscilloscope shows a real frame, matching how a real ESP32
           // drives the pin.  Falls back to UART0 when no uart index is
@@ -407,55 +406,17 @@ export class Esp32Bridge {
               this.emitUartTxFrame(text.charCodeAt(i) & 0xff, uart ?? 0);
             }
           }
-          // MicroPython REPL injection — 4-stage state machine.
-          // Each stage waits for a confirmed string in the serial buffer before
-          // advancing, so we never send code before raw REPL mode is verified.
-          if (this._pendingMicroPythonCode || this._replState !== 'idle') {
-            this._serialBuffer += text;
-
-            // Stage 1: banner "Type help()" → poke UART with \r to flush ">>> "
-            // The >>> prompt has no \n so the backend UART buffer holds it until
-            // we send a byte that causes another write.
-            // The poke only fires while the prompt is STILL missing. If the
-            // backend ever delivers ">>>" on its own within 600 ms, stage 2
-            // arms Ctrl-A (+200 ms) before this timer (+800 ms) fires, and the
-            // \r then lands inside the pasted code — MicroPython reads a lone
-            // \r as a newline, so it silently cuts a source line in half. That
-            // is exactly what broke the in-browser JS engines, where the prompt
-            // arrives immediately (see pro microPythonRepl.ts).
-            if (this._replState === 'idle' && this._serialBuffer.includes('Type "help()"')) {
-              this._replState = 'banner_seen';
-              console.log('[Esp32Bridge] Stage 1: banner seen → poking UART with \\r');
-              setTimeout(() => {
-                if (this._replState !== 'banner_seen') return; // prompt already arrived
-                this._send({ type: 'esp32_serial_input', data: { bytes: [0x0d] } });
-              }, 800);
-            }
-
-            // Stage 2: ">>>" → send Ctrl+A to enter raw REPL
-            if (this._replState === 'banner_seen' && this._serialBuffer.includes('>>>')) {
-              this._replState = 'prompt_seen';
-              this._serialBuffer = '';
-              console.log('[Esp32Bridge] Stage 2: >>> seen → sending Ctrl+A');
-              setTimeout(() => {
-                this._send({ type: 'esp32_serial_input', data: { bytes: [0x01] } });
-              }, 200);
-            }
-
-            // Stage 3: "raw REPL" confirmation → now safe to send code
-            if (this._replState === 'prompt_seen' && this._serialBuffer.includes('raw REPL')) {
-              this._replState = 'raw_repl_entered';
-              const code = this._pendingMicroPythonCode!;
-              this._pendingMicroPythonCode = null;
-              this._serialBuffer = '';
-              console.log('[Esp32Bridge] Stage 3: raw REPL confirmed → sending code');
-              setTimeout(() => this._sendCodeInRawRepl(code), 200);
-            }
-
-            // Keep buffer from growing unboundedly
-            if (this._serialBuffer.length > 8192) {
-              this._serialBuffer = this._serialBuffer.slice(-1024);
-            }
+          // MicroPython project upload — see simulation/micropythonSession.ts.
+          // The session owns the boot handshake, writes the project's files to
+          // the board filesystem in bounded steps, and starts the program. It
+          // also decides what the serial console gets to see: its own hundreds
+          // of protocol exchanges stay out, the banner and the program's output
+          // go through.
+          if (this._mpySession) {
+            shown = this._mpySession.feed(text);
+          }
+          if (this.onSerialData) {
+            for (const ch of shown) this.onSerialData(ch, uart);
           }
           break;
         }
@@ -862,91 +823,53 @@ export class Esp32Bridge {
   }
 
   /**
-   * Queue user MicroPython code for injection after the REPL boots.
-   * The code will be sent via raw-paste protocol once `>>>` is detected.
+   * Queue the user's MicroPython project for the board.
+   *
+   * `files` are the project's other .py modules; they are written onto the
+   * board filesystem before `main` runs, which is how a MicroPython library
+   * works on real hardware — and, since #219, one bounded step at a time
+   * rather than one 36 KB string literal. See simulation/micropythonSession.ts.
    */
-  setPendingMicroPythonCode(code: string): void {
-    this._pendingMicroPythonCode = code;
-    this._serialBuffer = '';
-    this._replState = 'idle';
+  setPendingMicroPythonProgram(program: MpyProgram): void {
+    this._pendingMicroPythonProgram = program;
     this.micropythonMode = true;
+    this.armMicroPythonSession();
+  }
+
+  /** Back-compat entry point: a program with no extra files. */
+  setPendingMicroPythonCode(code: string): void {
+    this.setPendingMicroPythonProgram({ files: [], main: code });
+  }
+
+  /**
+   * (Re)arm the upload for a fresh boot: the session tracks one boot handshake,
+   * and queueing a program is what precedes every run.
+   */
+  private armMicroPythonSession(): void {
+    this._mpySession?.dispose();
+    this._mpySession = this._pendingMicroPythonProgram
+      ? new MicroPythonSession(
+          (bytes) => this.sendSerialBytes(bytes),
+          this._pendingMicroPythonProgram,
+          {
+            tag: `Esp32Bridge:${this.boardId}`,
+            // QEMU's own timings, not the in-browser engines'. Over here the
+            // chardev holds the prompt until something else writes, so the
+            // poke has to wait longer for the prompt to arrive on its own —
+            // 800/200 is what this backend has been shipping.
+            pokeDelayMs: 800,
+            stageDelayMs: 200,
+            onNotice: (line) => {
+              for (const ch of line) this.onSerialData?.(ch, 0);
+            },
+          },
+        )
+      : null;
   }
 
   /** Check if this bridge is in MicroPython mode */
   isMicroPythonMode(): boolean {
     return this.micropythonMode;
-  }
-
-  /**
-   * Send code bytes to QEMU UART, then Ctrl+D to execute.
-   * Called ONLY after "raw REPL; CTRL-B to exit" has been confirmed in the
-   * serial buffer (stage 3), so we are guaranteed to be in raw REPL mode.
-   */
-  /**
-   * Sanitize MicroPython source code before sending to the raw REPL.
-   *
-   * MicroPython v1.20 on ESP32 uses a byte-oriented tokenizer that doesn't
-   * handle non-ASCII bytes in source code.  Multi-byte UTF-8 sequences
-   * (e.g. Spanish accents: á=\xC3\xA1, ú=\xC3\xBA) in comments confuse the
-   * tokenizer and produce SyntaxError at the wrong line.
-   *
-   * Safe to strip non-ASCII only from comments because:
-   *  - String literals with non-ASCII would already fail on MicroPython's
-   *    default build (no wide-unicode support on ESP32).
-   *  - Identifiers must be ASCII.
-   */
-  private static _sanitizeForRepl(code: string): string {
-    // 1. Strip UTF-8 BOM if present
-    let s = code.startsWith('\uFEFF') ? code.slice(1) : code;
-    // 2. Normalize line endings to LF
-    s = s.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-    // 3. Replace non-ASCII in line-comments with '?' so the line is preserved
-    s = s.replace(/^([ \t]*#.*)$/gm, (line) => line.replace(/[^\x00-\x7F]/g, '?'));
-    // 4. Replace non-ASCII in inline comments (after code on the same line)
-    s = s.replace(/([ \t]+#.*)$/gm, (comment) => comment.replace(/[^\x00-\x7F]/g, '?'));
-    return s;
-  }
-
-  private _sendCodeInRawRepl(code: string): void {
-    const sanitized = Esp32Bridge._sanitizeForRepl(code);
-    console.log(
-      `[Esp32Bridge:${this.boardId}] Sending ${sanitized.length} bytes to raw REPL + Ctrl+D`,
-    );
-    if (sanitized !== code) {
-      console.log(
-        `[Esp32Bridge:${this.boardId}] Code was sanitized (non-ASCII in comments stripped)`,
-      );
-    }
-    const codeBytes = Array.from(new TextEncoder().encode(sanitized));
-    console.log(
-      `[Esp32Bridge:${this.boardId}] Sending ${codeBytes.length} bytes in chunks to raw REPL`,
-    );
-
-    // The ESP32 UART RX FIFO is 128 bytes in hardware (and in QEMU's emulation).
-    // Sending >128 bytes in one qemu_picsimlab_uart_receive() call overflows the
-    // FIFO — the extra bytes are silently dropped, corrupting the injected code
-    // (e.g. "time.sleep" becomes "ti" causing NameError).
-    // Use ≤64-byte chunks with a 150 ms gap so QEMU drains the FIFO between sends.
-    const CHUNK_SIZE = 64;
-    const CHUNK_DELAY_MS = 150;
-    let offset = 0;
-
-    const sendChunk = () => {
-      if (offset >= codeBytes.length) {
-        // All bytes delivered — wait for QEMU to finish processing the last chunk
-        setTimeout(() => {
-          this.sendSerialBytes([0x04]); // Ctrl+D → compile & execute
-          this._replState = 'idle';
-          console.log(`[Esp32Bridge:${this.boardId}] Ctrl+D sent — code executing`);
-        }, 300);
-        return;
-      }
-      const chunk = codeBytes.slice(offset, offset + CHUNK_SIZE);
-      this.sendSerialBytes(chunk);
-      offset += CHUNK_SIZE;
-      setTimeout(sendChunk, CHUNK_DELAY_MS);
-    };
-    sendChunk();
   }
 
   /**
