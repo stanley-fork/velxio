@@ -194,6 +194,24 @@ export function isKnownBoardKind(kind: string): kind is BoardKind {
   );
 }
 
+/**
+ * The networks the emulated radio broadcasts — all open, no password.
+ *
+ * Both backends beacon the same four (the QEMU fork's esp32_wifi_ap.c and the
+ * in-browser engines' ACCESS_POINTS), and a station can only ever associate
+ * with one of them. Sketches COMPILED in Velxio never have to know: the
+ * compiler rewrites their SSID literal on the way to the emulator. Firmware
+ * that arrives already built does not pass through that step, so its own SSID
+ * is what it hunts for — which is why an otherwise-working binary sits there
+ * failing to connect (issue #270).
+ */
+export const EMULATED_WIFI_SSIDS = [
+  'Velxio-GUEST',
+  'PICSimLabWifi',
+  'Espressif',
+  'MasseyWifi',
+] as const;
+
 export const BOARD_KIND_LABELS: Record<BoardKind, string> = {
   'arduino-uno': 'Arduino Uno',
   'arduino-nano': 'Arduino Nano',

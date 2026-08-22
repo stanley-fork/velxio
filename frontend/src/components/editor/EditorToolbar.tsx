@@ -30,6 +30,7 @@ import { mergeSuggestedLibraries } from '../../utils/libraryManifest';
 import { parseCompileResult, isNoiseBuildLine } from '../../utils/compilationLogger';
 import type { CompilationLog, CompileTarget } from '../../utils/compilationLogger';
 import { exportToWokwiZip, retargetBoardWires } from '../../utils/wokwiZip';
+import { wifiSsidNoteFor } from '../../utils/firmwareWifiNote';
 import { importProjectFile, PROJECT_FILE_ACCEPT } from '../../utils/importProject';
 import { readFirmwareFile } from '../../utils/firmwareLoader';
 import {
@@ -1398,6 +1399,16 @@ export const EditorToolbar = ({
           message: `Note: Detected ${detected} architecture, but current board is ${current}. Loading anyway.`,
         });
       }
+
+      // A binary built elsewhere never passed through our compiler, so its
+      // WiFi SSID was never rewritten for the emulator — and the emulated
+      // radio only ever broadcasts EMULATED_WIFI_SSIDS. The firmware boots
+      // and runs perfectly and then sits there failing to associate, which
+      // reads as "the emulator is broken" (issue #270). Say it once, here,
+      // and only when the binary actually looks like it wants WiFi and names
+      // none of the networks it could reach.
+      const note = await wifiSsidNoteFor(file);
+      if (note) addLog({ timestamp: new Date(), type: 'info', message: note });
 
       if (activeBoardId) {
         compileBoardProgram(activeBoardId, result.program);

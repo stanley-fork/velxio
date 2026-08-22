@@ -27,7 +27,7 @@ import type { I2CDevice } from '../simulation/I2CBusManager';
 import type { RP2040I2CDevice } from '../simulation/RP2040Simulator';
 import type { Wire, WireInProgress, WireEndpoint } from '../types/wire';
 import type { BoardKind, BoardInstance, LanguageMode, WifiStatus } from '../types/board';
-import { BOARD_SUPPORTS_ESPIDF, BOARD_SUPPORTS_MICROPYTHON, isPiBoardKind, isStm32BoardKind } from '../types/board';
+import { BOARD_SUPPORTS_ESPIDF, BOARD_SUPPORTS_MICROPYTHON, EMULATED_WIFI_SSIDS, isPiBoardKind, isStm32BoardKind } from '../types/board';
 import { boardGateDecision, proBoardFeatureName, triggerProUpgradePrompt } from '../lib/proBoardGate';
 import { getSerialTxInterceptor } from '../lib/proHardwareSerial';
 import { calculatePinPosition } from '../utils/pinPositionCalculator';
@@ -2118,7 +2118,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
           const networkStub = wifiOn ? [
             'import network as _vlx_net',
             'import time as _vlx_time',
-            '_VLX_SSIDS = ("Velxio-GUEST", "PICSimLabWifi", "Espressif", "MasseyWifi")',
+            `_VLX_SSIDS = (${EMULATED_WIFI_SSIDS.map((s) => JSON.stringify(s)).join(', ')})`,
             'class _VlxWLAN:',
             '    def __init__(self, *a, **k):',
             '        self._w = _vlx_net.WLAN(*a, **k)',
