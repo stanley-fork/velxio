@@ -125,21 +125,23 @@ const I2C_SENSOR_MAP: Record<
 };
 
 // ── Legacy type aliases (keep external consumers working) ──────────────────
-export type BoardType = 'arduino-uno' | 'arduino-nano' | 'arduino-mega' | 'raspberry-pi-pico';
+/**
+ * The active board's kind.
+ *
+ * This was a four-literal union left over from when those were the only boards
+ * Velxio had, while setBoardType below already handled the whole space by
+ * casting to BoardKind. The stale narrow type is one of the three copies that
+ * made an ESP32 project unimportable (#268) — the zip importer and the import
+ * dispatcher each carried their own. It is BoardKind, which is what it always
+ * was at runtime; the overlay's kinds register into that union too.
+ */
+export type BoardType = BoardKind;
 
-export const BOARD_FQBN: Record<BoardType, string> = {
-  'arduino-uno': 'arduino:avr:uno',
-  'arduino-nano': 'arduino:avr:nano:cpu=atmega328',
-  'arduino-mega': 'arduino:avr:mega',
-  'raspberry-pi-pico': 'rp2040:rp2040:rpipico',
-};
-
-export const BOARD_LABELS: Record<BoardType, string> = {
-  'arduino-uno': 'Arduino Uno',
-  'arduino-nano': 'Arduino Nano',
-  'arduino-mega': 'Arduino Mega 2560',
-  'raspberry-pi-pico': 'Raspberry Pi Pico',
-};
+// BOARD_FQBN and BOARD_LABELS used to live here: two more four-board records
+// from the same era, exported and imported by nothing. The names that are
+// actually used are BOARD_KIND_LABELS (types/board.ts, exhaustive over
+// BoardKind) and the fqbn each board declares. Removed rather than widened —
+// a fifth stale copy of "Velxio has four boards" is not worth keeping.
 
 export const DEFAULT_BOARD_POSITION = { x: 50, y: 50 };
 export const ARDUINO_POSITION = DEFAULT_BOARD_POSITION;

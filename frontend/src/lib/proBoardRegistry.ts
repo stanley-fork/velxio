@@ -84,6 +84,21 @@ export interface ProBoardDef {
   /** pinInfo name -> GPIO number (power/ground pins -> -1). Falls back to the
    *  generic numeric parse when omitted. Return null for "not mine". */
   pinToNumber?: (pinName: string) => number | null;
+  /**
+   * Which pads reach the ADC, and on which channel — the overlay's own version
+   * of the OSS ADC_PIN_MAP.
+   *
+   * That map is keyed by the BoardKind union, which no overlay kind can join,
+   * so the SPICE analog path skipped every pro board outright: a divider or an
+   * LDR wired to one of these boards solved correctly and then had nowhere to
+   * go. Parts that inject directly (a potentiometer through partUtils) were
+   * unaffected, which is why this looked like it worked.
+   *
+   * Names are pad names as they appear in pinInfo. A pad that is analog under a
+   * different silk (the Pimoroni Pico Plus 2 W ties GP26/27/28 to the ADC-
+   * capable GP40/41/42 through 1k) is declared under the name a wire uses.
+   */
+  adcPins?: Array<{ pinName: string; channel: number }>;
   /** In-browser simulator factory (e.g. the RP2350/Hazard3 emulator). The pm
    *  argument is the store's PinManager instance. */
   createSimulator?: (pm: unknown) => ProBoardSimulator;

@@ -10,7 +10,7 @@ import { type VerificationResult } from '../../simulation/verify/circuitVerifier
 import { verifyCircuitFromStore } from '../../simulation/verify/verifyFromStore';
 import { CircuitVerificationModal } from '../simulator/CircuitVerificationModal';
 import type { BoardKind, LanguageMode } from '../../types/board';
-import { BOARD_KIND_FQBN, BOARD_SUPPORTS_ESPIDF, BOARD_SUPPORTS_MICROPYTHON, isPiBoardKind, boardDisplayName } from '../../types/board';
+import { BOARD_KIND_FQBN, BOARD_SUPPORTS_ESPIDF, BOARD_SUPPORTS_MICROPYTHON, isKnownBoardKind, isPiBoardKind, boardDisplayName } from '../../types/board';
 import { compileCode } from '../../services/compilation';
 import { compileOptionsForBoard } from '../../utils/boardCompile';
 import {
@@ -29,7 +29,7 @@ import { InstallLibrariesModal } from '../simulator/InstallLibrariesModal';
 import { mergeSuggestedLibraries } from '../../utils/libraryManifest';
 import { parseCompileResult, isNoiseBuildLine } from '../../utils/compilationLogger';
 import type { CompilationLog, CompileTarget } from '../../utils/compilationLogger';
-import { exportToWokwiZip } from '../../utils/wokwiZip';
+import { exportToWokwiZip, retargetBoardWires } from '../../utils/wokwiZip';
 import { importProjectFile, PROJECT_FILE_ACCEPT } from '../../utils/importProject';
 import { readFirmwareFile } from '../../utils/firmwareLoader';
 import {
@@ -1224,15 +1224,47 @@ export const EditorToolbar = ({
 
   const handleExport = async () => {
     try {
-      const {
-        components,
-        wires,
-        boardPosition,
-        boardType: legacyBoardType,
-      } = useSimulatorStore.getState();
+      const { components, wires, boards, activeBoardId, boardPosition, boardType } =
+        useSimulatorStore.getState();
+      // The board itself, not the flat legacy mirror. `boardType` only tracks
+      // the active board through setActiveBoardId/setBoardType, so a project
+      // hydrated straight into `boards` leaves it stale — and it reports every
+      // Raspberry Pi as an 'arduino-uno' on purpose (see setActiveBoardId).
+      // Exporting from it wrote the wrong board into the file; taking the kind
+      // and the canvas id off one object means they cannot disagree (#268).
+      const board = boards.find((b) => b.id === activeBoardId) ?? boards[0];
       const projectName =
         files.find((f) => f.name.endsWith('.ino'))?.name.replace('.ino', '') || 'velxio-project';
-      await exportToWokwiZip(files, components, wires, legacyBoardType, projectName, boardPosition);
+      // The other boards cannot travel: the format stores one. Their wires are
+      // left out rather than written against this board's part id, which used
+      // to re-attach their components to this chip on import — same pins, wrong
+      // board, nothing said (#268 review).
+      const foreignBoardIds = boards.filter((b) => b.id !== board?.id).map((b) => b.id);
+      const foreign = new Set(foreignBoardIds);
+      const strandedWires = wires.filter(
+        (w) => foreign.has(w.start.componentId) || foreign.has(w.end.componentId),
+      ).length;
+      await exportToWokwiZip(
+        files,
+        components,
+        wires,
+        board?.boardKind ?? boardType,
+        projectName,
+        board ? { x: board.x, y: board.y } : boardPosition,
+        board?.id,
+        board?.libraries ?? [],
+        foreignBoardIds,
+      );
+      if (foreignBoardIds.length > 0) {
+        setMessage({
+          type: 'error',
+          text:
+            `Exported the ${boardDisplayName(board!)} only — a .zip holds one board, so the ` +
+            `other ${foreignBoardIds.length === 1 ? 'board' : `${foreignBoardIds.length} boards`}` +
+            `${strandedWires > 0 ? ` and ${strandedWires} wire${strandedWires === 1 ? '' : 's'}` : ''}` +
+            ` did not travel. Save as .vlx to keep the whole project.`,
+        });
+      }
     } catch (err) {
       setMessage({ type: 'error', text: 'Export failed.' });
     }
@@ -1398,12 +1430,62 @@ export const EditorToolbar = ({
       const { setComponents, setWires, setBoardType, setBoardPosition, stopSimulation } =
         useSimulatorStore.getState();
       stopSimulation();
-      if (result.boardType) setBoardType(result.boardType);
+      // A board kind this build does not know is left alone rather than
+      // coerced. The importer no longer answers 'arduino-uno' for everything
+      // it fails to recognise (#268), so say what happened instead of swapping
+      // the user's board for one the file never mentioned.
+      const importWarnings = [...result.warnings];
+      // Put the board on the canvas. `setBoardType` re-kinds the ACTIVE board,
+      // so on an empty canvas it changed nothing and the project arrived with
+      // its circuit and no chip — the reporter's "the board isn't recognized"
+      // (#268). Adding one when there is none is the other half of the fix.
+      let boardId: string | null = null;
+      if (result.boardType && isKnownBoardKind(result.boardType)) {
+        const sim = useSimulatorStore.getState();
+        const current =
+          sim.boards.find((b) => b.id === sim.activeBoardId) ?? sim.boards[0] ?? null;
+        if (current) {
+          setBoardType(result.boardType);
+          boardId = current.id;
+        } else {
+          boardId = sim.addBoard(
+            result.boardType,
+            result.boardPosition.x,
+            result.boardPosition.y,
+          );
+          // addBoard promotes the first board to active but does not sync the
+          // flat legacy fields; setActiveBoardId is where that happens, and
+          // whatever still reads `boardType` would otherwise see the board
+          // this import just replaced.
+          useSimulatorStore.getState().setActiveBoardId(boardId);
+        }
+      } else if (result.boardType) {
+        // Nothing to swap the board for, so the circuit lands on whatever is
+        // already there — and its wires have to be told, or the message would
+        // be describing something that did not happen.
+        const sim = useSimulatorStore.getState();
+        boardId = (sim.boards.find((b) => b.id === sim.activeBoardId) ?? sim.boards[0])?.id ?? null;
+        importWarnings.push(
+          boardId
+            ? `This project is for a "${result.boardType}" board, which this build does not have. The circuit was imported onto the current board.`
+            : `This project is for a "${result.boardType}" board, which this build does not have, and there is no board on the canvas to put the circuit on.`,
+        );
+      }
       setBoardPosition(result.boardPosition);
       setComponents(result.components);
-      setWires(result.wires);
+      // The wires name the board by its kind; the board on the canvas may
+      // answer to something else.
+      setWires(
+        boardId && result.boardType
+          ? retargetBoardWires(result.wires, result.boardType, boardId)
+          : result.wires,
+      );
       if (result.files.length > 0) loadFiles(result.files);
-      setMessage({ type: 'success', text: `Imported ${file.name}` });
+      setMessage(
+        importWarnings.length > 0
+          ? { type: 'error', text: `Imported ${file.name} — ${importWarnings.join(' ')}` }
+          : { type: 'success', text: `Imported ${file.name}` },
+      );
       if (result.libraries.length > 0) {
         setPendingLibraries(result.libraries);
         setInstallModalOpen(true);

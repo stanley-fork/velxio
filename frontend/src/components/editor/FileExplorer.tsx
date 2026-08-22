@@ -12,8 +12,9 @@ import {
   DEFAULT_CHIP_PROGRAM_C,
 } from '../../services/romCompileService';
 import type { BoardKind } from '../../types/board';
-import { boardDisplayName, isPiBoardKind } from '../../types/board';
+import { boardDisplayName, isKnownBoardKind, isPiBoardKind } from '../../types/board';
 import { importProjectFile, PROJECT_FILE_ACCEPT } from '../../utils/importProject';
+import { retargetBoardWires } from '../../utils/wokwiZip';
 import { showMessageDialog, showConfirmDialog } from '../../store/useMessageDialogStore';
 import { registerEditorCommand } from '../../lib/editorCommands';
 import './FileExplorer.css';
@@ -423,10 +424,44 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({ onSaveClick, onNewCl
         const { setComponents, setWires, setBoardType, setBoardPosition, stopSimulation } =
           useSimulatorStore.getState();
         stopSimulation();
-        if (result.boardType) setBoardType(result.boardType);
+        // Same rule as the toolbar's importer: an unknown board kind is left
+        // alone, not coerced into an Uno (#268).
+        // Same as the toolbar's importer: put the board on the canvas (an
+        // empty one had nothing for setBoardType to re-kind, so the project
+        // arrived without its chip — #268) and never coerce an unknown kind.
+        let boardId: string | null = null;
+        if (result.boardType && isKnownBoardKind(result.boardType)) {
+          const sim = useSimulatorStore.getState();
+          const current =
+            sim.boards.find((b) => b.id === sim.activeBoardId) ?? sim.boards[0] ?? null;
+          if (current) {
+            setBoardType(result.boardType);
+            boardId = current.id;
+          } else {
+            boardId = sim.addBoard(
+              result.boardType,
+              result.boardPosition.x,
+              result.boardPosition.y,
+            );
+            // addBoard promotes the first board to active but does not sync the
+            // flat legacy fields; setActiveBoardId is where that happens, and
+            // whatever still reads `boardType` would otherwise see the board
+            // this import just replaced.
+            useSimulatorStore.getState().setActiveBoardId(boardId);
+          }
+        } else if (result.boardType) {
+          console.warn(
+            `[FileExplorer] Project is for a "${result.boardType}" board, which this build does not have — kept the current board.`,
+          );
+        }
+        for (const w of result.warnings) console.warn(`[FileExplorer] ${w}`);
         setBoardPosition(result.boardPosition);
         setComponents(result.components);
-        setWires(result.wires);
+        setWires(
+          boardId && result.boardType
+            ? retargetBoardWires(result.wires, result.boardType, boardId)
+            : result.wires,
+        );
         if (result.files.length > 0) loadFiles(result.files);
         if (result.libraries.length > 0) {
           console.warn(

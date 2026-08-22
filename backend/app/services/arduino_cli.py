@@ -55,6 +55,41 @@ _NETWORK_MARKERS = (
 )
 
 
+
+# ── Compiler diagnostics that need a Velxio answer, not the IDE's ────────────
+# arduino-pico gates its Bluetooth libraries behind a static_assert whose text
+# tells the user to flip "Tools->IP/Bluetooth Stack" — a menu that exists in the
+# Arduino IDE and not here. Left alone it reads like a setting we forgot to
+# expose. The truth is simpler and worth saying plainly: the CYW43439/RM2's
+# Bluetooth side is not emulated, only its WiFi side is, so there is nothing to
+# enable.
+_BT_ASSERT_MARKERS = ("_needsbt.h", "This library needs Bluetooth enabled")
+
+_BT_NOT_EMULATED_NOTE = (
+    "\n"
+    "Velxio: Bluetooth is not emulated on this board. The CYW43439 (the RM2\n"
+    "module on the Pimoroni Pico Plus 2 W, and the same chip on the Pico W)\n"
+    "is emulated for WiFi only — association, DHCP, DNS and real HTTP all\n"
+    "work — but its Bluetooth controller is not modelled, so there is no\n"
+    "'IP/Bluetooth Stack' setting to turn on here. Sketches that use WiFi.h,\n"
+    "HTTPClient or WiFiServer compile and run.\n"
+)
+
+
+def annotate_build_stderr(stderr: str | None) -> str | None:
+    """Append a Velxio-authored note to compiler output we know is misleading.
+
+    Kept separate from humanize_cli_error: that one rewrites arduino-cli's own
+    failures, this one leaves the compiler's diagnostics intact and adds context
+    underneath, because the developer still needs the real error text.
+    """
+    if not stderr:
+        return stderr
+    if any(marker in stderr for marker in _BT_ASSERT_MARKERS):
+        return stderr.rstrip() + "\n" + _BT_NOT_EMULATED_NOTE
+    return stderr
+
+
 def humanize_cli_error(raw: str | None, *, action: str = "run arduino-cli") -> str:
     """One readable sentence for an arduino-cli failure.
 
@@ -688,7 +723,7 @@ class ArduinoCLIService:
                         "success": False,
                         "error": "Compilation failed",
                         "stdout": result.stdout,
-                        "stderr": result.stderr
+                        "stderr": annotate_build_stderr(result.stderr),
                     }
 
             except Exception as e:

@@ -1,3 +1,5 @@
+import { getProBoard } from '../lib/proBoardRegistry';
+
 export type BoardKind =
   | 'arduino-uno'
   | 'arduino-nano'
@@ -169,6 +171,27 @@ export interface BoardInstance {
   // boards in the same project can use different (even conflicting) libraries
   // without clashing. Undefined for pre-feature boards (-> legacy scan-all).
   libraries?: string[];
+}
+
+/**
+ * Is this string a board kind Velxio can actually put on a canvas?
+ *
+ * BOARD_KIND_LABELS is exhaustive over the OSS union by construction (the
+ * compiler enforces the Record), and the overlay's kinds live in the pro
+ * registry, so the two together are the whole space. Callers that receive a
+ * kind from OUTSIDE the app — an imported project file, a URL, a saved
+ * document — need this: importing a diagram used to answer 'arduino-uno' for
+ * anything it did not recognise, and the user got an Uno with no explanation
+ * (issue #268).
+ */
+export function isKnownBoardKind(kind: string): kind is BoardKind {
+  // hasOwnProperty, not `in`: `in` walks the prototype chain, so 'toString',
+  // 'constructor' and '__proto__' would all pass — and the strings reaching
+  // here come from files people send each other.
+  return (
+    Object.prototype.hasOwnProperty.call(BOARD_KIND_LABELS, kind) ||
+    getProBoard(kind) !== undefined
+  );
 }
 
 export const BOARD_KIND_LABELS: Record<BoardKind, string> = {
