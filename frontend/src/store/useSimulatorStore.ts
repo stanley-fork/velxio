@@ -66,6 +66,7 @@ import {
   setInterconnectRuntime,
 } from '../simulation/Interconnect';
 import { SENSOR_CONTROLS, getSensorControl } from '../simulation/sensorControlConfig';
+import { traceBoardGpio } from '../simulation/PinTrace';
 import { dispatchSensorUpdate } from '../simulation/SensorUpdateRegistry';
 
 // ── Sensor pre-registration ──────────────────────────────────────────────────
@@ -2384,58 +2385,39 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         // has them ready before the firmware starts executing.
         const esp32Bridge = getEsp32Bridge(boardId);
         if (esp32Bridge) {
-          const { components, wires } = get();
+          const traceState = get();
+          const { components } = traceState;
           const sensors: Array<Record<string, unknown>> = [];
           for (const comp of components) {
             const sensorDef = SENSOR_COMPONENT_MAP[comp.metadataId];
             if (!sensorDef) continue;
-            // Find the wire connecting this component's data pin to the board
-            for (const w of wires) {
-              const compEndpoint =
-                w.start.componentId === comp.id && w.start.pinName === sensorDef.dataPinName
-                  ? w.start
-                  : w.end.componentId === comp.id && w.end.pinName === sensorDef.dataPinName
-                    ? w.end
-                    : null;
-              if (!compEndpoint) continue;
-              const boardEndpoint = compEndpoint === w.start ? w.end : w.start;
-              if (!isBoardComponent(boardEndpoint.componentId)) continue;
-              // Resolve GPIO pin number
-              const gpioPin = boardPinToNumber(board.boardKind, boardEndpoint.pinName);
-              if (gpioPin === null || gpioPin < 0) continue;
-              // Collect sensor properties from the component
-              const props: Record<string, unknown> = {
-                sensor_type: sensorDef.sensorType,
-                pin: gpioPin,
-              };
-              for (const key of sensorDef.propertyKeys) {
-                const val = comp.properties[key];
-                if (val !== undefined) props[key] = typeof val === 'string' ? parseFloat(val) : val;
-              }
-              // Resolve extra pins (e.g. echo_pin for HC-SR04) from wires
-              if (sensorDef.extraPins) {
-                for (const [propName, compPinName] of Object.entries(sensorDef.extraPins)) {
-                  for (const ew of wires) {
-                    const epComp =
-                      ew.start.componentId === comp.id && ew.start.pinName === compPinName
-                        ? ew.start
-                        : ew.end.componentId === comp.id && ew.end.pinName === compPinName
-                          ? ew.end
-                          : null;
-                    if (!epComp) continue;
-                    const epBoard = epComp === ew.start ? ew.end : ew.start;
-                    if (!isBoardComponent(epBoard.componentId)) continue;
-                    const extraGpio = boardPinToNumber(board.boardKind, epBoard.pinName);
-                    if (extraGpio !== null && extraGpio >= 0) {
-                      props[propName] = extraGpio;
-                    }
-                    break;
-                  }
-                }
-              }
-              sensors.push(props);
-              break; // only one data pin per sensor
+            // Resolved with the SAME wire walk the parts use, not by reading
+            // one wire's far end. A sensor pin reaches the board through a
+            // breadboard strip or a level-shifting divider just as truly as
+            // through a jumper landing on the pad, and this entry REPLACES the
+            // one the part registered (setSensors is keyed by pin) — so every
+            // pin this fails to resolve is silently lost. That is what left an
+            // HC-SR04 behind a 1k/2k2 divider with no echo pin at all: the
+            // backend fell back to TRIG+1 and pulsed a GPIO nobody was reading.
+            const gpioPin = traceBoardGpio(traceState, comp.id, sensorDef.dataPinName, boardId);
+            if (gpioPin === null) continue;
+            // Collect sensor properties from the component
+            const props: Record<string, unknown> = {
+              sensor_type: sensorDef.sensorType,
+              pin: gpioPin,
+            };
+            for (const key of sensorDef.propertyKeys) {
+              const val = comp.properties[key];
+              if (val !== undefined) props[key] = typeof val === 'string' ? parseFloat(val) : val;
             }
+            // Extra pins (e.g. echo_pin for HC-SR04) resolve the same way
+            if (sensorDef.extraPins) {
+              for (const [propName, compPinName] of Object.entries(sensorDef.extraPins)) {
+                const extraGpio = traceBoardGpio(traceState, comp.id, compPinName, boardId);
+                if (extraGpio !== null) props[propName] = extraGpio;
+              }
+            }
+            sensors.push(props);
           }
 
           // Pre-register I2C sensors (virtual pin = 200 + i2c_addr, no wire resolution needed)

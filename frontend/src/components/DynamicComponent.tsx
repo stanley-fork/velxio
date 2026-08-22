@@ -24,23 +24,18 @@ import { useEditorStore } from '../store/useEditorStore';
 import { buildProjectSdImage, decodeSdFiles } from '../utils/sdCardFiles';
 import { PartSimulationRegistry } from '../simulation/parts';
 import { dispatchSensorUpdate } from '../simulation/SensorUpdateRegistry';
-import { isBoardComponent, boardPinToNumber } from '../utils/boardPinMapping';
-import { isBoardSeated } from '../utils/socketSnap';
 import { isPiBoardKind } from '../types/board';
 import { isKeyBindable, formatKeyLabel } from '../utils/keyButtonBindings';
 import {
   createDefaultPinResolver,
   createSpiceResolvedPinResolver,
   configFromLogicFamily,
-  isActiveDevice,
   type PinResolver,
 } from '../simulation/PinResolver';
 import { BOARD_PIN_GROUPS } from '../simulation/spice/boardPinGroups';
-import { syntheticChipPin } from '../simulation/customChips/syntheticPins';
-import { resolveChipNetKey } from '../simulation/customChips/chipNets';
+import { traceDetailed } from '../simulation/PinTrace';
 import { getMixedModeScheduler } from '../simulation/spice/MixedModeScheduler';
 import { getBoardLogicFamily } from '../simulation/LogicFamilies';
-import { breadboardGroupKey } from '../utils/breadboardNets';
 
 // Side-effect imports: register every web component we'll create at runtime.
 // `@wokwi/elements` covers the upstream catalog; `../velxio-elements` adds
@@ -50,256 +45,10 @@ import '@wokwi/elements';
 import '../velxio-elements';
 import './velxio-components/Ssd1306I2cElement'; // registers velxio-ssd1306-i2c-4pin (4-pin I2C OLED)
 
-// Map metadataId → [pinA, pinB] for 2-terminal passives.
-// "Tracing through" means: if the caller arrived on pinA, continue from pinB
-// (and vice-versa).
-//
-// NOTE: diodes / transistors / op-amps are NOT traced through as passives —
-// they have polarity / Vf / non-linear behaviour that the digital layer
-// cannot interpret as "same pin". BJTs are an explicit shortcut for the
-// canonical "Arduino digital pin controls a load via transistor" pattern so
-// 7-segment multiplex circuits with BJT digit drivers still resolve.
-const PASSIVE_PIN_PAIRS_BASE: Record<string, [string, string]> = {
-  resistor: ['1', '2'],
-  'resistor-us': ['1', '2'],
-  capacitor: ['1', '2'],
-  'capacitor-electrolytic': ['+', '−'],
-  inductor: ['1', '2'],
-  'analog-resistor': ['A', 'B'],
-  'analog-capacitor': ['A', 'B'],
-  'analog-inductor': ['A', 'B'],
-  'bjt-2n2222': ['C', 'B'],
-  'bjt-bc547': ['C', 'B'],
-  'bjt-2n3055': ['C', 'B'],
-  'bjt-2n3906': ['C', 'B'],
-  'bjt-bc557': ['C', 'B'],
-};
-// Preset variants of the generic passives share their parent's tag and pin
-// layout. Mirrors the PASSIVE_PRESETS map in spice/componentToSpice.ts.
-const PRESET_TO_BASE: Record<string, string> = {
-  'resistor-220': 'resistor',
-  'resistor-330': 'resistor',
-  'resistor-470': 'resistor',
-  'resistor-1k': 'resistor',
-  'resistor-2k2': 'resistor',
-  'resistor-4k7': 'resistor',
-  'resistor-10k': 'resistor',
-  'resistor-22k': 'resistor',
-  'resistor-47k': 'resistor',
-  'resistor-100k': 'resistor',
-  'resistor-1m': 'resistor',
-  'cap-10p': 'capacitor',
-  'cap-22p': 'capacitor',
-  'cap-100p': 'capacitor',
-  'cap-1n': 'capacitor',
-  'cap-10n': 'capacitor',
-  'cap-100n': 'capacitor',
-  'cap-1u': 'capacitor',
-  'cap-elec-1u': 'capacitor-electrolytic',
-  'cap-elec-10u': 'capacitor-electrolytic',
-  'cap-elec-47u': 'capacitor-electrolytic',
-  'cap-elec-100u': 'capacitor-electrolytic',
-  'cap-elec-470u': 'capacitor-electrolytic',
-  'cap-elec-1000u': 'capacitor-electrolytic',
-  'ind-100u': 'inductor',
-  'ind-1m': 'inductor',
-  'ind-10m': 'inductor',
-};
-const PASSIVE_PIN_PAIRS: Record<string, [string, string]> = {
-  ...PASSIVE_PIN_PAIRS_BASE,
-};
-for (const [preset, base] of Object.entries(PRESET_TO_BASE)) {
-  PASSIVE_PIN_PAIRS[preset] = PASSIVE_PIN_PAIRS_BASE[base];
-}
-
-type TraceState = ReturnType<typeof useSimulatorStore.getState>;
-
-// Custom-chip output pins get stable synthetic pin numbers from
-// simulation/customChips/syntheticPins so the chip is a first-class pin source.
-
-// Depth-limited BFS: trace from (fromId, fromPin) through wires, traversing
-// through passive components to reach a board pin.  Returns the arduino pin
-// plus a `crossedActiveDevice` flag so the resolver factory can decide
-// between digital fast-path and SPICE-resolved per-pin.
-//
-// A real board pin always wins (digital GPIO semantics are unchanged). Only
-// when NO board pin is reachable do we fall back to a custom-chip pin on the
-// net — either a neighbour chip pin, or (when the trace itself started at a
-// chip pin) the starting chip pin — resolving it to its synthetic number.
-//
-// Lifted to module scope (was inside getArduinoPin) so that getPinResolver
-// can call it too — the previous nested-scope version caused a runtime
-// ReferenceError "traceDetailed is not defined" on the simulator page.
-
-/**
- * Resolve a component pad through a SEATED board rather than a wire.
- *
- * Sockets are a real electrical connection with nothing to draw: the board's
- * pads sit on the component's pads. `boardSocket` (read off the element, the
- * rule-6a way) says the component is a socket; isBoardSeated says a board is
- * actually in it; and the shared pad NAME is the contract that makes the two
- * grids one net — which is exactly why a socket's pinInfo uses the board's own
- * names. Returns null for anything that is not a seated socket pad.
- */
-function traceThroughSocket(
-  state: TraceState,
-  componentId: string,
-  pinName: string,
-): { pin: number; boardId: string } | null {
-  const el = document.getElementById(componentId) as
-    | (HTMLElement & { boardSocket?: { anchorPin: string; accepts: string[] } })
-    | null;
-  const sock = el?.boardSocket;
-  if (!sock || !Array.isArray(sock.accepts)) return null;
-  for (const b of state.boards) {
-    if (!sock.accepts.some((prefix) => b.boardKind.startsWith(prefix))) continue;
-    if (!isBoardSeated(b.id, b.boardKind, b.x, b.y, state.components)) continue;
-    const pin = boardPinToNumber(b.boardKind, pinName);
-    if (pin !== null) return { pin, boardId: b.id };
-  }
-  return null;
-}
-
-export function traceDetailed(
-  state: TraceState,
-  fromId: string,
-  fromPin: string,
-  depth: number,
-  activeSeen = false,
-): { arduinoPin: number | null; crossedActiveDevice: boolean; boardId?: string } {
-  if (depth > 6) return { arduinoPin: null, crossedActiveDevice: activeSeen };
-
-  const wires = state.wires.filter(
-    (w) =>
-      (w.start.componentId === fromId && w.start.pinName === fromPin) ||
-      (w.end.componentId === fromId && w.end.pinName === fromPin),
-  );
-
-  // A board SEATED on a socket component is connected without any wire — that
-  // is what seating means, and it is how the hardware ships: a XIAO pushed
-  // into a shield's header, a Pi HAT dropped onto the 40-pin. So when this
-  // component declares a socket (boardSocket, the same contract the magnet
-  // reads) and a board is seated on it, a pad resolves to the SAME-NAMED pin
-  // of that board. Without this hop a seated shield's buttons and LEDs were
-  // dead until the user drew wires that the real stack does not have.
-  const socketPin = traceThroughSocket(state, fromId, fromPin);
-  if (socketPin !== null) {
-    return { arduinoPin: socketPin.pin, crossedActiveDevice: activeSeen, boardId: socketPin.boardId };
-  }
-
-  // Remember a custom-chip neighbour on this net (if any) as a fallback —
-  // a real board pin found in any branch still takes priority over it.
-  let chipNeighbour: { id: string; pin: string } | null = null;
-
-  for (const w of wires) {
-    const selfEp =
-      w.start.componentId === fromId && w.start.pinName === fromPin ? w.start : w.end;
-    const otherEp = selfEp === w.start ? w.end : w.start;
-
-    // A board endpoint is recognised by the LIVE boards list first.
-    // `isBoardComponent` matches static id prefixes ('arduino-uno', …), which
-    // only covers the default board — every board added at runtime (the agent
-    // mints UUID ids) failed the check, so tracing treated it as an unknown
-    // component and returned null. Symptom: an ESP32 clock whose QEMU was
-    // emitting hundreds of GPIO edges/second at a display that stayed dark,
-    // because no resolver ever attached.
-    const boardEp = state.boards.find((b) => b.id === otherEp.componentId);
-    if (boardEp || isBoardComponent(otherEp.componentId)) {
-      const boardKind = boardEp?.boardKind ?? otherEp.componentId;
-      const pin = boardPinToNumber(boardKind, otherEp.pinName);
-      // The board id travels with the pin: a QEMU-Linux board has no MCU
-      // simulator, so an input part needs to know WHICH board's bridge to
-      // push the level into (see the pi-aware simulator below).
-      if (pin !== null)
-        return {
-          arduinoPin: pin,
-          crossedActiveDevice: activeSeen,
-          boardId: boardEp?.id ?? otherEp.componentId,
-        };
-    } else {
-      const comp = state.components.find((c) => c.id === otherEp.componentId);
-      if (!chipNeighbour && comp?.metadataId === 'custom-chip') {
-        chipNeighbour = { id: otherEp.componentId, pin: otherEp.pinName };
-      }
-      const pair = comp && PASSIVE_PIN_PAIRS[comp.metadataId];
-      if (pair) {
-        const [p1, p2] = pair;
-        const otherPin = otherEp.pinName === p1 ? p2 : p1;
-        const nowActive =
-          activeSeen || (comp ? isActiveDevice(comp.metadataId) : false);
-        const result = traceDetailed(
-          state,
-          otherEp.componentId,
-          otherPin,
-          depth + 1,
-          nowActive,
-        );
-        if (result.arduinoPin !== null) return result;
-      }
-
-      // Breadboards join N holes per internal group (5-hole strip / power
-      // rail), which the 2-terminal PASSIVE_PIN_PAIRS map can't express.
-      // Continue the trace from every OTHER wired hole in the same group.
-      //
-      // Exclusion is by INCOMING WIRE, not by hole name: two wires may
-      // legitimately share one hole (a seated pin plus a jumper landing in
-      // that same hole — the agent bridges strips straight into the seat
-      // hole). Excluding the arrival hole made those stacked connections
-      // invisible: an ESP32 clock with QEMU firing hundreds of GPIO edges
-      // per second sat dark because every segment's bridge landed on its
-      // resistor's own seat hole and the trace dead-ended there.
-      const bbGroup = comp && breadboardGroupKey(comp.metadataId, otherEp.pinName);
-      if (bbGroup && comp) {
-        const groupPins = new Set<string>();
-        for (const gw of state.wires) {
-          if (gw.id === w.id) continue; // never bounce back on the same wire
-          for (const ep of [gw.start, gw.end]) {
-            if (
-              ep.componentId === comp.id &&
-              breadboardGroupKey(comp.metadataId, ep.pinName) === bbGroup
-            ) {
-              groupPins.add(ep.pinName);
-            }
-          }
-        }
-        for (const groupPin of groupPins) {
-          const result = traceDetailed(state, comp.id, groupPin, depth + 1, activeSeen);
-          if (result.arduinoPin !== null) return result;
-        }
-      }
-    }
-  }
-
-  // No board pin reachable. Multi-chip digital bus (chipbus flag, Phase 0 of
-  // project/multichip-bus/): when this net has two or more chip endpoints and
-  // no board pin, collapse every endpoint onto ONE net-canonical synthetic key
-  // so a write on one chip is visible to another through the synchronous
-  // PinManager fan-out (fixes root cause A: per-endpoint keys never matching).
-  // resolveChipNetKey returns null when the flag is off, when a board owns the
-  // net, or when there is a single chip endpoint — so the chip-to-component
-  // rules below (2 and 3) are left exactly as-is. Scoped to depth 0 (the
-  // starting chip pin); the key is net-bound, so a pin flipping INPUT<->OUTPUT
-  // keeps the same key with no re-trace.
-  if (depth === 0) {
-    const netKey = resolveChipNetKey(state, fromId, fromPin);
-    if (netKey !== null) {
-      return { arduinoPin: netKey, crossedActiveDevice: activeSeen };
-    }
-  }
-
-  // No board pin reachable. Fall back to a custom-chip pin on this net so the
-  // chip can still drive / read it through the synthetic-pin PinManager key.
-  if (chipNeighbour) {
-    return {
-      arduinoPin: syntheticChipPin(chipNeighbour.id, chipNeighbour.pin),
-      crossedActiveDevice: activeSeen,
-    };
-  }
-  if (depth === 0 && state.components.find((c) => c.id === fromId)?.metadataId === 'custom-chip') {
-    return { arduinoPin: syntheticChipPin(fromId, fromPin), crossedActiveDevice: activeSeen };
-  }
-  return { arduinoPin: null, crossedActiveDevice: activeSeen };
-}
+// The wire-graph walk that answers "which board pin owns this component pin"
+// lives in simulation/PinTrace so the store can ask the SAME question when it
+// pre-registers backend sensors. Re-exported here: it was this module's API.
+export { traceDetailed };
 
 interface DynamicComponentProps {
   id: string;

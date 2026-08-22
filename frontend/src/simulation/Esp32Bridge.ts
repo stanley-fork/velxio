@@ -653,8 +653,31 @@ export class Esp32Bridge {
     this._send({ type: 'esp32_serial_input', data: { bytes, uart } });
   }
 
+  /**
+   * True when a backend-emulated single-wire sensor OWNS this pad — its data
+   * line, or an HC-SR04's ECHO. The QEMU worker drives those itself, and a
+   * host-injected level outranks it, so whoever pushes one silences the sensor.
+   *
+   * The caller that makes this matter is connectDigitalInputsToMcu,
+   * thresholding the solved SPICE node. Its `sourcedNets` gate is meant to
+   * leave part-managed pins alone, but a net stops being "unsourced" the
+   * moment a real component sits on it: an HC-SR04 whose ECHO reaches the pad
+   * through the 1k/2k2 divider a real 5 V sensor needs solves at ~0 V (nothing
+   * models the sensor's output) and pinned the echo pad LOW between trigger
+   * and reply — pulseIn() then timed out forever while the worker was pulsing
+   * the pin correctly. Same shape as the in-browser engines' ownsPin guard.
+   */
+  private sensorOwnsPin(gpioPin: number): boolean {
+    for (const s of this._pendingSensors) {
+      if (s['pin'] === gpioPin) return true;
+      if (s['echo_pin'] === gpioPin) return true;
+    }
+    return false;
+  }
+
   /** Drive a GPIO pin from an external source (e.g. connected Arduino) */
   sendPinEvent(gpioPin: number, state: boolean): void {
+    if (this.sensorOwnsPin(gpioPin)) return;
     this._send({ type: 'esp32_gpio_in', data: { pin: gpioPin, state: state ? 1 : 0 } });
   }
 
