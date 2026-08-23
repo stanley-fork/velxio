@@ -99,6 +99,25 @@ export interface ProBoardDef {
    * capable GP40/41/42 through 1k) is declared under the name a wire uses.
    */
   adcPins?: Array<{ pinName: string; channel: number }>;
+  /**
+   * Supply pads and logic voltage, for the SPICE netlist — the overlay's
+   * version of BOARD_PIN_GROUPS, which is keyed by the BoardKind union and so
+   * can never name a pro board.
+   *
+   * Without it a board falls back to that table's `default`: 5 V, ground pads
+   * called GND/GND.1/GND.2, supply pads called 5V/VCC. For a 3.3 V board with a
+   * "3V3" pad that is wrong twice over, and silently — the rail is simply
+   * solved at 5 V, so every divider, pull-up and LED current on the board is
+   * off by 1.5x.
+   *
+   * Shape matches BoardPinGroup: { vcc, gnd[], vcc_pins[], aux? }.
+   */
+  power?: {
+    vcc: number;
+    gnd: string[];
+    vcc_pins: string[];
+    aux?: { volts: number; pins: string[] };
+  };
   /** In-browser simulator factory (e.g. the RP2350/Hazard3 emulator). The pm
    *  argument is the store's PinManager instance. */
   createSimulator?: (pm: unknown) => ProBoardSimulator;

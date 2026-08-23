@@ -34,6 +34,7 @@ import {
 } from '../simulation/PinResolver';
 import { BOARD_PIN_GROUPS } from '../simulation/spice/boardPinGroups';
 import { traceDetailed } from '../simulation/PinTrace';
+import { withPartPinOwnership, releasePartPins } from '../simulation/partPinOwnership';
 import { getMixedModeScheduler } from '../simulation/spice/MixedModeScheduler';
 import { getBoardLogicFamily } from '../simulation/LogicFamilies';
 
@@ -638,9 +639,22 @@ export const DynamicComponent: React.FC<DynamicComponentProps> = ({
         }
       }
 
+      // Every pin this part drives itself becomes ITS pin for as long as it is
+      // attached, so the SPICE-threshold input path leaves that line alone (see
+      // simulation/partPinOwnership). Claims are implicit — a part that never
+      // drives a pin never takes one — and released in the cleanup below, so a
+      // rewire or an unmount hands the pin straight back to the circuit.
+      releasePartPins(id);
+      const ownedSimulator = withPartPinOwnership(
+        stubSimulator,
+        piBoardId ?? wiredBoardId ?? useSimulatorStore.getState().activeBoardId ?? null,
+        id,
+        metadata.id,
+      );
+
       cleanupSimulationEvents = logic.attachEvents(
         el,
-        stubSimulator,
+        ownedSimulator,
         getArduinoPin,
         id,
         getPinResolver,
@@ -649,6 +663,7 @@ export const DynamicComponent: React.FC<DynamicComponentProps> = ({
 
     return () => {
       if (cleanupSimulationEvents) cleanupSimulationEvents();
+      releasePartPins(id);
 
       el.removeEventListener('button-press', onButtonPress);
       el.removeEventListener('button-release', onButtonRelease);

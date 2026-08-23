@@ -306,6 +306,10 @@ export function boardPinToNumber(boardId: string, pinName: string): number | nul
   }
 
   if (boardId === 'arduino-mega') {
+    // Supply pads BEFORE the numeric parse, or '5V' reads as D5 and '3.3V' as
+    // D3 — a wire to the supply would drive a real pin, and a walk looking for
+    // "what drives this net" would stop at a rail believing it found a GPIO.
+    if (POWER_PAD_RE.test(pinName)) return -1;
     // Digital pins D0–D53 parsed numerically
     const num = parseInt(pinName, 10);
     if (!isNaN(num) && num >= 0 && num <= 53) return num;
@@ -362,6 +366,8 @@ export function boardPinToNumber(boardId: string, pinName: string): number | nul
 
   // Pi Pico W — same GPIO mapping as Raspberry Pi Pico (GP0-GP28 → 0-28)
   if (boardId === 'pi-pico-w') {
+    // Same trap as the Mega below/above: '3V3' would parse as 3 and '5V' as 5.
+    if (POWER_PAD_RE.test(pinName)) return -1;
     if (pinName.startsWith('GP')) {
       const n = parseInt(pinName.substring(2), 10);
       if (!isNaN(n)) return n;

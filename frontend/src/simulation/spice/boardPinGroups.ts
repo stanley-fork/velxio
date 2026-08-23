@@ -6,6 +6,7 @@
  * Extend this table as new boards are added.
  */
 import type { BoardKind } from '../../types/board';
+import { getProBoard } from '../../lib/proBoardRegistry';
 
 export interface BoardPinGroup {
   /** Supply voltage (V). */
@@ -155,3 +156,24 @@ export const BOARD_PIN_GROUPS: Record<AllBoardKinds, BoardPinGroup> = {
     aux: { volts: 5, pins: ['5V'] },
   },
 };
+
+/**
+ * The pin classification for a board, including boards this table cannot name.
+ *
+ * BOARD_PIN_GROUPS is keyed by the BoardKind union, so an overlay board — whose
+ * kind is a runtime string — could never appear in it and fell through to
+ * `default`: a 5 V part whose only supply pad is called "5V". Every RP2350 and
+ * ESP32-family board registered by the overlay was therefore solved at the
+ * wrong rail. It shows up the moment anything analog is wired: a divider off
+ * the 3V3 pad of a Pimoroni Pico Plus 2 W solved at 5 V, so a potentiometer at
+ * half travel read 2.50 V instead of 1.65 V.
+ *
+ * A pro board declares its own supply pads through ProBoardDef.power.
+ */
+export function boardPinGroupFor(kind: string): BoardPinGroup {
+  const known = BOARD_PIN_GROUPS[kind as AllBoardKinds];
+  if (known) return known;
+  const pro = getProBoard(kind)?.power;
+  if (pro) return pro;
+  return BOARD_PIN_GROUPS.default;
+}

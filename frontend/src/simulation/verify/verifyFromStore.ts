@@ -10,7 +10,7 @@
 
 import { useSimulatorStore } from '../../store/useSimulatorStore';
 import { buildInputFromStore } from '../spice/storeAdapter';
-import { BOARD_PIN_GROUPS } from '../spice/boardPinGroups';
+import { boardPinGroupFor } from '../spice/boardPinGroups';
 import type { PinSourceState } from '../spice/types';
 import { verifyCircuit, type VerificationResult } from './circuitVerifier';
 
@@ -47,7 +47,7 @@ export async function verifyCircuitFromStore(): Promise<VerificationResult | nul
         // current and doesn't trip overcurrent / overpower. A circuit
         // that would actually fault under HIGH is flagged correctly.
         const pinStates: Record<string, PinSourceState> = {};
-        const group = BOARD_PIN_GROUPS[b.boardKind] ?? BOARD_PIN_GROUPS.default;
+        const group = boardPinGroupFor(b.boardKind);
         const wiredPinNames = new Set<string>();
         for (const w of sim.wires) {
           if (w.start.componentId === b.id) wiredPinNames.add(w.start.pinName);

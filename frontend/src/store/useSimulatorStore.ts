@@ -41,7 +41,6 @@ import { useEditorStore } from './useEditorStore';
 import { fingerprintSources } from '../utils/sourceFingerprint';
 import { useVfsStore } from './useVfsStore';
 import { buildProjectSdImage, decodeSdFiles, bytesToB64 } from '../utils/sdCardFiles';
-import { boardPinToNumber, isBoardComponent } from '../utils/boardPinMapping';
 import {
   autoWireColor,
   DEFAULT_WIRE_COLOR,
@@ -66,30 +65,16 @@ import {
   setInterconnectRuntime,
 } from '../simulation/Interconnect';
 import { SENSOR_CONTROLS, getSensorControl } from '../simulation/sensorControlConfig';
+import { SINGLE_WIRE_SENSOR_MODELS } from '../simulation/sensorModels';
 import { traceBoardGpio } from '../simulation/PinTrace';
 import { dispatchSensorUpdate } from '../simulation/SensorUpdateRegistry';
 
 // ── Sensor pre-registration ──────────────────────────────────────────────────
-// Maps component metadataId → { sensorType, dataPinName, propertyKeys }
-// Used to pre-register sensors in the start_esp32 payload so the QEMU worker
-// has them ready before the firmware starts executing (prevents race conditions).
-const SENSOR_COMPONENT_MAP: Record<
-  string,
-  {
-    sensorType: string;
-    dataPinName: string;
-    propertyKeys: string[];
-    extraPins?: Record<string, string>; // extra pin mappings: prop name → component pin name
-  }
-> = {
-  dht22: { sensorType: 'dht22', dataPinName: 'SDA', propertyKeys: ['temperature', 'humidity'] },
-  'hc-sr04': {
-    sensorType: 'hc-sr04',
-    dataPinName: 'TRIG',
-    propertyKeys: ['distance'],
-    extraPins: { echo_pin: 'ECHO' },
-  },
-};
+// Sensors whose model drives its own line (DHT22, HC-SR04) — declared once in
+// simulation/sensorModels, which the ESP32 bridge also reads to know which pads
+// the host must not touch. Used here to pre-register them in the start_esp32
+// payload so the worker has them before the firmware runs.
+const SENSOR_COMPONENT_MAP = SINGLE_WIRE_SENSOR_MODELS;
 
 // ── I2C sensor pre-registration ───────────────────────────────────────────────
 // I2C sensors use virtual pins (200 + i2c_addr) instead of real GPIO pins.
@@ -344,6 +329,19 @@ class Esp32BridgeShim {
   registerSensor(type: string, pin: number, properties: Record<string, unknown>): boolean {
     this.bridge.sendSensorAttach(type, pin, properties);
     return true; // backend handles the protocol
+  }
+
+  /** Pins a backend-emulated single-wire sensor drives itself. The generic
+   *  seam connectDigitalInputsToMcu asks before thresholding a pin into the
+   *  guest — see simulation/partPinOwnership for the same rule on the part
+   *  side. Both exist because they know different halves: the part layer knows
+   *  what the canvas attached, the bridge knows what the worker was told. */
+  ownsPin(pin: number): boolean {
+    // Optional call on purpose: this shim wraps whichever bridge the build
+    // installed (the OSS QEMU one, or an overlay's in-browser engine), and a
+    // missing answer must degrade to "not owned", never to a TypeError thrown
+    // inside the SPICE subscription.
+    return this.bridge.ownsSensorPin?.(pin) ?? false;
   }
 
   /**
