@@ -214,6 +214,23 @@ export const ONLINE_ONLY_BOARD_ADS: OnlineOnlyBoardAd[] = [
       '</g></svg>',
   },
   {
+    id: 'stellar-unicorn',
+    label: 'Pimoroni Stellar Unicorn',
+    description: 'Pico 2 W aboard, 16x16 RGB LED matrix',
+    thumbnailSvg:
+      '<svg width="72" height="72" viewBox="0 0 72 72" xmlns="http://www.w3.org/2000/svg">' +
+      '<rect x="8" y="8" width="56" height="56" rx="5" fill="#17181c"/>' +
+      '<g>' +
+      Array.from({ length: 8 }, (_, r) =>
+        Array.from(
+          { length: 8 },
+          (_, c) =>
+            `<rect x="${13 + c * 5.9}" y="${13 + r * 5.9}" width="4.2" height="4.2" rx="1" fill="hsl(${(r * 8 + c) * 5.6},72%,56%)"/>`,
+        ).join(''),
+      ).join('') +
+      '</g></svg>',
+  },
+  {
     id: 'badger-2350',
     label: 'Pimoroni Badger 2350',
     description: 'RP2350 wearable badge with 2.7" e-ink display',

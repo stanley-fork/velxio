@@ -89,6 +89,10 @@ const MINIMAL_FIXTURES: Record<string, Fixture> = {
     topology: { '+': 'load', '−': 'gnd' },
   },
   pushbutton: { pins: ['A', 'B'] },
+  // Same switch, smaller body: it shares the pushbutton mapper (MAPPER_ALIASES),
+  // so it takes the same fixture. It reached the catalog without one and, with
+  // no model, stood down for a circuit that never modelled it — dead button.
+  'pushbutton-6mm': { pins: ['A', 'B'] },
   // SPDT: pin 2 is the common wiper; at value=1 it shorts to pin 3, so pin 3
   // must be wired or the mapper emits no card.
   'slide-switch': { pins: ['1', '2', '3'], properties: { value: 1 } },

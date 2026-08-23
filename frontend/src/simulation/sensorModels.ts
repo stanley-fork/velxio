@@ -57,6 +57,38 @@ export const SINGLE_WIRE_SENSOR_MODELS: Readonly<Record<string, SensorModelSpec>
   },
 };
 
+/**
+ * Pads a MODEL drives, per `sensor_type`, as record fields (a field may hold a
+ * single pad or a list of them). Anything listed here is off limits to every
+ * other layer — the SPICE-threshold connector above all.
+ *
+ * The single-wire sensors contribute their data pin plus whatever extra pins
+ * they declare. The other two entries are models that own a pad WITHOUT being
+ * single-wire, which is why a plain "is it a single-wire sensor?" test was not
+ * enough:
+ *
+ *  - a matrix keypad's COLUMNS are driven by the model (the QEMU worker even
+ *    keeps a `_keypad_cols_owned` set); the firmware scans them as inputs;
+ *  - an ePaper panel drives BUSY to tell the firmware it is refreshing. Its
+ *    DC / CS / RST are the opposite case — the host drives those, so they are
+ *    deliberately absent.
+ *
+ * Neither is broken with plain wiring today, because the connector's older
+ * `sourcedNets` gate happens to skip a net nothing else sits on. Put a pull-up
+ * on a keypad column and that gate stops holding — which is exactly how a
+ * level-shifted HC-SR04 lost its echo.
+ */
+const MODEL_OWNED_PIN_FIELDS: Readonly<Record<string, readonly string[]>> = {
+  ...Object.fromEntries(
+    Object.values(SINGLE_WIRE_SENSOR_MODELS).map((m) => [
+      m.sensorType,
+      ['pin', ...Object.keys(m.extraPins ?? {})],
+    ]),
+  ),
+  'matrix-keypad': ['cols'],
+  'epaper-ssd168x': ['busy_pin'],
+};
+
 /** `sensor_type` values whose model drives its own line. Derived, never typed twice. */
 export const SINGLE_WIRE_SENSOR_TYPES: ReadonlySet<string> = new Set(
   Object.values(SINGLE_WIRE_SENSOR_MODELS).map((m) => m.sensorType),
@@ -68,19 +100,18 @@ export function isSingleWireSensorRecord(rec: Record<string, unknown>): boolean 
 }
 
 /**
- * Pads a single-wire sensor record owns: its data pin plus every extra pin its
- * model declares (`echo_pin` for an HC-SR04). Read off the record's own fields
- * rather than a hard-coded field list, so a new extra pin is covered by the
- * declaration above alone.
+ * Pads a registered sensor record owns, per the declaration above: the fields
+ * are read off the record itself, so a model that grows a line is covered by
+ * its entry alone. A record of a kind that owns nothing (an I2C device on a
+ * virtual pin, a panel's host-driven DC/CS/RST) answers false for every pad.
  */
 export function sensorRecordOwnsPin(rec: Record<string, unknown>, gpioPin: number): boolean {
-  if (!isSingleWireSensorRecord(rec)) return false;
-  if (rec['pin'] === gpioPin) return true;
-  const spec = Object.values(SINGLE_WIRE_SENSOR_MODELS).find(
-    (m) => m.sensorType === rec['sensor_type'],
-  );
-  for (const field of Object.keys(spec?.extraPins ?? {})) {
-    if (rec[field] === gpioPin) return true;
+  const fields = MODEL_OWNED_PIN_FIELDS[String(rec['sensor_type'] ?? '')];
+  if (!fields) return false;
+  for (const field of fields) {
+    const v = rec[field];
+    if (v === gpioPin) return true;
+    if (Array.isArray(v) && v.includes(gpioPin)) return true;
   }
   return false;
 }

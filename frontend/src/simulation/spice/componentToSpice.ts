@@ -648,6 +648,11 @@ const MAPPERS: Record<string, Mapper> = {
   // just 1.l/2.l) means a user can wire GND/GPIO to any leg and it behaves like
   // hardware — and wiring both a GPIO and GND to the SAME terminal is a dead
   // short, exactly as on a real button. Back-compat: 2-pin variants expose A/B.
+  // The 6mm variant is the same switch with a smaller body and the same pad
+  // names, and it is registered as a part that DEFERS to the circuit. Without
+  // a model here it deferred to nothing: on every board with spiceDrivenInputs
+  // (which is all of them) pressing it did nothing at all. Aliased below the
+  // definition so the two can never drift.
   pushbutton: (comp, netLookup) => {
     const t1l = netLookup('1.l');
     const t1r = netLookup('1.r');
@@ -1325,6 +1330,16 @@ export function componentToSpice(
   const mapper = MAPPERS[comp.metadataId] ?? proMappers[comp.metadataId];
   if (!mapper) return null;
   return mapper(comp, netLookup, ctx);
+}
+
+// Variants that are electrically the SAME device as an entry above: one model,
+// several catalog ids. Keep this next to MAPPERS so adding a body size or a
+// silkscreen variant is one line and cannot forget the netlist.
+const MAPPER_ALIASES: Readonly<Record<string, string>> = {
+  'pushbutton-6mm': 'pushbutton',
+};
+for (const [variant, base] of Object.entries(MAPPER_ALIASES)) {
+  MAPPERS[variant] = MAPPERS[base];
 }
 
 /** True if we have a mapping for this metadataId. */

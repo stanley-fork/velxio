@@ -165,3 +165,29 @@ describe('one declaration of the sensors whose model owns the line', () => {
     expect(sensorRecordOwnsPin({ sensor_type: 'dht22', pin: 4, other_pin: 9 }, 9)).toBe(false);
   });
 });
+
+describe('models that own a pad without being single-wire', () => {
+  it('a matrix keypad owns its columns, not its rows', async () => {
+    const { sensorRecordOwnsPin } = await import('../simulation/sensorModels');
+    // The worker drives the columns (it keeps a `_keypad_cols_owned` set) and
+    // the firmware scans them as inputs; the rows are the firmware's outputs.
+    const kp = { sensor_type: 'matrix-keypad', pin: 13, rows: [13, 12, 14, 27], cols: [26, 25, 33, 32] };
+    expect(sensorRecordOwnsPin(kp, 26)).toBe(true);
+    expect(sensorRecordOwnsPin(kp, 32)).toBe(true);
+    expect(sensorRecordOwnsPin(kp, 12)).toBe(false); // a row: the guest drives it
+  });
+
+  it('an ePaper panel owns BUSY and nothing else', async () => {
+    const { sensorRecordOwnsPin } = await import('../simulation/sensorModels');
+    // DC / CS / RST are host-driven — blocking those would strand the panel.
+    const ep = { sensor_type: 'epaper-ssd168x', pin: 17, dc_pin: 17, cs_pin: 5, rst_pin: 16, busy_pin: 4 };
+    expect(sensorRecordOwnsPin(ep, 4)).toBe(true);
+    for (const p of [17, 5, 16]) expect(sensorRecordOwnsPin(ep, p)).toBe(false);
+  });
+
+  it('a kind that owns nothing answers false for every pad', async () => {
+    const { sensorRecordOwnsPin } = await import('../simulation/sensorModels');
+    const i2c = { sensor_type: 'bmp280', pin: 200 + 0x76, addr: 0x76 };
+    for (const p of [0, 4, 200 + 0x76]) expect(sensorRecordOwnsPin(i2c, p)).toBe(false);
+  });
+});
