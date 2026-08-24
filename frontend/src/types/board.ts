@@ -284,3 +284,29 @@ export const BOARD_KIND_FQBN: Record<BoardKind, string | null> = {
   'stm32-netduino2': 'STMicroelectronics:stm32:GenF2:pnum=GENERIC_F205RGTX',
   attiny85: 'ATTinyCore:avr:attinyx5:chip=85,clock=16pll',
 };
+
+/**
+ * FQBN used ONLY by the pure ESP-IDF language mode, for boards where it
+ * differs from the Arduino one — in practice, boards that have NO Arduino
+ * FQBN at all. The ESP32-C5 kits are the case: no arduino-esp32 core supports
+ * the C5 (the backend refuses that target for Arduino on purpose), but the
+ * ESP-IDF lane builds them fine and only needs the FQBN to derive its IDF
+ * target. Overlay boards fill this through ProBoardDef.espidfFqbn.
+ */
+export const BOARD_KIND_ESPIDF_FQBN: Partial<Record<BoardKind, string>> = {};
+
+/**
+ * The FQBN a compile should use for a board in a given language mode. Every
+ * compile site must go through this: reading BOARD_KIND_FQBN directly makes an
+ * Arduino-less board (FQBN null) fail with "No FQBN for board kind" even when
+ * its ESP-IDF mode is perfectly buildable.
+ */
+export function fqbnForLanguage(
+  kind: BoardKind,
+  mode: LanguageMode | undefined,
+): string | null {
+  if (mode === 'espidf' && BOARD_KIND_ESPIDF_FQBN[kind]) {
+    return BOARD_KIND_ESPIDF_FQBN[kind] as string;
+  }
+  return BOARD_KIND_FQBN[kind] ?? null;
+}

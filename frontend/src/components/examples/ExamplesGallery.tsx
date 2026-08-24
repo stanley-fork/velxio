@@ -133,7 +133,12 @@ export const ExamplesGallery: React.FC<ExamplesGalleryProps> = ({ onLoadExample 
       example.difficulty,
       getBoardFilter(example),
       ...(example.tags ?? []),
-      ...example.components.map((c) => c.type),
+      // Defensive. `components` is required by ExampleProject, but overlay
+      // example sets are built by factories that cast their result, so the
+      // compiler is not actually guarding this. One entry that omitted it took
+      // the entire gallery down with a TypeError the first time anyone typed in
+      // the search box — a whole page lost to one malformed example.
+      ...(example.components ?? []).map((c) => c.type),
     ]
       .join(' ')
       .toLowerCase();

@@ -27,7 +27,7 @@ import type { I2CDevice } from '../simulation/I2CBusManager';
 import type { RP2040I2CDevice } from '../simulation/RP2040Simulator';
 import type { Wire, WireInProgress, WireEndpoint } from '../types/wire';
 import type { BoardKind, BoardInstance, LanguageMode, WifiStatus } from '../types/board';
-import { BOARD_SUPPORTS_ESPIDF, BOARD_SUPPORTS_MICROPYTHON, EMULATED_WIFI_SSIDS, isPiBoardKind, isStm32BoardKind } from '../types/board';
+import { BOARD_KIND_FQBN, BOARD_SUPPORTS_ESPIDF, BOARD_SUPPORTS_MICROPYTHON, EMULATED_WIFI_SSIDS, isPiBoardKind, isStm32BoardKind } from '../types/board';
 import { boardGateDecision, proBoardFeatureName, triggerProUpgradePrompt } from '../lib/proBoardGate';
 import { getSerialTxInterceptor } from '../lib/proHardwareSerial';
 import { calculatePinPosition } from '../utils/pinPositionCalculator';
@@ -1669,6 +1669,19 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         }
       }
 
+      // Arduino is the default language everywhere EXCEPT on a board that has
+      // no FQBN at all: the ESP32-C5 kits have no arduino-esp32 core, so a
+      // board seeded into 'arduino' can never compile and the toolbar's
+      // language select (which hides the Arduino option for them) would show
+      // a value it does not carry. Seed those into a mode they can run.
+      const seededLanguage: LanguageMode = BOARD_KIND_FQBN[boardKind]
+        ? 'arduino'
+        : BOARD_SUPPORTS_MICROPYTHON.has(boardKind)
+          ? 'micropython'
+          : BOARD_SUPPORTS_ESPIDF.has(boardKind)
+            ? 'espidf'
+            : 'arduino';
+
       const newBoard: BoardInstance = {
         id,
         boardKind,
@@ -1680,7 +1693,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         serialBaudRate: 0,
         serialMonitorOpen: false,
         activeFileGroupId: `group-${id}`,
-        languageMode: 'arduino',
+        languageMode: seededLanguage,
       };
 
       set((s) => {

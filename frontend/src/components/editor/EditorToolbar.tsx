@@ -10,7 +10,7 @@ import { type VerificationResult } from '../../simulation/verify/circuitVerifier
 import { verifyCircuitFromStore } from '../../simulation/verify/verifyFromStore';
 import { CircuitVerificationModal } from '../simulator/CircuitVerificationModal';
 import type { BoardKind, LanguageMode } from '../../types/board';
-import { BOARD_KIND_FQBN, BOARD_SUPPORTS_ESPIDF, BOARD_SUPPORTS_MICROPYTHON, isKnownBoardKind, isPiBoardKind, boardDisplayName } from '../../types/board';
+import { BOARD_KIND_FQBN, BOARD_SUPPORTS_ESPIDF, BOARD_SUPPORTS_MICROPYTHON, fqbnForLanguage, isKnownBoardKind, isPiBoardKind, boardDisplayName } from '../../types/board';
 import { compileCode } from '../../services/compilation';
 import { compileOptionsForBoard } from '../../utils/boardCompile';
 import {
@@ -519,7 +519,7 @@ export const EditorToolbar = ({
       return;
     }
 
-    const fqbn = kind ? BOARD_KIND_FQBN[kind] : null;
+    const fqbn = kind ? fqbnForLanguage(kind, activeBoard?.languageMode) : null;
 
     if (!fqbn) {
       blog('error', `No FQBN for board kind: ${kind}`);
@@ -1073,7 +1073,7 @@ export const EditorToolbar = ({
         continue;
       }
 
-      const fqbn = BOARD_KIND_FQBN[board.boardKind];
+      const fqbn = fqbnForLanguage(board.boardKind, board.languageMode);
       if (!fqbn) {
         blog('error', 'no FQBN configured');
         boardFailed++;
@@ -1566,7 +1566,9 @@ export const EditorToolbar = ({
               pure ESP-IDF on the ESP32 family — issue #139). The board
               context pill that used to live here was removed: it duplicated
               the BoardSelector dropdown elsewhere in the toolbar. */}
-          {activeBoard && BOARD_SUPPORTS_MICROPYTHON.has(activeBoard.boardKind) && (
+          {activeBoard &&
+            (BOARD_SUPPORTS_MICROPYTHON.has(activeBoard.boardKind) ||
+              BOARD_SUPPORTS_ESPIDF.has(activeBoard.boardKind)) && (
             <select
               className="tb-lang-select"
               value={activeBoard.languageMode ?? 'arduino'}
@@ -1589,8 +1591,16 @@ export const EditorToolbar = ({
                 marginRight: 4,
               }}
             >
-              <option value="arduino">Arduino C++</option>
-              <option value="micropython">MicroPython</option>
+              {/* Arduino only when the kind actually HAS an FQBN: a board
+                  with none (the ESP32-C5 kits — no arduino-esp32 core exists)
+                  cannot compile in this mode, and offering it just lands the
+                  user on "No FQBN for board kind". */}
+              {!!BOARD_KIND_FQBN[activeBoard.boardKind] && (
+                <option value="arduino">Arduino C++</option>
+              )}
+              {BOARD_SUPPORTS_MICROPYTHON.has(activeBoard.boardKind) && (
+                <option value="micropython">MicroPython</option>
+              )}
               {BOARD_SUPPORTS_ESPIDF.has(activeBoard.boardKind) && (
                 <option value="espidf">ESP-IDF</option>
               )}

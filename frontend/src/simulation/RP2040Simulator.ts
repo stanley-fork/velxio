@@ -92,7 +92,41 @@ export class IdleSpinDetector {
   constructor(
     private readonly threshold = 32,
     private readonly maxStride = 256,
+    /**
+     * How wide the loop body may be, in bytes of PC range, and still count as
+     * an idle spin.
+     *
+     * A `delay()` that polls the timer is a handful of instructions. An
+     * INTERPRETER's dispatch loop also closes the same backward branch over and
+     * over with no GPIO change — MicroPython's does — but it is hundreds of
+     * bytes wide and it is doing real work. Eliding that does not skip the
+     * work, it only races the clock ahead of it: on BadgeOS the guest executed
+     * 107 k instructions per second of guest time instead of 1.4 M, so the
+     * badge took ten times longer to reach its menu.
+     *
+     * 128 bytes is comfortably more than any busy-wait and comfortably less
+     * than a bytecode dispatch.
+     */
+    private readonly maxLoopSpan = 128,
+    /**
+     * How many instructions one iteration may take and still be a busy-wait.
+     *
+     * The PC-span test above is necessary and not sufficient: an interpreter's
+     * dispatch can be tight in ADDRESS and long in WORK, and a loop that is
+     * really executing bytecode must never have its clock jumped over. A
+     * `delay()` iteration is a handful of instructions — read the timer,
+     * compare, branch. Twenty-four leaves room for the compare-and-branch
+     * variants without admitting a VM.
+     */
+    private readonly maxIterInstructions = 24,
   ) {}
+
+  /** Widest PC seen since this loop started, so a big loop body can be told
+   *  from a tight spin. */
+  private loopLow = 0;
+  private loopHigh = 0;
+  /** Instructions seen since the last time this loop closed. */
+  private sinceIter = 0;
 
   /**
    * @param pc   program counter about to execute
@@ -104,15 +138,57 @@ export class IdleSpinDetector {
     const prev = this.prevPc;
     this.prevPc = pc;
     if (prev === -1) return false;
+    this.sinceIter++;
 
-    if (pc < prev) {
+    // The common case by far — a step forward inside the same code — is
+    // handled here and returns, so the loop-close bookkeeping below runs only
+    // on a backward branch. This function is called once per emulated
+    // instruction; on a 165 M-instruction boot every field access in it is
+    // 165 M field accesses.
+    if (pc >= prev) {
+      if (pc > prev + this.maxStride) {
+        // Long forward jump (call / loop exit) — left the tight spin.
+        this.reset();
+      } else if (pc > this.loopHigh) {
+        this.loopHigh = pc;
+      }
+      return false;
+    }
+
+    // A backward branch is the loop's top, so it is also its lowest PC.
+    if (pc < this.loopLow) this.loopLow = pc;
+
+    {
       // Backward branch — one loop iteration just closed.
       const g = gpio();
+      const iterLength = this.sinceIter;
+      this.sinceIter = 0;
+      if (iterLength > this.maxIterInstructions) {
+        // Too much work in one turn of the loop to be a wait.
+        this.loopTarget = pc;
+        this.gpioAtLastIter = g;
+        this.iters = 1;
+        this.loopLow = pc;
+        this.loopHigh = prev;
+        return false;
+      }
       if (this.loopTarget !== pc) {
         // First time we land on this loop top (or the loop moved): start over.
         this.loopTarget = pc;
         this.gpioAtLastIter = g;
         this.iters = 1;
+        this.loopLow = pc;
+        this.loopHigh = prev;
+        return false;
+      }
+      if (this.loopHigh - this.loopLow > this.maxLoopSpan) {
+        // Too wide to be a busy-wait. An interpreter's dispatch loop looks
+        // exactly like a spin from the outside, and eliding it races the clock
+        // ahead of work that is really happening.
+        this.iters = 1;
+        this.loopLow = pc;
+        this.loopHigh = prev;
+        this.gpioAtLastIter = g;
         return false;
       }
       if (g !== this.gpioAtLastIter) {
@@ -126,10 +202,6 @@ export class IdleSpinDetector {
       return this.iters >= this.threshold;
     }
 
-    if (pc > prev + this.maxStride) {
-      // Long forward jump (call / loop exit) — left the tight spin.
-      this.reset();
-    }
     return false;
   }
 
@@ -144,6 +216,9 @@ export class IdleSpinDetector {
     this.loopTarget = -1;
     this.iters = 0;
     this.gpioAtLastIter = -1;
+    this.loopLow = 0;
+    this.loopHigh = 0;
+    this.sinceIter = 0;
   }
 }
 

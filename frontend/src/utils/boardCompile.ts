@@ -8,7 +8,7 @@ import { isChipProgramFile } from '../services/romCompileService';
 import { useEditorStore } from '../store/useEditorStore';
 import { useSimulatorStore } from '../store/useSimulatorStore';
 import { useProjectStore } from '../store/useProjectStore';
-import { BOARD_KIND_FQBN, type BoardInstance } from '../types/board';
+import { fqbnForLanguage, type BoardInstance } from '../types/board';
 import { isNoiseBuildLine } from './compilationLogger';
 import { publishCompileOutput } from '../lib/intellisenseRegistry';
 import { fingerprintSources } from './sourceFingerprint';
@@ -86,7 +86,7 @@ export async function compileBoardForFlash(
   onLine: (line: string) => void,
 ): Promise<BoardCompileOutcome> {
   const t0 = performance.now();
-  const fqbn = BOARD_KIND_FQBN[board.boardKind];
+  const fqbn = fqbnForLanguage(board.boardKind, board.languageMode);
   if (!fqbn) {
     return { ok: false, error: `No FQBN for board kind: ${board.boardKind}`, elapsedMs: 0 };
   }

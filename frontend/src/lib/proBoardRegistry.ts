@@ -21,6 +21,8 @@ import type { ESP32BoardOptions } from '../types/boardOptions';
 import {
   BOARD_KIND_LABELS,
   BOARD_KIND_FQBN,
+  BOARD_KIND_ESPIDF_FQBN,
+  BOARD_SUPPORTS_ESPIDF,
   BOARD_SUPPORTS_MICROPYTHON,
   registerPiFamilyKind,
   type BoardKind,
@@ -52,6 +54,17 @@ export interface ProBoardDef {
   /** True pixel size of the element (selection ring + pin overlays). */
   size: { w: number; h: number };
   supportsMicroPython?: boolean;
+  /** Board can run pure ESP-IDF projects (app_main entry, no Arduino
+   *  core). Registers the kind into BOARD_SUPPORTS_ESPIDF, which is what
+   *  gates the toolbar's ESP-IDF option AND setBoardLanguageMode — an
+   *  overlay board without it silently ignores every attempt to enter
+   *  ESP-IDF mode, so an `languageMode: 'espidf'` gallery example opens
+   *  in Arduino mode instead. ESP32 family only. */
+  supportsEspIdf?: boolean;
+  /** FQBN the ESP-IDF lane compiles this board with, when the board has
+   *  no Arduino FQBN of its own (`fqbn: null`) or needs a different one.
+   *  Only used to derive the backend's IDF target. */
+  espidfFqbn?: string;
   /** ESP32 run-path routing: the base chip the board carries. Routes the run
    *  through the ESP32 bridge path and picks the machine/engine type. Omit for
    *  boards that provide createSimulator (RP2350 class) or AVR/RP2040. */
@@ -246,6 +259,10 @@ export function registerProBoards(defs: ProBoardDef[]): void {
     (BOARD_KIND_LABELS as Record<string, string>)[kind] = def.label;
     (BOARD_KIND_FQBN as Record<string, string | null>)[kind] = def.fqbn;
     if (def.supportsMicroPython) BOARD_SUPPORTS_MICROPYTHON.add(kind);
+    if (def.supportsEspIdf) BOARD_SUPPORTS_ESPIDF.add(kind);
+    if (def.espidfFqbn) {
+      (BOARD_KIND_ESPIDF_FQBN as Record<string, string>)[kind] = def.espidfFqbn;
+    }
     if (def.piFamily) registerPiFamilyKind(def.kind);
   }
   version++;
