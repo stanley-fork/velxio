@@ -719,6 +719,18 @@ class ArduinoCLIService:
                         if retry.get("success"):
                             retry["manifest_incomplete"] = True
                             return retry
+                        # Both attempts failed. The retry ran in the SUPERSET
+                        # environment (every installed library visible), so its
+                        # error is the sketch's real one; the scoped attempt
+                        # stopped at the first undeclared transitive dependency,
+                        # which is an artifact of OUR scoping. Returning the
+                        # scoped error here reported a phantom missing-library
+                        # problem for a sketch whose actual bug was a typo'd
+                        # #include (2026-08-24: "Adafruit_I2CDevice.h: No such
+                        # file" for a manifest that simply never named BusIO).
+                        if (retry.get("stderr") or "").strip():
+                            retry["scope_retry_failed"] = True
+                            return retry
                     return {
                         "success": False,
                         "error": "Compilation failed",

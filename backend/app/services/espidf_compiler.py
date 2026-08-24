@@ -3610,7 +3610,14 @@ class ESPIDFCompiler:
                         self._suggest_libraries_for_headers(missing)
                     )
                     return retry
-                # Both failed: the scoped error is the more informative one.
+                # Both failed. The retry saw every installed library, so ITS
+                # error is the sketch's real one — the scoped attempt stops at
+                # the first undeclared transitive dependency, which is an
+                # artifact of the scope, not of the sketch. Prefer it whenever
+                # it carries text; fall through to the scoped result otherwise.
+                if str(retry.get('error') or retry.get('stderr') or '').strip():
+                    retry['scope_retry_failed'] = True
+                    return retry
         return result
 
     async def _compile_in_dir(

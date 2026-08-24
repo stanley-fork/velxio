@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 import path from 'path';
 import fs from 'fs';
 
@@ -76,6 +76,17 @@ export default defineConfig({
       // stale copies at src/pro/). Harmless on pure-OSS clones
       // because the glob has nothing to match there.
       '../../pro/frontend/src/pro/**/__tests__/**/*.test.ts',
+    ],
+    exclude: [
+      ...configDefaults.exclude,
+      // `src/pro/` is a COPY of the overlay some dev setups rsync in for a
+      // local pro build (it is gitignored; a clean OSS clone has nothing
+      // here). The source of truth is the ../../pro/... glob above, so
+      // running the copy duplicates the whole pro suite — and the copy's
+      // paths to files OUTSIDE frontend/ (pro/guest-shims, pro/frontend/
+      // public) resolve to velxio/ from there and simply do not exist, so a
+      // stale snapshot fails the deploy gate for a file nobody edited.
+      'src/pro/**',
     ],
     testTimeout: 30_000,
     hookTimeout: 30_000,
