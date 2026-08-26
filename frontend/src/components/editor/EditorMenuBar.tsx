@@ -142,6 +142,15 @@ export const EditorMenuBar: React.FC = () => {
     // pills, one button fewer in the strip.
     { kind: 'command', id: 'project.share', label: t('editor.toolbar.shareLabel', 'Share / Embed') },
     { kind: 'command', id: 'project.githubSync', label: t('editor.toolbar.githubSyncLabel', 'Sync to GitHub'), pro: true },
+    {
+      kind: 'command',
+      id: 'project.connectAgent',
+      label: t('editor.toolbar.connectAgentLabel', 'Connect AI agent (Claude/Codex)'),
+      pro: true,
+      // Only the pro overlay registers a handler; hide (not grey out) the
+      // row in builds where connecting an external agent cannot exist.
+      optional: true,
+    },
     { kind: 'command', id: 'firmware.upload', label: t('editor.toolbar.uploadFirmwareLabel', 'Upload firmware') },
     { kind: 'command', id: 'sim.record', label: t('editor.toolbar.recordLabel', 'Record simulation'), pro: true },
   ];

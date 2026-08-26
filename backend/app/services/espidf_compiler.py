@@ -589,6 +589,184 @@ class ESPIDFCompiler:
         'esp32c5': 0x2000,
     }
 
+    # The esp-hosted-mcu sync-RPC race, fixed at source.
+    #
+    # Upstream 2.12.12 mints RPC uids and claims sync-response table slots
+    # with no locking. Two tasks issuing sync RPCs in the same instant
+    # cross-wire: the losing waiter re-reads a slot the winner already
+    # cleared and asserts inside hosted_destroy_semaphore(NULL), which
+    # panics the core the Arduino event task runs on -- so a P4 sketch
+    # associates, gets a DHCP lease, and never sees WL_CONNECTED. Real
+    # boards dodge it by jitter; the deterministic engine hits it every
+    # run (project/espressif-devkits-2026-08/STATUS.md, 2026-08-26, and
+    # patches/esp-hosted-2.12.12-sync-rpc-race.patch in that directory).
+    #
+    # Managed components are hash-checked and self-restoring, so the patch
+    # cannot live in managed_components/. The component manager's own
+    # documented escape hatch is a project-local copy in components/,
+    # which overrides the managed one. This runs after the configure that
+    # fetches dependencies; when it creates the override, the caller must
+    # re-run configure so the build system picks the new component dir up.
+    _ESP_HOSTED_RACE_FIXES: list[tuple[str, str]] = [
+        (
+            'static int set_async_resp_callback(ctrl_cmd_t *app_req,'
+            ' rpc_rsp_cb_t resp_cb, void *timer_hdl);',
+            'static int set_async_resp_callback(ctrl_cmd_t *app_req,'
+            ' rpc_rsp_cb_t resp_cb, void *timer_hdl);\n'
+            'static portMUX_TYPE velxio_sync_slot_mux ='
+            ' portMUX_INITIALIZER_UNLOCKED;',
+        ),
+        (
+            '\tuid++;\n'
+            '\t// handle rollover in uid value\n'
+            '\tif (!uid)\n'
+            '\t\tuid++;\n'
+            '\tapp_req->uid = uid;',
+            '\tportENTER_CRITICAL(&velxio_sync_slot_mux);'
+            ' /* Velxio: atomic uid mint */\n'
+            '\tuid++;\n'
+            '\t// handle rollover in uid value\n'
+            '\tif (!uid)\n'
+            '\t\tuid++;\n'
+            '\tapp_req->uid = uid;\n'
+            '\tportEXIT_CRITICAL(&velxio_sync_slot_mux);',
+        ),
+        (
+            '\t\tfor (i = 0; i < MAX_SYNC_RPC_TRANSACTIONS; i++) {\n'
+            '\t\t\tif (!sync_rsp_table[i].uid) {\n'
+            '\t\t\t\tESP_LOGD(TAG, "Register sync sem %p for uid %ld",'
+            ' app_req->rx_sem, app_req->uid);\n'
+            '\t\t\t\tsync_rsp_table[i].uid = app_req->uid;\n'
+            '\t\t\t\tsync_rsp_table[i].sem = app_req->rx_sem;\n'
+            '\t\t\t\treturn CALLBACK_SET_SUCCESS;\n'
+            '\t\t\t}\n'
+            '\t\t}',
+            '\t\t/* Velxio: claim the slot under the mux */\n'
+            '\t\tportENTER_CRITICAL(&velxio_sync_slot_mux);\n'
+            '\t\tfor (i = 0; i < MAX_SYNC_RPC_TRANSACTIONS; i++) {\n'
+            '\t\t\tif (!sync_rsp_table[i].uid) {\n'
+            '\t\t\t\tsync_rsp_table[i].uid = app_req->uid;\n'
+            '\t\t\t\tsync_rsp_table[i].sem = app_req->rx_sem;\n'
+            '\t\t\t\tportEXIT_CRITICAL(&velxio_sync_slot_mux);\n'
+            '\t\t\t\tESP_LOGD(TAG, "Register sync sem %p for uid %ld",'
+            ' app_req->rx_sem, app_req->uid);\n'
+            '\t\t\t\treturn CALLBACK_SET_SUCCESS;\n'
+            '\t\t\t}\n'
+            '\t\t}\n'
+            '\t\tportEXIT_CRITICAL(&velxio_sync_slot_mux);',
+        ),
+        (
+            '\tfor (i = 0; i < MAX_SYNC_RPC_TRANSACTIONS; i++) {\n'
+            '\t\tif (sync_rsp_table[i].uid == app_req->uid) {\n'
+            '\t\t\tret = g_h.funcs->_h_get_semaphore(sync_rsp_table[i].sem,'
+            ' SEC_TO_MILLISEC(timeout_sec));\n'
+            '\t\t\tif (g_h.funcs->_h_destroy_semaphore(sync_rsp_table[i].sem)) {\n'
+            '\t\t\t\tESP_LOGE(TAG, "read sem rx for resp[0x%x] destroy failed",'
+            ' exp_resp_msg_id);\n'
+            '\t\t\t}\n'
+            '\t\t\t// clear table entry\n'
+            '\t\t\tsync_rsp_table[i].uid = 0;\n'
+            '\t\t\tsync_rsp_table[i].sem = NULL;\n'
+            '\t\t\treturn ret;\n'
+            '\t\t}\n'
+            '\t}',
+            '\t{\n'
+            '\t\t/* Velxio: read under the mux, wait on a LOCAL copy,'
+            ' clear before destroy */\n'
+            '\t\tvoid *velxio_my_sem = NULL;\n'
+            '\t\tportENTER_CRITICAL(&velxio_sync_slot_mux);\n'
+            '\t\tfor (i = 0; i < MAX_SYNC_RPC_TRANSACTIONS; i++) {\n'
+            '\t\t\tif (sync_rsp_table[i].uid == app_req->uid) {\n'
+            '\t\t\t\tvelxio_my_sem = sync_rsp_table[i].sem;\n'
+            '\t\t\t\tbreak;\n'
+            '\t\t\t}\n'
+            '\t\t}\n'
+            '\t\tportEXIT_CRITICAL(&velxio_sync_slot_mux);\n'
+            '\t\tif (velxio_my_sem) {\n'
+            '\t\t\tret = g_h.funcs->_h_get_semaphore(velxio_my_sem,'
+            ' SEC_TO_MILLISEC(timeout_sec));\n'
+            '\t\t\tportENTER_CRITICAL(&velxio_sync_slot_mux);\n'
+            '\t\t\tif (sync_rsp_table[i].uid == app_req->uid) {\n'
+            '\t\t\t\tsync_rsp_table[i].uid = 0;\n'
+            '\t\t\t\tsync_rsp_table[i].sem = NULL;\n'
+            '\t\t\t}\n'
+            '\t\t\tportEXIT_CRITICAL(&velxio_sync_slot_mux);\n'
+            '\t\t\tif (g_h.funcs->_h_destroy_semaphore(velxio_my_sem)) {\n'
+            '\t\t\t\tESP_LOGE(TAG, "read sem rx for resp[0x%x] destroy failed",'
+            ' exp_resp_msg_id);\n'
+            '\t\t\t}\n'
+            '\t\t\treturn ret;\n'
+            '\t\t}\n'
+            '\t}',
+        ),
+        (
+            '\tfor (i = 0; i < MAX_SYNC_RPC_TRANSACTIONS; i++) {\n'
+            '\t\tif (sync_rsp_table[i].uid == app_resp->uid) {\n'
+            '\t\t\treturn g_h.funcs->_h_post_semaphore(sync_rsp_table[i].sem);\n'
+            '\t\t}\n'
+            '\t}',
+            '\t/* Velxio: post inside the mux so the waiter cannot'
+            ' clear-and-destroy meanwhile */\n'
+            '\tportENTER_CRITICAL(&velxio_sync_slot_mux);\n'
+            '\tfor (i = 0; i < MAX_SYNC_RPC_TRANSACTIONS; i++) {\n'
+            '\t\tif (sync_rsp_table[i].uid == app_resp->uid &&'
+            ' sync_rsp_table[i].sem) {\n'
+            '\t\t\tint velxio_post_ret ='
+            ' g_h.funcs->_h_post_semaphore(sync_rsp_table[i].sem);\n'
+            '\t\t\tportEXIT_CRITICAL(&velxio_sync_slot_mux);\n'
+            '\t\t\treturn velxio_post_ret;\n'
+            '\t\t}\n'
+            '\t}\n'
+            '\tportEXIT_CRITICAL(&velxio_sync_slot_mux);',
+        ),
+    ]
+
+    def _override_esp_hosted_with_race_fix(self, project_dir: Path) -> bool:
+        """Create the patched components/ override for esp_hosted.
+
+        Returns True when the override was CREATED this call (the caller
+        must re-run cmake configure so the new component dir is picked up);
+        False when it already exists or there is nothing to patch.
+        """
+        managed = project_dir / 'managed_components' / 'espressif__esp_hosted'
+        override = project_dir / 'components' / 'espressif__esp_hosted'
+        if override.exists():
+            return False
+        if not managed.exists():
+            return False
+
+        rpc_core = (
+            managed / 'host' / 'drivers' / 'rpc' / 'core' / 'rpc_core.c'
+        )
+        try:
+            source = rpc_core.read_text(encoding='utf-8')
+        except OSError:
+            logger.warning('[espidf] esp_hosted override: rpc_core.c unreadable')
+            return False
+
+        for old, _new in self._ESP_HOSTED_RACE_FIXES:
+            if old not in source:
+                # A different esp_hosted version: the anchors moved. Do NOT
+                # guess -- build unpatched and say so, loudly, so the pin
+                # bump gets a deliberate re-port instead of a silent no-op.
+                logger.warning(
+                    '[espidf] esp_hosted race patch anchors not found — '
+                    'component version changed? building UNPATCHED'
+                )
+                return False
+
+        override.parent.mkdir(exist_ok=True)
+        shutil.copytree(managed, override)
+        for old, new in self._ESP_HOSTED_RACE_FIXES:
+            source = source.replace(old, new, 1)
+        (override / 'host' / 'drivers' / 'rpc' / 'core' / 'rpc_core.c').write_text(
+            source, encoding='utf-8'
+        )
+        # The hash file belongs to the managed copy's lifecycle, not ours.
+        (override / '.component_hash').unlink(missing_ok=True)
+        logger.info('[espidf] esp_hosted sync-RPC race patch applied (components/ override)')
+        return True
+
     def _is_esp32c3(self, board_fqbn: str) -> bool:
         """Return True if FQBN targets ESP32-C3 (RISC-V)."""
         return 'esp32c3' in board_fqbn or 'esp32-c3' in board_fqbn
@@ -3142,6 +3320,16 @@ class ESPIDFCompiler:
                 '\n# Velxio: esp32p4js runs the rev0 mask ROM\n'
                 'CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y\n'
                 'CONFIG_ESP32P4_REV_MIN_0=y\n'
+                # esp_hosted ships an interactive CLI (a REPL on the serial
+                # console) enabled by default. On a cloud-compiled sketch it
+                # is worse than useless: its "host>" prompt interleaves with
+                # the user's own serial output, and its console task polls a
+                # UART that in the emulator never blocks, pinning one HP core
+                # at priority 23 and defeating the engine's idle fast-forward
+                # (project/espressif-devkits-2026-08/STATUS.md, round
+                # 2026-08-25/26).
+                '# Velxio: no interactive REPL on a cloud-built sketch\n'
+                'CONFIG_ESP_HOSTED_CLI_ENABLED=n\n'
             )
         return rendered
 
@@ -4116,6 +4304,32 @@ class ESPIDFCompiler:
                 'stdout': cmake_result.stdout,
                 'stderr': cmake_result.stderr,
             }
+
+        # The configure above fetched managed components; give esp32p4 its
+        # patched esp_hosted override, and reconfigure once when it appears
+        # so the build system adopts the components/ dir.
+        if idf_target == 'esp32p4' and arduino_mode:
+            if self._override_esp_hosted_with_race_fix(project_dir):
+                try:
+                    cmake_result = await asyncio.to_thread(_run_cmake)
+                except subprocess.TimeoutExpired:
+                    return {
+                        'success': False,
+                        'error': f'ESP-IDF cmake reconfigure timed out ({cmake_timeout}s)',
+                        'stdout': '',
+                        'stderr': '',
+                    }
+                if cmake_result.returncode != 0:
+                    logger.error(
+                        f'[espidf] reconfigure after esp_hosted override failed:\n'
+                        f'{cmake_result.stderr}'
+                    )
+                    return {
+                        'success': False,
+                        'error': 'ESP-IDF reconfigure after esp_hosted override failed',
+                        'stdout': cmake_result.stdout,
+                        'stderr': cmake_result.stderr,
+                    }
 
         # Step 2: ninja build
         ninja_cmd = ['ninja']

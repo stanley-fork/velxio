@@ -28,6 +28,7 @@ import type { RP2040I2CDevice } from '../simulation/RP2040Simulator';
 import type { Wire, WireInProgress, WireEndpoint } from '../types/wire';
 import type { BoardKind, BoardInstance, LanguageMode, WifiStatus } from '../types/board';
 import { BOARD_KIND_FQBN, BOARD_SUPPORTS_ESPIDF, BOARD_SUPPORTS_MICROPYTHON, EMULATED_WIFI_SSIDS, isPiBoardKind, isStm32BoardKind } from '../types/board';
+import { annotateSerialChunk } from '../utils/serialDiagnostics';
 import { boardGateDecision, proBoardFeatureName, triggerProUpgradePrompt } from '../lib/proBoardGate';
 import { getSerialTxInterceptor } from '../lib/proHardwareSerial';
 import { calculatePinPosition } from '../utils/pinPositionCalculator';
@@ -1312,8 +1313,11 @@ const { append: appendSerial } = createSerialBatcher((perBoard) => {
   useSimulatorStore.setState((s) => {
     let globalOut = s.serialOutput;
     const boards = s.boards.map((b) => {
-      const chunk = perBoard.get(b.id);
-      if (!chunk) return b;
+      const raw = perBoard.get(b.id);
+      if (!raw) return b;
+      // Attach the one-line explanation when a known cryptic firmware error
+      // scrolls past (issue #270); a no-op for ordinary output.
+      const chunk = annotateSerialChunk(b.serialOutput, raw);
       if (s.activeBoardId === b.id) globalOut += chunk;
       return { ...b, serialOutput: b.serialOutput + chunk };
     });

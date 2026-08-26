@@ -47,6 +47,9 @@ import {
   type OnlineOnlyBoardAd,
   type OnlineOnlyComponentAd,
 } from '../lib/onlineOnlyBoards';
+import raspberryPiZeroSvg from '../assets/Raspberry_Pi_Zero_illustration.svg';
+import raspberryPi1Svg from '../assets/Raspberry_Pi_1_illustration.svg';
+import raspberryPi2Svg from '../assets/Raspberry_Pi_2_illustration.svg';
 import raspberryPi3Svg from '../assets/Raspberry_Pi_3_illustration.svg';
 import raspberryPi4Png from '../assets/raspberry-pi-4-board.png';
 import raspberryPi5Png from '../assets/raspberry-pi-5-board.png';
@@ -821,15 +824,18 @@ const BoardCard: React.FC<BoardCardProps> = ({ kind, onSelect, hoverApi }) => {
     };
   }, [kind]);
 
-  const reactThumbnail =
-    // Zero/1/2 render on canvas through the Pi-3 element (same 40-pin art),
-    // so their cards reuse the same illustration.
-    kind === 'raspberry-pi-3' ||
-    kind === 'raspberry-pi-zero' ||
-    kind === 'raspberry-pi-1' ||
-    kind === 'raspberry-pi-2' ? (
+  // Every Pi shows its own board. The cards used to share the Pi 3's picture,
+  // which made the picker claim a Zero looks like a Pi 3.
+  const piArt: Partial<Record<string, string>> = {
+    'raspberry-pi-zero': raspberryPiZeroSvg,
+    'raspberry-pi-1': raspberryPi1Svg,
+    'raspberry-pi-2': raspberryPi2Svg,
+    'raspberry-pi-3': raspberryPi3Svg,
+  };
+
+  const reactThumbnail = piArt[kind] ? (
       <img
-        src={raspberryPi3Svg}
+        src={piArt[kind]}
         alt={BOARD_KIND_LABELS[kind]}
         style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
       />
