@@ -2849,6 +2849,10 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
                     ) : null;
                   })()}
 
+                {/* Overlay slot for the WiFi/network panel (local gateway
+                    pairing on velxio.dev). Empty in the OSS build. */}
+                <span data-velxio-slot="wifi-panel" />
+
                 {/* WiFi status indicator + IoT-gateway launcher (ESP32 + Pico W) */}
                 {activeBoard &&
                   (isEsp32Kind(activeBoard.boardKind) || activeBoard.boardKind === 'pi-pico-w') &&
