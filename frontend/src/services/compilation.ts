@@ -131,6 +131,13 @@ export async function compileCode(
     : null;
   // P2.3 — library manifest (resolution scope). null = legacy scan-all.
   const libraries = extras?.libraries && extras.libraries.length ? extras.libraries : null;
+  // Custom WiFi access points (overlay feature): when the project carries its
+  // own AP parts, their SSIDs ride along and the backend's SSID rewriter
+  // stands down — the sketch connects to the network the user actually wrote.
+  // OSS builds have no provider installed → null → legacy rewrite.
+  const customWifiSsids =
+    (window as { __velxio_custom_wifi_ssids__?: () => string[] | null })
+      .__velxio_custom_wifi_ssids__?.() ?? null;
 
   let jobId: string;
   try {
@@ -147,6 +154,7 @@ export async function compileCode(
         libraries,
         language: extras?.language ?? null,
         initiated_by: extras?.initiatedBy ?? null,
+        custom_wifi_ssids: customWifiSsids,
       },
       { withCredentials: true, timeout: 30000 },
     );

@@ -198,6 +198,7 @@ def _job_key(
     libraries: list[str] | None = None,
     owner_id: str | None = None,
     language: str | None = None,
+    custom_wifi_ssids: list[str] | None = None,
 ) -> str:
     """Stable content hash of (files, board, options, spiffs, libraries, owner)
     used as the deduplication key.
@@ -232,6 +233,15 @@ def _job_key(
         import json
         h.update(json.dumps(board_options, sort_keys=True).encode())
         h.update(b"\0")
+    if custom_wifi_ssids:
+        # Custom APs suppress the SSID rewrite, so the same source builds
+        # DIFFERENT bytes with vs without them — the key must see it. Only
+        # presence matters for the rewrite, but hash the sorted list so a
+        # rename also invalidates cleanly.
+        for ssid in sorted(custom_wifi_ssids):
+            h.update(ssid.encode())
+            h.update(b"\0")
+        h.update(b"\0custom-aps\0")
     if spiffs_files:
         for f in sorted(spiffs_files, key=lambda x: x["name"]):
             h.update(f["name"].encode())
@@ -315,6 +325,12 @@ class CompileRequest(BaseModel):
     # backend deploy — espidf_compiler.compile validates known keys and
     # ignores the rest. None / missing on non-ESP32 boards.
     board_options: dict[str, str | int | bool] | None = None
+    # Optional: the SSIDs of the project's custom WiFi access points (the
+    # velxio-wifi-ap parts on the canvas, overlay feature). When non-empty
+    # the compiler does NOT rewrite the sketch's SSID literals — the project
+    # defines its own airspace, so what the user typed is what exists. Empty
+    # / missing keeps the legacy behavior (rewrite to the built-in networks).
+    custom_wifi_ssids: list[str] | None = None
     # User-uploaded files to bake into the SPIFFS partition (#162). Empty /
     # None means the SPIFFS region stays blank (current behaviour).
     spiffs_files: list[SpiffsFileBody] | None = None
@@ -495,6 +511,7 @@ async def _run_compile(
             allowed_libraries=allowed_libraries,
             owner_id=owner_id,
             pure_idf=pure_idf,
+            custom_wifi_ssids=request.custom_wifi_ssids,
         )
         return CompileResponse(
             success=result["success"],
@@ -821,6 +838,7 @@ async def compile_start(
         sorted(allowed_libraries) if allowed_libraries else None,
         owner_id if allowed_libraries else None,
         language=request.language,
+        custom_wifi_ssids=request.custom_wifi_ssids,
     )
     existing_id = JOB_BY_KEY.get(key)
     if existing_id is not None:

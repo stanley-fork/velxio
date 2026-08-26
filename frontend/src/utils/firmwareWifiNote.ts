@@ -52,11 +52,26 @@ export async function wifiSsidNoteFor(file: File): Promise<string | null> {
     return null; // unreadable is the caller's problem, not ours to report twice
   }
   if (!WIFI_MARKERS.some((m) => containsAscii(bytes, m))) return null;
-  if (EMULATED_WIFI_SSIDS.some((s) => containsAscii(bytes, s))) return null;
+  // A project with its own AP parts (overlay window seam) defines the
+  // airspace; without them the classic four stand. Either way, firmware
+  // that names one of the on-air networks needs no note.
+  const custom =
+    (window as { __velxio_custom_wifi_ssids__?: () => string[] | null })
+      .__velxio_custom_wifi_ssids__?.() ?? null;
+  const onAir: readonly string[] = custom ?? EMULATED_WIFI_SSIDS;
+  if (onAir.some((s) => containsAscii(bytes, s))) return null;
+  if (custom) {
+    return (
+      'This firmware uses WiFi but does not name any network in this project. ' +
+      `The project's access points broadcast: ${custom.join(', ')}. ` +
+      'Add a WiFi Access Point part with the SSID the firmware expects and it will connect.'
+    );
+  }
   return (
     'This firmware uses WiFi but does not name any network the emulator has. ' +
     `The emulated radio broadcasts only: ${EMULATED_WIFI_SSIDS.join(', ')} — all open, ` +
-    'no password. Rebuild it with one of those as the SSID and it will connect. ' +
+    'no password. Rebuild it with one of those as the SSID — or add a WiFi Access ' +
+    'Point part with your SSID (paid feature) — and it will connect. ' +
     '(Sketches compiled here are rewritten automatically; an uploaded binary cannot be.)'
   );
 }

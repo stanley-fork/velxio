@@ -2853,20 +2853,22 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
                     pairing on velxio.dev). Empty in the OSS build. */}
                 <span data-velxio-slot="wifi-panel" />
 
-                {/* WiFi status indicator + IoT-gateway launcher (ESP32 + Pico W) */}
+                {/* WiFi status indicator + IoT-gateway launcher (ESP32 + Pico W).
+                    Renders from the moment a radio-capable board is active —
+                    before a Run it shows as disconnected, so the icon is a
+                    stable place to click (the overlay hangs its panel off it). */}
                 {activeBoard &&
                   (isEsp32Kind(activeBoard.boardKind) || activeBoard.boardKind === 'pi-pico-w') &&
-                  activeBoard.wifiStatus &&
                   (() => {
                     // The Pico W virtual net assigns its IP deterministically when
                     // the sketch connects; the bridge reports 'started' carrying the
                     // IP. Treat that as got_ip so the badge matches the ESP32 (green,
                     // clickable → the same /api/gateway proxy).
-                    const rawStatus = activeBoard.wifiStatus.status;
+                    const rawStatus = activeBoard.wifiStatus?.status ?? 'disconnected';
                     const status =
                       activeBoard.boardKind === 'pi-pico-w' &&
                       rawStatus === 'started' &&
-                      activeBoard.wifiStatus.ip
+                      activeBoard.wifiStatus?.ip
                         ? 'got_ip'
                         : rawStatus;
                     const hasIp = status === 'got_ip';
@@ -2877,8 +2879,27 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
                       'http://localhost:8001/api';
                     const gatewayUrl = `${backendBase}/gateway/${clientId}/`;
 
+                    const togglePanel = (): boolean => {
+                      // A private overlay can hang its WiFi panel (networks on
+                      // the air, PCAP, local gateway) off this badge. OSS
+                      // builds install no hook -> false, nothing happens.
+                      const panel = (
+                        window as unknown as {
+                          __velxio_wifi_panel_toggle__?: () => boolean;
+                        }
+                      ).__velxio_wifi_panel_toggle__;
+                      return !!panel && panel();
+                    };
                     const openGateway = () => {
-                      if (!hasIp) return;
+                      // With an IP, a click opens the board's web server
+                      // DIRECTLY — the one-click flow users have muscle
+                      // memory for. The panel takes the click only while
+                      // there is nothing to open yet, and right-click
+                      // reaches it any time.
+                      if (!hasIp) {
+                        togglePanel();
+                        return;
+                      }
                       // A private overlay (velxio.dev) can install a synchronous
                       // gate to keep the IoT gateway behind a paid plan. When it
                       // returns true it has already handled the click (e.g. shown
@@ -2906,14 +2927,15 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
                       }
                     };
                     return (
+                      <>
                       <span
-                        className={`canvas-wifi-badge canvas-wifi-${status}${hasIp ? ' canvas-wifi-clickable' : ''}`}
+                        className={`canvas-wifi-badge canvas-wifi-${status}${hasIp || (window as unknown as { __velxio_wifi_panel_toggle__?: unknown }).__velxio_wifi_panel_toggle__ ? ' canvas-wifi-clickable' : ''}`}
                         onClick={openGateway}
                         title={
                           hasIp
-                            ? `WiFi: ${activeBoard.wifiStatus.ssid ?? 'Velxio-GUEST'} — IP: ${activeBoard.wifiStatus.ip}\nClick to open IoT Gateway ↗`
+                            ? `WiFi: ${activeBoard.wifiStatus?.ssid ?? 'Velxio-GUEST'} — IP: ${activeBoard.wifiStatus?.ip}\nClick to open IoT Gateway ↗`
                             : status === 'connected'
-                              ? `WiFi: ${activeBoard.wifiStatus.ssid ?? 'Velxio-GUEST'} — Connecting...`
+                              ? `WiFi: ${activeBoard.wifiStatus?.ssid ?? 'Velxio-GUEST'} — Connecting...`
                               : status === 'initializing'
                                 ? 'WiFi: Initializing...'
                                 : 'WiFi: Disconnected'
@@ -2935,6 +2957,28 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
                           <circle cx="12" cy="20" r="1" />
                         </svg>
                       </span>
+                        {/* Split-button caret: the badge keeps its one-click
+                            gateway action; the caret is the WiFi panel's
+                            handle — always reachable, run or not. Rendered
+                            only when an overlay installed the panel hook, so
+                            the OSS build shows exactly what it always did. */}
+                        {(window as unknown as { __velxio_wifi_panel_toggle__?: unknown })
+                          .__velxio_wifi_panel_toggle__ ? (
+                          <span
+                            className={`canvas-wifi-badge canvas-wifi-${status} canvas-wifi-clickable`}
+                            style={{ marginLeft: -4, paddingLeft: 2, paddingRight: 4 }}
+                            title="WiFi panel"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              togglePanel();
+                            }}
+                          >
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M6 9l6 6 6-6" />
+                            </svg>
+                          </span>
+                        ) : null}
+                      </>
                     );
                   })()}
 

@@ -2131,17 +2131,25 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
           // reviving the fake stub for them. Known SSIDs pass through
           // untouched, and the rewrite is announced on serial so nobody
           // debugs a connection they didn't make.
+          // Custom AP parts (overlay-provided window seam) replace the
+          // network list the shim knows about — and the redirect target
+          // becomes the FIRST project network instead of Velxio-GUEST.
+          // Without the provider (OSS build) the classic four stand.
+          const customSsids =
+            (window as { __velxio_custom_wifi_ssids__?: () => string[] | null })
+              .__velxio_custom_wifi_ssids__?.() ?? null;
+          const shimSsids: readonly string[] = customSsids ?? EMULATED_WIFI_SSIDS;
           const networkStub = wifiOn ? [
             'import network as _vlx_net',
             'import time as _vlx_time',
-            `_VLX_SSIDS = (${EMULATED_WIFI_SSIDS.map((s) => JSON.stringify(s)).join(', ')})`,
+            `_VLX_SSIDS = (${shimSsids.map((s) => JSON.stringify(s)).join(', ')},)`,
             'class _VlxWLAN:',
             '    def __init__(self, *a, **k):',
             '        self._w = _vlx_net.WLAN(*a, **k)',
             '    def connect(self, ssid=None, key=None, **kw):',
             '        if ssid is not None and ssid not in _VLX_SSIDS:',
-            '            print("[velxio] SSID %r is not part of the emulated network; connecting to \'Velxio-GUEST\' instead" % ssid)',
-            '            ssid, key = "Velxio-GUEST", ""',
+            `            print("[velxio] SSID %r is not part of the emulated network; connecting to ${JSON.stringify(shimSsids[0]).replace(/"/g, "'")} instead" % ssid)`,
+            `            ssid, key = ${JSON.stringify(shimSsids[0])}, ""`,
             '        if ssid is None:',
             '            return self._w.connect()',
             '        return self._w.connect(ssid, key, **kw)',
