@@ -176,7 +176,8 @@
         "mpyUnavailable": "MicroPython-Projekte können von hier aus nicht geflasht werden: nur Arduino-Sketches",
         "ready": "Den kompilierten Sketch auf ein echtes, per USB angeschlossenes Board flashen",
         "willCompile": "Den Sketch kompilieren und auf ein echtes, per USB angeschlossenes Board flashen"
-      }
+      },
+      "wifiPanel": "WLAN-Panel"
     },
     "componentPicker": {
       "title": "Komponente hinzufügen",

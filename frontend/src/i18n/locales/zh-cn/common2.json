@@ -176,7 +176,8 @@
         "mpyUnavailable": "MicroPython 项目不能从这里烧录：仅支持 Arduino 程序",
         "ready": "把编译好的程序烧录到 USB 连接的实体板",
         "willCompile": "编译程序并烧录到 USB 连接的实体板"
-      }
+      },
+      "wifiPanel": "WiFi 面板"
     },
     "componentPicker": {
       "title": "添加元件",

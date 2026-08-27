@@ -176,7 +176,8 @@
         "mpyUnavailable": "MicroPython プロジェクトはここから書き込めません(Arduino スケッチのみ)",
         "ready": "コンパイル済みスケッチを USB 接続の実機に書き込みます",
         "willCompile": "スケッチをコンパイルして USB 接続の実機に書き込みます"
-      }
+      },
+      "wifiPanel": "WiFiパネル"
     },
     "componentPicker": {
       "title": "コンポーネントを追加",

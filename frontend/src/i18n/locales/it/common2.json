@@ -176,7 +176,8 @@
         "mpyUnavailable": "I progetti MicroPython non si possono caricare da qui: solo sketch Arduino",
         "ready": "Carica lo sketch compilato su una scheda reale collegata via USB",
         "willCompile": "Compila lo sketch e caricalo su una scheda reale collegata via USB"
-      }
+      },
+      "wifiPanel": "Pannello WiFi"
     },
     "componentPicker": {
       "title": "Aggiungi componente",

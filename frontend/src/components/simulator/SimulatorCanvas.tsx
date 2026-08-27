@@ -2967,7 +2967,7 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
                           <span
                             className={`canvas-wifi-badge canvas-wifi-${status} canvas-wifi-clickable`}
                             style={{ marginLeft: -4, paddingLeft: 2, paddingRight: 4 }}
-                            title="WiFi panel"
+                            title={t('editor.canvas.wifiPanel')}
                             onClick={(e) => {
                               e.stopPropagation();
                               togglePanel();

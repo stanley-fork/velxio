@@ -178,7 +178,8 @@
         "mpyUnavailable": "Los proyectos MicroPython no se pueden grabar desde aquí: solo sketches de Arduino",
         "ready": "Grabar el sketch compilado en una placa real conectada por USB",
         "willCompile": "Compilar el sketch y grabarlo en una placa real conectada por USB"
-      }
+      },
+      "wifiPanel": "Panel de WiFi"
     },
     "componentPicker": {
       "title": "Añadir componente",

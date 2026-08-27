@@ -176,7 +176,8 @@
         "mpyUnavailable": "Les projets MicroPython ne peuvent pas être flashés depuis ici : sketches Arduino uniquement",
         "ready": "Flasher le sketch compilé sur une carte réelle branchée en USB",
         "willCompile": "Compiler le sketch et le flasher sur une carte réelle branchée en USB"
-      }
+      },
+      "wifiPanel": "Panneau WiFi"
     },
     "componentPicker": {
       "title": "Ajouter un composant",
