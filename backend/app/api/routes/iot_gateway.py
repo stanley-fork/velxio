@@ -87,8 +87,26 @@ async def gateway_proxy(client_id: str, path: str, request: Request) -> Response
         if overlay_resp is not None:
             return overlay_resp
 
+    # Wording matters here. The old text said "make sure your sketch connected
+    # to WiFi", which reads as an accusation to the one sketch that most often
+    # lands on this branch: a captive-portal / provisioning sketch that called
+    # WiFi.softAP() and deliberately did NOT join a network. Such a board is
+    # the access point, so it never gets a DHCP lease, never reaches 'got_ip',
+    # and never registers the bridge this proxy looks up — there is nothing to
+    # reach and nothing the user did wrong. Name that case first.
     return Response(
-        content='{"error":"No WiFi-enabled board found for this client. Make sure your sketch connected to WiFi and started a server on port 80."}',
+        content=json.dumps({
+            'error': 'no_reachable_board',
+            'message': (
+                'Nothing is registered for this client, so there is no server '
+                'to reach. If your sketch calls WiFi.softAP(), that is why: '
+                'the simulator can reach a board that JOINED a network, not a '
+                'board that created one. Join a simulated network instead '
+                '(WiFi.begin("Velxio-GUEST") — open, no password) and start '
+                'your server on port 80. If the sketch does join a network, '
+                'wait for it to print its IP before opening the gateway.'
+            ),
+        }),
         status_code=404,
         media_type='application/json',
     )

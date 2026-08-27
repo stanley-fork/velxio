@@ -293,7 +293,20 @@ export const SerialMonitor: React.FC = () => {
               // the emulated network. The trailing dot-check keeps a longer
               // address like 192.168.4.15.99 from half-matching.
               const ipRegex = /(?:http:\/\/)?(?:192\.168\.4|10\.13\.37)\.(\d{1,3})(?!\d|\.\d)(\/[^\s]*)?/g;
-              const matches = [...text.matchAll(ipRegex)];
+              // ...but ONLY once the board actually joined a network. A sketch
+              // that calls WiFi.softAP() becomes the access point instead of a
+              // client, and the ESP32's SoftAP default address is 192.168.4.1
+              // — the very subnet above. The address alone cannot tell the two
+              // apart, so a captive-portal sketch used to get a gateway link
+              // that could never resolve: the bridge the proxy looks up is
+              // registered on 'got_ip', which only a STATION ever reaches, so
+              // the click landed on a 404 telling the user to connect to WiFi
+              // when the sketch had deliberately chosen not to. Gate on the
+              // status every family reports: QEMU (wifi_status_parser),
+              // the in-browser JS engines, and the Pico W's cyw43 peripheral
+              // all emit 'got_ip'. Without it the IP stays plain text.
+              const reachable = activeBoard.wifiStatus?.status === 'got_ip';
+              const matches = reachable ? [...text.matchAll(ipRegex)] : [];
 
               if (matches.length > 0) {
                 const parts: (string | React.ReactNode)[] = [];
