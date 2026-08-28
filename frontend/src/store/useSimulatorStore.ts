@@ -2340,6 +2340,18 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       const board = get().boards.find((b) => b.id === boardId);
       if (!board) return;
 
+      // A fresh run starts with a clean radio state. The WiFi/BLE badges are
+      // only visible while the board runs, and nothing else clears them, so
+      // without this a re-run opens showing the PREVIOUS run's association
+      // (a green got_ip badge for a connection nothing has made yet).
+      if (board.wifiStatus || board.bleStatus) {
+        set((s) => ({
+          boards: s.boards.map((b) =>
+            b.id === boardId ? { ...b, wifiStatus: undefined, bleStatus: undefined } : b,
+          ),
+        }));
+      }
+
       // Pro gate (run backstop): catches STM32/Pi boards that entered the
       // canvas via an example or a loaded project (which bypass the picker's
       // add gate). Non-paid web users get the upgrade prompt instead of a run.

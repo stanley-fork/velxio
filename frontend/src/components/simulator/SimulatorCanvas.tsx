@@ -2854,10 +2854,12 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
                 <span data-velxio-slot="wifi-panel" />
 
                 {/* WiFi status indicator + IoT-gateway launcher (ESP32 + Pico W).
-                    Renders from the moment a radio-capable board is active —
-                    before a Run it shows as disconnected, so the icon is a
-                    stable place to click (the overlay hangs its panel off it). */}
+                    Wokwi-style lifecycle: nothing until Run. The badge appears
+                    with the simulation (gray while the stack boots, green on
+                    got_ip) and leaves on Stop. The overlay hangs its WiFi
+                    panel off it while it is up. */}
                 {activeBoard &&
+                  activeBoard.running &&
                   (isEsp32Kind(activeBoard.boardKind) || activeBoard.boardKind === 'pi-pico-w') &&
                   (() => {
                     // The Pico W virtual net assigns its IP deterministically when
