@@ -20,8 +20,12 @@ import {
 } from '../customChips';
 import { useSimulatorStore } from '../../store/useSimulatorStore';
 import { useElectricalStore } from '../../store/useElectricalStore';
+import { normalizeChipPinNames } from '../customChips/chipJson';
 import { clearChipDrives } from '../customChips/chipPinDrives';
+import { isSyntheticChipPin } from '../customChips/syntheticPins';
 import { requestElectricalResolve } from '../spice/electricalResolveHook';
+import { registerSensorUpdate, unregisterSensorUpdate } from '../SensorUpdateRegistry';
+import { setAdcVoltage, analogRailVolts } from './partUtils';
 
 // Physical-key (KeyboardEvent.code) -> Galaksija keyboard matrix offset, from
 // the libretro Galaksija core's keyMap. The chip's set_key takes this offset;
@@ -36,6 +40,31 @@ const GALAKSIJA_KEY_OFFSET: Record<string, number> = {
   Semicolon: 42, Quote: 43, Comma: 44, Equal: 45, Period: 46, Slash: 47,
   Enter: 48, Tab: 49, Delete: 51, ShiftLeft: 53, ShiftRight: 53,
 };
+
+/**
+ * Debounced mirror of live control values into `properties.attrs` so slider
+ * positions persist with the project. Debounced because a slider drag emits
+ * a continuous stream and each updateComponent is a store write.
+ */
+const pendingAttrMirror = new Map<string, { timer: ReturnType<typeof setTimeout>; attrs: Record<string, number> }>();
+function mirrorAttrsToProperties(componentId: string, attrs: Record<string, number>): void {
+  const pending = pendingAttrMirror.get(componentId);
+  const merged = { ...(pending?.attrs ?? {}), ...attrs };
+  if (pending) clearTimeout(pending.timer);
+  pendingAttrMirror.set(componentId, {
+    attrs: merged,
+    timer: setTimeout(() => {
+      pendingAttrMirror.delete(componentId);
+      const sim = useSimulatorStore.getState();
+      const comp = sim.components.find((c) => c.id === componentId);
+      if (!comp) return;
+      const prev = (comp.properties.attrs ?? {}) as Record<string, number>;
+      sim.updateComponent(componentId, {
+        properties: { ...comp.properties, attrs: { ...prev, ...merged } },
+      } as never);
+    }, 250),
+  });
+}
 
 PartSimulationRegistry.register('custom-chip', {
   attachEvents: (_element, simulator, getArduinoPin, componentId) => {
@@ -60,15 +89,10 @@ PartSimulationRegistry.register('custom-chip', {
     let pins: string[] = [];
     let display: { width: number; height: number } | null = null;
     try {
-      const obj = JSON.parse(chipJsonStr);
-      if (Array.isArray(obj.pins)) {
-        // Pin entries may be strings (Wokwi) or {name,x,y} objects.
-        pins = obj.pins.map((p: unknown) => {
-          if (typeof p === 'string') return p;
-          if (p && typeof p === 'object') return String((p as any).name ?? '');
-          return '';
-        });
-      }
+      // An empty chipJson (agent-placed chip before programming) is not an
+      // error — treat it like a pinless chip rather than throwing on ''.
+      const obj = chipJsonStr.trim() ? JSON.parse(chipJsonStr) : {};
+      pins = normalizeChipPinNames(obj.pins);
       if (obj.display && typeof obj.display.width === 'number' && typeof obj.display.height === 'number') {
         display = { width: obj.display.width, height: obj.display.height };
       }
@@ -76,14 +100,20 @@ PartSimulationRegistry.register('custom-chip', {
       console.warn(`[custom-chip] ${componentId} chip.json parse error:`, e);
       return () => {};
     }
+    if (pins.length === 0) {
+      console.warn(`[custom-chip] ${componentId} declares no pins — chip will be inert.`);
+    }
 
-    // Pull saved attribute values from the component's properties.
+    // Pull saved attribute values from the component's properties. Numeric
+    // values feed vx_attr_read; strings feed vx_attr_string_read.
     const attrsObj: Record<string, number> = {};
+    const strAttrsObj: Record<string, string> = {};
     try {
       const raw = (props.attrs ?? {}) as Record<string, unknown>;
       for (const [k, v] of Object.entries(raw)) {
         const n = typeof v === 'number' ? v : parseFloat(String(v));
         if (!Number.isNaN(n)) attrsObj[k] = n;
+        else if (typeof v === 'string') strAttrsObj[k] = v;
       }
     } catch { /* ignore */ }
 
@@ -137,8 +167,25 @@ PartSimulationRegistry.register('custom-chip', {
       } catch (e) {
         console.error(`[custom-chip:${componentId}] failed to register on ESP32 backend:`, e);
       }
-      // Cleanup: the QEMU instance is torn down on stop_esp32 — no client-side state.
-      return () => {};
+      // Live controls: forward slider changes to the worker, which applies
+      // them onto the chip runtime's attr store (vx_attr_read sees them).
+      registerSensorUpdate(componentId, (values) => {
+        const attrs: Record<string, number> = {};
+        for (const [k, v] of Object.entries(values)) {
+          const n = typeof v === 'number' ? v : v === true ? 1 : 0;
+          if (Number.isFinite(n)) attrs[k] = n;
+        }
+        if (Object.keys(attrs).length === 0) return;
+        try {
+          (sim as { updateSensor?: (pin: number, props: object) => void })
+            .updateSensor?.(virtualPin, { attrs });
+        } catch { /* worker gone */ }
+        mirrorAttrsToProperties(componentId, attrs);
+      });
+      // Cleanup: the QEMU instance is torn down on stop_esp32.
+      return () => {
+        unregisterSensorUpdate(componentId);
+      };
     }
     // ── End ESP32 path ──────────────────────────────────────────────────────
 
@@ -152,8 +199,9 @@ PartSimulationRegistry.register('custom-chip', {
       }
     }
 
-    // Convert the attribute map into a Map<string, number> for the JS runtime.
+    // Convert the attribute maps into Maps for the JS runtime.
     const attrs = new Map<string, number>(Object.entries(attrsObj));
+    const strAttrs = new Map<string, string>(Object.entries(strAttrsObj));
 
     // Lazily install the per-simulator bridges. Idempotent — safe to call
     // even if other custom chips have already wired them up.
@@ -182,6 +230,7 @@ PartSimulationRegistry.register('custom-chip', {
           spiBus: bridges.spiBus,
           wires,
           attrs,
+          strAttrs,
           display,
           romBytes,
           log: (s) => console.log(`[chip:${componentId}] ${s.replace(/\n$/, '')}`),
@@ -191,7 +240,45 @@ PartSimulationRegistry.register('custom-chip', {
           return;
         }
         instance = inst;
+
+        // Register the board-injection hooks BEFORE start(): chip_setup
+        // fires the initial OUTPUT_HIGH/LOW levels (and may write pins /
+        // the DAC synchronously), and those must reach the board too.
+        inst.onDacWrite((pinName, voltage) => {
+          const boardPin = wires.get(pinName);
+          if (boardPin == null || isSyntheticChipPin(boardPin)) return;
+          const rail = analogRailVolts(sim);
+          setAdcVoltage(sim, boardPin, Math.max(0, Math.min(voltage, rail)));
+        });
+        inst.onDigitalWrite((pinName, value) => {
+          const boardPin = wires.get(pinName);
+          if (boardPin == null || isSyntheticChipPin(boardPin)) return;
+          try {
+            (sim as { setPinState?: (pin: number, state: boolean) => void })
+              .setPinState?.(boardPin, value);
+          } catch { /* board not ready yet */ }
+        });
+
         inst.start();
+
+        // Live controls (chip.json `controls` / ranged attributes): slider
+        // moves mutate the SAME attrs Map the running WASM re-reads on every
+        // vx_attr_read — no re-instantiation. A button control sends a
+        // momentary 1 -> 0 pulse. Values also mirror (debounced) into
+        // properties.attrs so they persist with the project.
+        registerSensorUpdate(componentId, (values) => {
+          const attrs: Record<string, number> = {};
+          for (const [k, v] of Object.entries(values)) {
+            if (typeof v === 'number' && Number.isFinite(v)) {
+              inst.setAttr(k, v);
+              attrs[k] = v;
+            } else if (v === true) {
+              inst.setAttr(k, 1);
+              setTimeout(() => instance?.setAttr(k, 0), 150);
+            }
+          }
+          if (Object.keys(attrs).length > 0) mirrorAttrsToProperties(componentId, attrs);
+        });
 
         // Bridge UART: AVR Serial.write(byte) → chip.feedUart(byte).
         // Chip's vx_uart_write(byte) → simulator.usart.writeByte (Serial.read).
@@ -288,6 +375,7 @@ PartSimulationRegistry.register('custom-chip', {
 
     return () => {
       disposed = true;
+      unregisterSensorUpdate(componentId);
       if (rafHandle) cancelAnimationFrame(rafHandle);
       rafHandle = 0;
       if (uartListener) bridges.uartListeners.delete(uartListener);

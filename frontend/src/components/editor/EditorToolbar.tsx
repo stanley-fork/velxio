@@ -19,7 +19,7 @@ import {
   formatForFile,
   targetForChip,
 } from '../../services/romCompileService';
-import { compileChip } from '../../services/chipCompileService';
+import { ensureChipWasm, flushChipFileSync } from '../../services/chipFiles';
 import { clearChipDrives } from '../../simulation/customChips/chipPinDrives';
 import { requestElectricalResolve } from '../../simulation/spice/electricalResolveHook';
 import { reportRunEvent } from '../../services/metricsService';
@@ -342,6 +342,10 @@ export const EditorToolbar = ({
       const updateComponent = useSimulatorStore.getState().updateComponent;
       let failed = 0;
 
+      // Commit any chip.c/chip.json edit still sitting in the sync debounce
+      // before reading properties — Run must never build a stale source.
+      flushChipFileSync();
+
       for (const chip of chips) {
         // Re-read the freshest properties each iteration (an earlier chip's
         // update doesn't touch this one, but be defensive).
@@ -350,36 +354,20 @@ export const EditorToolbar = ({
         const chipLabel = String(props.chipName ?? 'custom chip');
         const sourceC = String(props.sourceC ?? '');
         const chipJson = String(props.chipJson ?? '{}');
-        let changed = false;
         // Stamp every line for this chip with its target so the console groups
         // it under its own section (alongside the boards).
         const chipTarget: CompileTarget = { id: chip.id, label: chipLabel, kind: 'chip' };
         const clog = (type: CompilationLog['type'], message: string) =>
           addLog({ timestamp: new Date(), type, message, target: chipTarget });
 
-        // 1. C -> WASM. Only when missing — the chip designer fills this too.
-        if (!String(props.wasmBase64 ?? '') && sourceC) {
-          clog('info', `Compiling chip "${chipLabel}" to WASM...`);
-          try {
-            const r = await compileChip(sourceC, chipJson);
-            if (r.success && r.wasm_base64) {
-              props.wasmBase64 = r.wasm_base64;
-              changed = true;
-              clog('success', `Chip "${chipLabel}" compiled (${r.byte_size} B WASM).`);
-            } else {
-              clog(
-                'error',
-                `Chip "${chipLabel}" WASM compile failed: ${r.error || r.stderr || 'unknown error'}`,
-              );
-              failed++;
-            }
-          } catch (e) {
-            clog(
-              'error',
-              `Chip "${chipLabel}" WASM compile error: ${e instanceof Error ? e.message : String(e)}`,
-            );
-            failed++;
-          }
+        // 1. C -> WASM. ensureChipWasm recompiles when the wasm is missing
+        //    OR the source hash changed since the last build (chip.c edits
+        //    clear the wasm via the file sync, but a property written
+        //    directly — e.g. by the agent — must not leave a stale binary).
+        //    It writes the component itself, merging onto live properties.
+        if (sourceC) {
+          const r = await ensureChipWasm(chip.id, clog);
+          if (!r.ok) failed++;
         }
 
         // 2. program file -> ROM bytes (programmable CPU chips). Recompile
@@ -409,9 +397,17 @@ export const EditorToolbar = ({
             try {
               const rr = await compileRom(file.content, target, fmt);
               if (rr.success && rr.rom_base64) {
-                props.romBytes = rr.rom_base64;
-                props.programFile = programFile;
-                changed = true;
+                // Merge onto the LIVE properties — the compile was an await
+                // and a stale spread here would revert anything written in
+                // the meantime (the wasm step above, a concurrent edit).
+                const fresh = useSimulatorStore.getState().components.find((c) => c.id === chip.id);
+                updateComponent(chip.id, {
+                  properties: {
+                    ...((fresh?.properties ?? props) as Record<string, unknown>),
+                    romBytes: rr.rom_base64,
+                    programFile,
+                  },
+                } as any);
                 clog('success', `ROM ready: ${rr.byte_size} B injected into "${chipLabel}".`);
               } else {
                 clog(
@@ -428,10 +424,6 @@ export const EditorToolbar = ({
               failed++;
             }
           }
-        }
-
-        if (changed) {
-          updateComponent(chip.id, { properties: props } as any);
         }
       }
       return { failed };

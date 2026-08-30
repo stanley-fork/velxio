@@ -14,8 +14,10 @@ import { adcPinMapFor } from '../velxio-components/Esp32Element';
 import { ComponentPickerModal } from '../ComponentPickerModal';
 import { PartInspectorDialog, type InspectorAction } from './PartInspectorDialog';
 import { CustomChipDialog } from '../customChips/CustomChipDialog';
+import { seedChipFileGroups, isChipSourceFile } from '../../services/chipFiles';
+import { useEditorStore, chipFileGroupId } from '../../store/useEditorStore';
 import { SensorControlPanel } from './SensorControlPanel';
-import { SENSOR_CONTROLS, getSensorControl } from '../../simulation/sensorControlConfig';
+import { getSensorControlForComponent } from '../../simulation/customChips/chipControls';
 import { DynamicComponent, createComponentFromMetadata } from '../DynamicComponent';
 import { InstrumentComponent } from '../components-instruments/InstrumentComponent';
 import { ComponentRegistry } from '../../services/ComponentRegistry';
@@ -329,9 +331,20 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
   // Component property dialog
   const [showPropertyDialog, setShowPropertyDialog] = useState(false);
   const [propertyDialogComponentId, setPropertyDialogComponentId] = useState<string | null>(null);
-  /** When non-null, the Custom Chip designer dialog is open for this component. */
+  /** When non-null, the Custom Chip examples gallery is open for this component. */
   const [customChipComponentId, setCustomChipComponentId] = useState<string | null>(null);
   const [propertyDialogPosition, setPropertyDialogPosition] = useState({ x: 0, y: 0 });
+
+  /** Focus a custom chip's file group in the editor and open its chip.c. */
+  const openChipInEditor = useCallback((chipId: string) => {
+    seedChipFileGroups();
+    const ed = useEditorStore.getState();
+    const gid = chipFileGroupId(chipId);
+    const files = ed.fileGroups[gid] ?? [];
+    const src = files.find((f) => isChipSourceFile(f.name)) ?? files[0];
+    ed.setActiveGroup(gid);
+    if (src) ed.openFile(src.id);
+  }, []);
 
   // Sensor control panel (shown instead of property dialog for sensor components during simulation)
   const [sensorControlComponentId, setSensorControlComponentId] = useState<string | null>(null);
@@ -1109,7 +1122,7 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
             const component = componentsRef.current.find((c) => c.id === touchId);
             if (component) {
               if (interactionRunningRef.current) {
-                if (getSensorControl(component.metadataId) !== undefined) {
+                if (getSensorControlForComponent(component) !== undefined) {
                   setSensorControlComponentId(touchId);
                   setSensorControlMetadataId(component.metadataId);
                 }
@@ -1593,7 +1606,19 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
   const handleSelectComponent = (metadata: ComponentMetadata) => {
     const { x, y } = nextDropSlot();
 
-    const component = createComponentFromMetadata(metadata, x, y);
+    // A saved chip from the user's My Chips library (overlay-merged entry,
+    // custom flag + the custom-chip element): dropping it COPIES its stored
+    // sources into a normal custom-chip component — projects stay
+    // self-contained, and every custom-chip pipeline (files, controls,
+    // compile) applies with no special-casing past this point.
+    const isUserChip = metadata.custom && metadata.tagName === 'velxio-custom-chip';
+    const effectiveMetadata = isUserChip
+      ? {
+          ...(ComponentRegistry.getInstance().getById('custom-chip') ?? metadata),
+          defaultValues: { ...metadata.defaultValues },
+        }
+      : metadata;
+    const component = createComponentFromMetadata(effectiveMetadata, x, y);
     trackAddComponent(metadata.id);
     // Recorded — user can Ctrl+Z to remove the just-added component.
     recordAddComponent(component as Parameters<typeof recordAddComponent>[0]);
@@ -1604,10 +1629,12 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
     // moves to mark it.
     setSelectedComponentId(component.id);
 
-    // Custom Chips need a compile step before they can do anything — open the
-    // designer dialog immediately so the user lands in the editor.
-    if (metadata.id === 'custom-chip') {
-      setCustomChipComponentId(component.id);
+    // A fresh Custom Chip has no source yet — open the examples gallery so
+    // the user picks a starting point. A dropped library chip already
+    // carries source + compiled wasm; it goes straight to the editor.
+    if (effectiveMetadata.id === 'custom-chip') {
+      if (isUserChip) openChipInEditor(component.id);
+      else setCustomChipComponentId(component.id);
     }
   };
 
@@ -1643,7 +1670,7 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
     // panel). Mirrors the touch tap flow above.
     if (interactionRunning) {
       const component = components.find((c) => c.id === componentId);
-      const isSensor = !!component && getSensorControl(component.metadataId) !== undefined;
+      const isSensor = !!component && getSensorControlForComponent(component) !== undefined;
       if (!isSensor) return;
     }
 
@@ -1984,13 +2011,15 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
               // handle its own clicks, so we suppress the property
               // dialog entirely. This is the path that also unblocks
               // wokwi-slide-switch toggling in the digital examples.
-              if (getSensorControl(component.metadataId) !== undefined) {
+              if (getSensorControlForComponent(component) !== undefined) {
                 setSensorControlComponentId(draggedComponentId);
                 setSensorControlMetadataId(component.metadataId);
               }
             } else if (component.metadataId === 'custom-chip') {
-              // Custom Chips have their own designer (C editor + chip.json + Compile).
-              setCustomChipComponentId(draggedComponentId);
+              // A chip's sources are ordinary editor files — clicking the
+              // chip focuses its group and opens chip.c in the editor. The
+              // gallery dialog only opens for a freshly-dropped chip.
+              openChipInEditor(draggedComponentId);
             } else if (
               isBreadboard(component.metadataId) &&
               (() => {
@@ -3671,7 +3700,10 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
           );
         })()}
 
-      {/* Custom Chip Designer Dialog */}
+      {/* Custom Chip examples gallery — picking an example stores its
+          sources on the component; chipFiles.ts then surfaces them as
+          chip.c / chip.json in the chip's file-explorer section, where all
+          further editing happens (common editor, per-chip Compile, Run). */}
       {customChipComponentId &&
         (() => {
           const comp = components.find((c) => c.id === customChipComponentId);
@@ -3679,21 +3711,30 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
           const props = comp.properties as Record<string, unknown>;
           return (
             <CustomChipDialog
-              initial={{
-                chipName: String(props.chipName ?? 'My Chip'),
-                sourceC: String(props.sourceC ?? ''),
-                chipJson: String(props.chipJson ?? ''),
-                wasmBase64: String(props.wasmBase64 ?? ''),
-                attrs: (props.attrs as Record<string, number>) ?? {},
-              }}
+              chipName={String(props.chipName ?? 'My Chip')}
               onClose={() => setCustomChipComponentId(null)}
-              onSave={(data) => {
+              onPick={(example) => {
+                let pickedName = String(props.chipName ?? 'My Chip');
+                try {
+                  const obj = JSON.parse(example.chipJson);
+                  if (obj && typeof obj.name === 'string' && obj.name.trim()) pickedName = obj.name;
+                } catch { /* keep current name */ }
                 updateComponent(customChipComponentId, {
-                  properties: { ...comp.properties, ...data },
+                  properties: {
+                    ...comp.properties,
+                    chipName: pickedName,
+                    sourceC: example.sourceC,
+                    chipJson: example.chipJson,
+                    // Loaded sources need a fresh compile — and a stale ROM
+                    // from a previous CPU example must not survive either.
+                    wasmBase64: '',
+                    sourceHash: '',
+                    romBytes: '',
+                  },
                 } as any);
                 setCustomChipComponentId(null);
-                // Force the chip's pin layout to re-render after the save.
                 recalculateAllWirePositions();
+                openChipInEditor(customChipComponentId);
               }}
             />
           );
