@@ -46,6 +46,8 @@ import {
   trackOpenLibraryManager,
 } from '../../utils/analytics';
 import './EditorToolbar.css';
+import { ThemeToggle } from '../layout/ThemeToggle';
+import { getResolvedTheme } from '../../lib/theme';
 
 /**
  * Output-console group for circuit pre-flight + runtime faults. Routing these
@@ -146,18 +148,18 @@ const BOARD_PILL_COLOR: Record<BoardKind, string> = {
   'arduino-nano': '#4fc3f7',
   'arduino-mega': '#4fc3f7',
   'raspberry-pi-pico': '#ce93d8',
-  'raspberry-pi-3': '#ef9a9a',
-  'raspberry-pi-4': '#ef9a9a',
-  'raspberry-pi-5': '#ef9a9a',
-  esp32: '#a5d6a7',
-  'esp32-s3': '#a5d6a7',
-  'esp32-c3': '#a5d6a7',
-  'stm32-bluepill': '#80cbc4',
-  'stm32-blackpill': '#b0bec5',
-  'stm32-bluepill-f103cb': '#80cbc4',
-  'stm32-blackpill-f401': '#b0bec5',
-  'stm32-f4-discovery': '#90caf9',
-  'stm32-olimex-h405': '#a5d6a7',
+  'raspberry-pi-3': 'var(--color-feedback-error)',
+  'raspberry-pi-4': 'var(--color-feedback-error)',
+  'raspberry-pi-5': 'var(--color-feedback-error)',
+  esp32: 'var(--color-feedback-success)',
+  'esp32-s3': 'var(--color-feedback-success)',
+  'esp32-c3': 'var(--color-feedback-success)',
+  'stm32-bluepill': 'var(--color-accent-fg)',
+  'stm32-blackpill': 'var(--wb-12)',
+  'stm32-bluepill-f103cb': 'var(--color-accent-fg)',
+  'stm32-blackpill-f401': 'var(--wb-12)',
+  'stm32-f4-discovery': 'var(--color-accent-fg)',
+  'stm32-olimex-h405': 'var(--color-feedback-success)',
   'stm32-netduino-plus2': '#ce93d8',
   'stm32-netduino2': '#ce93d8',
 };
@@ -1394,9 +1396,15 @@ export const EditorToolbar = ({
     }
     setMessage({ type: 'info', text: 'Rendering screenshot — may take 5-10 seconds…' });
     try {
-      const resp = await fetch(`/api/pro/projects/${projectId}/screenshot.png`, {
-        credentials: 'include',
-      });
+      // The render happens in a headless browser on the server, which has
+      // no localStorage and therefore no idea which theme the user is
+      // looking at -- it used to hand back a dark image to someone working
+      // in light mode. Pass the RESOLVED theme so the export matches the
+      // canvas it was taken from.
+      const resp = await fetch(
+        `/api/pro/projects/${projectId}/screenshot.png?theme=${getResolvedTheme()}`,
+        { credentials: 'include' },
+      );
       if (resp.status === 402) {
         // Fire the in-place upgrade modal instead of bouncing to /pricing —
         // keeps the user in the editor with full context. The pro overlay's
@@ -1691,9 +1699,9 @@ export const EditorToolbar = ({
               }}
               title={t('editor.toolbar.languageMode')}
               style={{
-                background: '#2d2d2d',
-                color: '#ccc',
-                border: '1px solid #444',
+                background: 'var(--wb-5)',
+                color: 'var(--wb-12)',
+                border: '1px solid var(--wb-7)',
                 borderRadius: 4,
                 height: 28,
                 alignSelf: 'center',
@@ -2048,6 +2056,7 @@ export const EditorToolbar = ({
                 <line x1="12" y1="19" x2="20" y2="19" />
               </svg>
             </button>
+            <ThemeToggle />
             {rightSlot}
           </div>
         </div>

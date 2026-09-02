@@ -40,7 +40,9 @@
       "shareLabel": "共有 / 埋め込み",
       "githubSyncLabel": "GitHub と同期",
       "uploadFirmwareLabel": "ファームウェアをアップロード",
-      "recordLabel": "シミュレーションを録画"
+      "recordLabel": "シミュレーションを録画",
+      "themeToLight": "Switch to light theme",
+      "themeToDark": "Switch to dark theme"
     },
     "fileExplorer": {
       "workspace": "ワークスペース",
@@ -399,13 +401,18 @@
       "compile": "コンパイル",
       "run": "実行",
       "hideExplorer": "ファイルエクスプローラーを隠す",
-      "showExplorer": "ファイルエクスプローラーを表示"
+      "showExplorer": "ファイルエクスプローラーを表示",
+      "appearance": "Appearance",
+      "themeDark": "Dark",
+      "themeLight": "Light",
+      "themeSystem": "Match system"
     },
     "inspector": {
       "propertiesTab": "プロパティ",
       "datasheetTab": "データシート",
       "examplesTitle": "サンプルプロジェクト",
-      "productPage": "製品ページ"
+      "productPage": "製品ページ",
+      "datasheetPage": "Specifications"
     },
     "flash": {
       "title": "{{board}} に書き込む",

@@ -250,7 +250,7 @@ const IcoChipImage = () => (
 
 /** Picture-in-frame with a strike: remove the chip's face image. */
 const IcoChipImageRemove = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f87171"
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-feedback-error)"
        strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <rect x="3" y="3" width="18" height="18" rx="2" />
     <path d="m8 8 8 8" />
@@ -264,7 +264,7 @@ const IcoChipCompile = ({ state }: { state?: string }) => (
     height="14"
     viewBox="0 0 24 24"
     fill="none"
-    stroke={state === 'busy' ? '#888' : state && state !== 'ok' ? '#f87171' : 'currentColor'}
+    stroke={state === 'busy' ? 'var(--wb-10)' : state && state !== 'ok' ? 'var(--color-feedback-error)' : 'currentColor'}
     strokeWidth="2"
     strokeLinecap="round"
     strokeLinejoin="round"
@@ -324,16 +324,16 @@ const BOARD_COLOR: Record<BoardKind, string> = {
   'arduino-nano': '#4fc3f7',
   'arduino-mega': '#4fc3f7',
   'raspberry-pi-pico': '#ce93d8',
-  'raspberry-pi-3': '#ef9a9a',
-  esp32: '#a5d6a7',
-  'esp32-s3': '#a5d6a7',
-  'esp32-c3': '#a5d6a7',
-  'stm32-bluepill': '#80cbc4',
-  'stm32-blackpill': '#b0bec5',
-  'stm32-bluepill-f103cb': '#80cbc4',
-  'stm32-blackpill-f401': '#b0bec5',
-  'stm32-f4-discovery': '#90caf9',
-  'stm32-olimex-h405': '#a5d6a7',
+  'raspberry-pi-3': 'var(--color-feedback-error)',
+  esp32: 'var(--color-feedback-success)',
+  'esp32-s3': 'var(--color-feedback-success)',
+  'esp32-c3': 'var(--color-feedback-success)',
+  'stm32-bluepill': 'var(--color-accent-fg)',
+  'stm32-blackpill': 'var(--wb-12)',
+  'stm32-bluepill-f103cb': 'var(--color-accent-fg)',
+  'stm32-blackpill-f401': 'var(--wb-12)',
+  'stm32-f4-discovery': 'var(--color-accent-fg)',
+  'stm32-olimex-h405': 'var(--color-feedback-success)',
   'stm32-netduino-plus2': '#ce93d8',
   'stm32-netduino2': '#ce93d8',
 };
@@ -936,10 +936,10 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({ onSaveClick, onNewCl
 
           // Status dot color
           const statusColor = board.running
-            ? '#22c55e'
+            ? 'var(--color-feedback-success)'
             : board.compiledProgram
-              ? '#f59e0b'
-              : '#6b7280';
+              ? 'var(--color-feedback-warning)'
+              : 'var(--wb-9)';
 
           return (
             <div key={board.id} className="fe-board-section">
@@ -1244,8 +1244,8 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({ onSaveClick, onNewCl
                         marginLeft: 'auto',
                         fontSize: 9,
                         lineHeight: '14px',
-                        color: '#9d9d9d',
-                        background: '#2d2d2d',
+                        color: 'var(--wb-11)',
+                        background: 'var(--wb-5)',
                         borderRadius: 7,
                         padding: '0 5px',
                       }}
@@ -1378,7 +1378,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({ onSaveClick, onNewCl
                     <IcoChevron open={isOpen} />
                   </button>
 
-                  <span className="fe-board-icon" style={{ color: '#c4b5fd' }}>
+                  <span className="fe-board-icon" style={{ color: 'var(--color-accent-fg)' }}>
                     <IcoChip />
                   </span>
 
@@ -1439,7 +1439,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({ onSaveClick, onNewCl
 
         {/* Fallback: nothing on the canvas yet */}
         {boards.length === 0 && customChipComponents.length === 0 && (
-          <div style={{ color: '#666', fontSize: 11, padding: '12px 12px', lineHeight: 1.5 }}>
+          <div style={{ color: 'var(--wb-9)', fontSize: 11, padding: '12px 12px', lineHeight: 1.5 }}>
             {t('editor.fileExplorer.emptyState')}
           </div>
         )}

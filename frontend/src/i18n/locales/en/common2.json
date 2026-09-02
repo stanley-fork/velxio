@@ -42,7 +42,9 @@
       "shareLabel": "Share / Embed",
       "githubSyncLabel": "Sync to GitHub",
       "uploadFirmwareLabel": "Upload firmware",
-      "recordLabel": "Record simulation"
+      "recordLabel": "Record simulation",
+      "themeToLight": "Switch to light theme",
+      "themeToDark": "Switch to dark theme"
     },
     "fileExplorer": {
       "workspace": "WORKSPACE",
@@ -181,7 +183,9 @@
         "willCompile": "Compile the sketch and flash it to a real USB-attached board"
       },
       "wifiPanel": "WiFi panel",
-      "addNodeHere": "Add node here"
+      "addNodeHere": "Add node here",
+      "probeWire": "Add to scope",
+      "probeNothing": "This wire carries no signal the scope can read yet. Connect it to a board pin, or run the circuit so the solver reports a voltage for it."
     },
     "componentPicker": {
       "title": "Add Component",
@@ -430,13 +434,18 @@
       "compile": "Compile",
       "run": "Run",
       "hideExplorer": "Hide file explorer",
-      "showExplorer": "Show file explorer"
+      "showExplorer": "Show file explorer",
+      "appearance": "Appearance",
+      "themeDark": "Dark",
+      "themeLight": "Light",
+      "themeSystem": "Match system"
     },
     "inspector": {
       "propertiesTab": "Properties",
       "datasheetTab": "Datasheet",
       "examplesTitle": "Example projects",
-      "productPage": "Product page"
+      "productPage": "Product page",
+      "datasheetPage": "Specifications"
     },
     "flash": {
       "title": "Flash {{board}}",

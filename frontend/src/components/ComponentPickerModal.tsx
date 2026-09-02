@@ -453,7 +453,7 @@ export const ComponentPickerModal: React.FC<ComponentPickerModalProps> = ({
               {selectedCategory === 'all' && onSelectBoard && (
                 <div
                   className="components-grid components-grid--inline"
-                  style={{ borderBottom: '1px solid #333', paddingBottom: 8, marginBottom: 4 }}
+                  style={{ borderBottom: '1px solid var(--wb-6)', paddingBottom: 8, marginBottom: 4 }}
                 >
                   {allBoards.filter(
                     (k) =>
@@ -630,6 +630,9 @@ const ProBadge: React.FC = () => (
       fontSize: 11,
       fontWeight: 700,
       letterSpacing: 0.6,
+      // Ink and fill both fixed: a gold PRO pill is gold on either theme,
+      // and --color-feedback-warning is a red-orange in light mode, which
+      // this gradient is not meant to be.
       color: '#1a1205',
       background: 'linear-gradient(180deg,#ffd566,#f5a623)',
       boxShadow: '0 1px 4px rgba(0,0,0,0.35)',
@@ -653,7 +656,7 @@ const CustomBadge: React.FC = () => (
       fontSize: 11,
       fontWeight: 700,
       letterSpacing: 0.6,
-      color: '#f5f3ff',
+      color: 'var(--wb-13)',
       background: 'linear-gradient(180deg,#8b5cf6,#6d28d9)',
       boxShadow: '0 1px 4px rgba(0,0,0,0.35)',
     }}
@@ -943,8 +946,8 @@ const OnlineBadge: React.FC = () => (
       fontSize: 11,
       fontWeight: 700,
       letterSpacing: 0.6,
-      color: '#04211c',
-      background: 'linear-gradient(180deg,#5eead4,#14b8a6)',
+      color: '#04241a',
+      background: 'linear-gradient(180deg,#4ade80,#14b8a6)',
       boxShadow: '0 1px 4px rgba(0,0,0,0.35)',
     }}
   >

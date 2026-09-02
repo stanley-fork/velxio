@@ -40,7 +40,9 @@
       "shareLabel": "分享 / 嵌入",
       "githubSyncLabel": "同步到 GitHub",
       "uploadFirmwareLabel": "上传固件",
-      "recordLabel": "录制仿真"
+      "recordLabel": "录制仿真",
+      "themeToLight": "Switch to light theme",
+      "themeToDark": "Switch to dark theme"
     },
     "fileExplorer": {
       "workspace": "工作区",
@@ -399,13 +401,18 @@
       "compile": "编译",
       "run": "运行",
       "hideExplorer": "隐藏文件资源管理器",
-      "showExplorer": "显示文件资源管理器"
+      "showExplorer": "显示文件资源管理器",
+      "appearance": "Appearance",
+      "themeDark": "Dark",
+      "themeLight": "Light",
+      "themeSystem": "Match system"
     },
     "inspector": {
       "propertiesTab": "属性",
       "datasheetTab": "数据手册",
       "examplesTitle": "示例项目",
-      "productPage": "产品页面"
+      "productPage": "产品页面",
+      "datasheetPage": "Specifications"
     },
     "flash": {
       "title": "烧录 {{board}}",
