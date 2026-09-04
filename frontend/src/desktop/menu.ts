@@ -23,6 +23,8 @@
  */
 
 import { listen } from './tauriBridge';
+import { describeError } from './describeError';
+import { MANUAL_CHECK_EVENT } from './UpdateAvailableToast';
 import { dlog } from './log';
 import { triggerDownloadVlx, importVlxFile } from '../utils/vlxFile';
 import { useSimulatorStore } from '../store/useSimulatorStore';
@@ -85,7 +87,7 @@ async function handle(action: MenuAction, payload?: MenuEventPayload): Promise<v
       window.dispatchEvent(new CustomEvent(`velxio:menu:${action}`));
       return;
     case 'check-for-updates':
-      await checkForUpdates();
+      checkForUpdates();
       return;
     case 'set-locale':
       if (payload?.locale) setLocale(payload.locale);
@@ -149,7 +151,7 @@ function pickAndImportVlx(): void {
       try {
         await importVlxFile(file);
       } catch (err) {
-        showMessageDialog(`Failed to open .vlx: ${(err as Error).message}`, {
+        showMessageDialog(`Failed to open .vlx: ${describeError(err)}`, {
           kind: 'error',
         });
       }
@@ -242,23 +244,15 @@ function newProject(): void {
   }
 }
 
-async function checkForUpdates(): Promise<void> {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const updater = (window as any).__TAURI__?.updater;
-    if (!updater?.check) {
-      showMessageDialog('Update plugin not available in this build.');
-      return;
-    }
-    const update = await updater.check();
-    if (update) {
-      await update.downloadAndInstall();
-    } else {
-      showMessageDialog('Velxio Desktop is up to date.', { kind: 'success' });
-    }
-  } catch (err) {
-    showMessageDialog(`Update check failed: ${(err as Error).message}`, {
-      kind: 'error',
-    });
-  }
+/**
+ * Hand the request to <UpdateAvailableToast>, which owns the update UI:
+ * it asks before downloading, shows progress, and reports failures.
+ *
+ * This used to run its own check and call `downloadAndInstall()` straight
+ * away — ~100 MB fetched and the app relaunched with no prompt and no
+ * progress, while the automatic check politely asked first. Two code
+ * paths, two behaviours; now there is one.
+ */
+function checkForUpdates(): void {
+  window.dispatchEvent(new Event(MANUAL_CHECK_EVENT));
 }
