@@ -8,6 +8,10 @@ import {
   installWebFlashImpl,
   webFlashAvailable,
   webFlashMpyAvailable,
+  webFlashBootloaderHint,
+  webFlashHardwareRevisions,
+  isNotInBootloaderError,
+  NotInBootloaderError,
   type WebFlashImpl,
 } from '../lib/proWebFlash';
 
@@ -60,6 +64,73 @@ describe('proWebFlash seam', () => {
       }),
     );
     expect(webFlashAvailable('esp32')).toBe(false);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('has no bootloader step unless the impl declares one for the kind', () => {
+    expect(webFlashBootloaderHint('raspberry-pi-pico')).toBeNull(); // no impl
+    installWebFlashImpl(fakeImpl(() => true));
+    expect(webFlashBootloaderHint('raspberry-pi-pico')).toBeNull(); // impl without the method
+    installWebFlashImpl({
+      ...fakeImpl(() => true),
+      bootloaderHint: (kind) => (kind === 'raspberry-pi-pico' ? { automatic: true } : null),
+    });
+    expect(webFlashBootloaderHint('raspberry-pi-pico')).toEqual({ automatic: true });
+    expect(webFlashBootloaderHint('esp32')).toBeNull();
+  });
+
+  it('swallows a throwing bootloaderHint() like available()', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    installWebFlashImpl({
+      ...fakeImpl(() => true),
+      bootloaderHint: () => {
+        throw new Error('overlay bug');
+      },
+    });
+    expect(webFlashBootloaderHint('raspberry-pi-pico')).toBeNull();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('recognises the not-in-bootloader error by class and by name', () => {
+    expect(isNotInBootloaderError(new NotInBootloaderError('not in BOOTSEL'))).toBe(true);
+    // A copy that crossed a module boundary keeps the name, not the prototype.
+    const foreign = new Error('not in BOOTSEL');
+    foreign.name = 'NotInBootloaderError';
+    expect(isNotInBootloaderError(foreign)).toBe(true);
+    expect(isNotInBootloaderError(new Error('port busy'))).toBe(false);
+    expect(isNotInBootloaderError('nope')).toBe(false);
+  });
+
+  it('lists hardware revisions only when the impl declares more than one', () => {
+    expect(webFlashHardwareRevisions('stellar-unicorn')).toBeNull(); // no impl
+    installWebFlashImpl({
+      ...fakeImpl(() => true),
+      hardwareRevisions: (kind) =>
+        kind === 'stellar-unicorn'
+          ? [
+              { id: 'rp2350', label: 'Pico 2 W aboard', fqbn: 'rp2040:rp2040:rpipico2w:arch=riscv' },
+              { id: 'rp2040', label: 'Pico W aboard', fqbn: 'rp2040:rp2040:rpipicow' },
+            ]
+          : kind === 'raspberry-pi-pico'
+            ? [{ id: 'only', label: 'Pico', fqbn: 'rp2040:rp2040:rpipico' }]
+            : null,
+    });
+    expect(webFlashHardwareRevisions('stellar-unicorn')?.map((r) => r.id)).toEqual(['rp2350', 'rp2040']);
+    expect(webFlashHardwareRevisions('raspberry-pi-pico')).toBeNull(); // a single entry is no choice
+    expect(webFlashHardwareRevisions('esp32')).toBeNull();
+  });
+
+  it('swallows a throwing hardwareRevisions()', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    installWebFlashImpl({
+      ...fakeImpl(() => true),
+      hardwareRevisions: () => {
+        throw new Error('overlay bug');
+      },
+    });
+    expect(webFlashHardwareRevisions('stellar-unicorn')).toBeNull();
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
   });
