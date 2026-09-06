@@ -4,7 +4,7 @@
  * and we assert a full round-trip (names + bytes), plus BPB/structure checks.
  */
 import { describe, it, expect } from 'vitest';
-import { buildFat16Image, readFat16Image, type SdFile } from '../utils/fatImage';
+import { buildFat16Image, normalizeSdPath, readFat16Image, type SdFile } from '../utils/fatImage';
 import { buildProjectSdImage, bytesToB64, decodeSdFiles } from '../utils/sdCardFiles';
 
 // ── Minimal FAT16 reader (test-only) — parses root dir + FAT chains ──────────
@@ -215,6 +215,111 @@ describe('sdCardFiles upload helpers', () => {
     )!;
     expect(f.data.length).toBe(700);
     expect(f.data.every((b) => b === 0x7e)).toBe(true);
+  });
+});
+
+describe('folders: a "/" in the name puts the file in that directory', () => {
+  const enc = (t: string) => new TextEncoder().encode(t);
+
+  it('lists nested paths back, bytes exact, any depth', () => {
+    const img = buildFat16Image([
+      { name: 'MUSIC/tracklist.txt', data: enc('Blue Monday\n') },
+      { name: 'MUSIC/album one/song.wav', data: new Uint8Array([1, 2, 3, 4]) },
+      { name: 'readme.txt', data: enc('root') },
+      { name: 'a/b/c/d/deep.bin', data: new Uint8Array(700).fill(7) },
+    ]);
+    const got = readFat16Image(img);
+    // Names that fit 8.3 come back upper-cased (no LFN is written for them,
+    // same as the root has always behaved); long names come back exact.
+    const byName = Object.fromEntries(got.map((f) => [f.name.toLowerCase(), f]));
+    expect(Object.keys(byName).sort()).toEqual(
+      ['music/album one/song.wav', 'music/tracklist.txt', 'a/b/c/d/deep.bin', 'readme.txt'].sort(),
+    );
+    expect(got.map((f) => f.name)).toContain('MUSIC/tracklist.txt');
+    expect(new TextDecoder().decode(byName['music/tracklist.txt'].data)).toBe('Blue Monday\n');
+    expect(Array.from(byName['music/album one/song.wav'].data)).toEqual([1, 2, 3, 4]);
+    expect(byName['a/b/c/d/deep.bin'].size).toBe(700);
+    expect(byName['a/b/c/d/deep.bin'].data.every((b) => b === 7)).toBe(true);
+  });
+
+  it('a subdirectory starts with "." and ".." pointing at itself and its parent', () => {
+    const img = buildFat16Image([{ name: 'DIR/SUB/f.txt', data: enc('x') }]);
+    const u16 = (o: number) => img[o] | (img[o + 1] << 8);
+    const bps = u16(11);
+    const reserved = u16(14);
+    const numFats = img[16];
+    const rootEntries = u16(17);
+    const fatSz = u16(22);
+    const rootStart = (reserved + numFats * fatSz) * bps;
+    const dataStart = rootStart + Math.ceil((rootEntries * 32) / bps) * bps;
+    const clusterAt = (cl: number) => dataStart + (cl - 2) * bps * img[13];
+
+    // Root: the volume label first (fsck.fat wants one to match the boot
+    // sector), then DIR, attr 0x10, some first cluster.
+    expect(img[rootStart + 11]).toBe(0x08);
+    const r1 = rootStart + 32;
+    expect(String.fromCharCode(...img.subarray(r1, r1 + 11))).toBe('DIR        ');
+    expect(img[r1 + 11]).toBe(0x10);
+    const dirCl = u16(r1 + 26);
+    expect(dirCl).toBeGreaterThanOrEqual(2);
+    // DIR's listing: ".", ".." (parent = root = 0), then SUB.
+    const d = clusterAt(dirCl);
+    expect(String.fromCharCode(...img.subarray(d, d + 11))).toBe('.          ');
+    expect(u16(d + 26)).toBe(dirCl);
+    expect(String.fromCharCode(...img.subarray(d + 32, d + 43))).toBe('..         ');
+    expect(u16(d + 32 + 26)).toBe(0);
+    expect(String.fromCharCode(...img.subarray(d + 64, d + 75))).toBe('SUB        ');
+    const subCl = u16(d + 64 + 26);
+    // SUB's ".." points back at DIR.
+    const sd = clusterAt(subCl);
+    expect(u16(sd + 32 + 26)).toBe(dirCl);
+  });
+
+  it('a folder with more entries than one cluster holds spans a chain', () => {
+    // 1 sector per cluster = 16 entries; "." + ".." + 30 files needs 2+.
+    const files: SdFile[] = [];
+    for (let i = 0; i < 30; i++) files.push({ name: `LOGS/L${i}.TXT`, data: enc(`log ${i}`) });
+    const got = readFat16Image(buildFat16Image(files));
+    expect(got.map((f) => f.name).sort()).toEqual(files.map((f) => f.name).sort());
+    expect(new TextDecoder().decode(got.find((f) => f.name === 'LOGS/L29.TXT')!.data)).toBe('log 29');
+  });
+
+  it('long names work inside folders too', () => {
+    const got = readFat16Image(
+      buildFat16Image([{ name: 'My Photos/holiday picture 2026.jpeg', data: enc('jpg') }]),
+    );
+    expect(got.map((f) => f.name)).toEqual(['My Photos/holiday picture 2026.jpeg']);
+  });
+
+  it('folder names are case-insensitive, like FAT: one folder, both files', () => {
+    const got = readFat16Image(
+      buildFat16Image([
+        { name: 'Music/a.txt', data: enc('a') },
+        { name: 'MUSIC/b.txt', data: enc('b') },
+      ]),
+    );
+    expect(got.map((f) => f.name.toLowerCase()).sort()).toEqual(['music/a.txt', 'music/b.txt']);
+  });
+
+  it('normalizeSdPath: slashes tidy, "." and ".." dropped, backslashes accepted', () => {
+    expect(normalizeSdPath('/MUSIC//tracklist.txt/')).toBe('MUSIC/tracklist.txt');
+    expect(normalizeSdPath('.\\data\\cfg.json')).toBe('data/cfg.json');
+    expect(normalizeSdPath('a/../b.txt')).toBe('a/b.txt');
+    expect(normalizeSdPath('///')).toBe('');
+  });
+
+  it('buildProjectSdImage: uploads and workspace files keep their paths, overrides by path', () => {
+    const img = buildProjectSdImage(
+      [{ name: 'data/config.json', content: '{"a":1}' }],
+      decodeSdFiles([
+        { name: '/MUSIC/tracklist.txt', contentB64: bytesToB64(enc('t')) },
+        { name: 'DATA/config.json', contentB64: bytesToB64(enc('{"a":2}')) },
+      ]),
+    );
+    const got = readFat16Image(img);
+    const byName = Object.fromEntries(got.map((f) => [f.name, new TextDecoder().decode(f.data)]));
+    expect(Object.keys(byName).sort()).toEqual(['DATA/config.json', 'MUSIC/tracklist.txt']);
+    expect(byName['DATA/config.json']).toBe('{"a":2}'); // the upload wins
   });
 });
 

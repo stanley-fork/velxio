@@ -197,6 +197,23 @@ def test_render_sdkconfig_enables_mbedtls_psk(compiler: ESPIDFCompiler) -> None:
     assert 'CONFIG_MBEDTLS_KEY_EXCHANGE_PSK=y' in text
 
 
+def test_render_sdkconfig_enables_fatfs_long_names(compiler: ESPIDFCompiler) -> None:
+    # ESP-IDF's FatFs defaults to 8.3 names only. The Arduino IDE's core
+    # (esp32-arduino-lib-builder defconfig.common) turns long names on, so a
+    # sketch doing SD.open("/MUSIC/tracklist.txt") works on the board and
+    # must work here: the microSD card image stores that file as
+    # TRACKL~1.TXT + VFAT long-name entries, which only an LFN-aware FatFs
+    # matches by its real name.
+    from app.services.espidf_compiler import _TEMPLATE_DIR
+    for target in ('esp32', 'esp32s3', 'esp32c3'):
+        opts = compiler._normalize_options(None, idf_target=target)
+        text = compiler._render_sdkconfig(opts, _TEMPLATE_DIR)
+        assert 'CONFIG_FATFS_LFN_STACK=y' in text
+        assert 'CONFIG_FATFS_API_ENCODING_UTF_8=y' in text
+        assert 'CONFIG_FATFS_CODEPAGE_850=y' in text
+        assert 'CONFIG_FATFS_USE_LABEL=y' in text
+
+
 def test_render_sdkconfig_debug_level_verbose(compiler: ESPIDFCompiler) -> None:
     from app.services.espidf_compiler import _TEMPLATE_DIR
     opts = compiler._normalize_options(

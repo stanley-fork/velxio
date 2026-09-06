@@ -83,12 +83,20 @@ _CACHE_BYPASS_TOKEN = os.environ.get("VELXIO_CACHE_BYPASS_TOKEN", "").strip()
 
 
 def _toolchain_epoch() -> str:
-    """Fingerprint the code that TURNS a request into build flags.
+    """Fingerprint everything that TURNS a request into build flags.
 
     A cached binary is only valid while the sdkconfig/CLI generation behind it
     is unchanged — flipping CONFIG_SPIRAM_MEMTEST off, say, must not keep
     serving images built with it on. Hashing the two service modules makes the
     invalidation automatic: edit them, every key changes.
+
+    The CONFIG_* lines themselves do NOT live in those modules: they live in
+    the esp-idf-template tree (sdkconfig.defaults.in, the CMakeLists, main.cpp,
+    partitions.csv), which the compiler renders and builds. A template-only
+    change used to leave the epoch untouched, so every sketch already in the
+    cache kept its stale image forever — measured when turning FatFs long
+    names on reached only sketches nobody had compiled before (2026-09-06).
+    Hash that tree too, path and bytes, in a stable order.
     """
     h = hashlib.sha256()
     here = Path(__file__).resolve().parents[2] / "services"
@@ -97,6 +105,13 @@ def _toolchain_epoch() -> str:
             h.update((here / name).read_bytes())
         except OSError:
             h.update(b"?")
+    template_dir = here / "esp-idf-template"
+    try:
+        for path in sorted(p for p in template_dir.rglob("*") if p.is_file()):
+            h.update(str(path.relative_to(template_dir)).encode())
+            h.update(path.read_bytes())
+    except OSError:
+        h.update(b"?")
     return h.hexdigest()[:16]
 
 

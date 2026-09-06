@@ -10,7 +10,9 @@
  *
  * Files are persisted on the component as `properties.sdFiles`
  * (`{ name, contentB64 }[]`), so they travel with the project (.vlx) and feed
- * `buildProjectSdImage` on the next run.
+ * `buildProjectSdImage` on the next run. `name` is a card PATH: "Add folder"
+ * keeps the picked folder's tree ("MUSIC/tracklist.txt"), the Wokwi model,
+ * so a sketch that opens a file inside a directory finds it.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -18,7 +20,7 @@ import {
   SD_UPLOAD_MAX_BYTES,
   type UploadedSdFile,
 } from '../../utils/sdCardFiles';
-import { readFat16Image, type FatDirFile } from '../../utils/fatImage';
+import { normalizeSdPath, readFat16Image, type FatDirFile } from '../../utils/fatImage';
 import { sdCardUploadAllowed, triggerSdCardUpgradePrompt } from '../../lib/proSdCardGate';
 import { getEsp32Bridge, useSimulatorStore } from '../../store/useSimulatorStore';
 
@@ -45,6 +47,7 @@ function humanSize(n: number): string {
 
 export const SdCardPanel: React.FC<SdCardPanelProps> = ({ files, onChange, boardId }) => {
   const inputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
   const total = files.reduce((s, f) => s + fileBytes(f), 0);
   // Whether THIS user may upload. Read at render so the panel can say so
   // before the click: a "Paid" tag alone left people clicking "Add files"
@@ -82,20 +85,23 @@ export const SdCardPanel: React.FC<SdCardPanelProps> = ({ files, onChange, board
     const url = URL.createObjectURL(new Blob([new Uint8Array(f.data)]));
     const a = document.createElement('a');
     a.href = url;
-    a.download = f.name;
+    a.download = f.name.split('/').pop() ?? f.name; // a path is not a download name
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
   };
 
-  const openPicker = (): void => {
+  const openPicker = (which: 'files' | 'folder'): void => {
     // Gate the PAID action: a non-paid user gets the upgrade prompt instead.
     if (!sdCardUploadAllowed()) {
       triggerSdCardUpgradePrompt();
       return;
     }
-    inputRef.current?.click();
+    (which === 'folder' ? folderInputRef : inputRef).current?.click();
   };
 
+  // A folder pick keeps each file's path under the picked folder
+  // (webkitRelativePath, "MUSIC/tracklist.txt"); a plain file pick has no
+  // path and lands in the root.
   const handlePick = async (e: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
     const picked = Array.from(e.target.files ?? []);
     e.target.value = '';
@@ -103,16 +109,25 @@ export const SdCardPanel: React.FC<SdCardPanelProps> = ({ files, onChange, board
     const next = [...files];
     let running = total;
     for (const file of picked) {
+      const rel = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
+      const name = normalizeSdPath(rel || file.name);
+      if (!name) continue;
       const bytes = new Uint8Array(await file.arrayBuffer());
       if (running + bytes.length > SD_UPLOAD_MAX_BYTES) continue; // skip oversize
       running += bytes.length;
-      const entry: UploadedSdFile = { name: file.name, contentB64: bytesToB64(bytes) };
-      const idx = next.findIndex((f) => f.name.toLowerCase() === file.name.toLowerCase());
+      const entry: UploadedSdFile = { name, contentB64: bytesToB64(bytes) };
+      const idx = next.findIndex((f) => f.name.toLowerCase() === name.toLowerCase());
       if (idx >= 0) next[idx] = entry;
       else next.push(entry);
     }
     onChange(next);
   };
+
+  // The directory picker is a non-standard attribute React's typings do not
+  // know; set it on the element itself.
+  useEffect(() => {
+    folderInputRef.current?.setAttribute('webkitdirectory', '');
+  }, []);
 
   const remove = (name: string): void => onChange(files.filter((f) => f.name !== name));
 
@@ -123,16 +138,16 @@ export const SdCardPanel: React.FC<SdCardPanelProps> = ({ files, onChange, board
       </div>
       {files.length === 0 && canUpload && (
         <div className="sd-card-hint">
-          Upload your own files (images, audio, data). The project's data files
-          are added automatically; source files (.ino, .h, .cpp, .py) stay off
-          the card.
+          Upload your own files (images, audio, data), or a whole folder to keep
+          its tree on the card. The project's data files are added automatically;
+          source files (.ino, .h, .cpp, .py) stay off the card.
         </div>
       )}
       {!canUpload && (
         <div className="sd-card-hint">
-          Uploading your own files (images, audio, data) to the card is part of
-          the paid plans. On the free plan, any data file you add to the project
-          workspace (a .txt, .csv, .json...) is copied onto the card
+          Uploading your own files or folders (images, audio, data) to the card
+          is part of the paid plans. On the free plan, any data file you add to
+          the project workspace (a .txt, .csv, .json...) is copied onto the card
           automatically; source files (.ino, .h, .cpp, .py) stay off it.
         </div>
       )}
@@ -152,19 +167,39 @@ export const SdCardPanel: React.FC<SdCardPanelProps> = ({ files, onChange, board
         </div>
       ))}
       <div className="sd-card-footer">
-        <button
-          className="sd-card-add"
-          onClick={openPicker}
-          title={canUpload ? undefined : 'Uploading files to the card needs a paid plan'}
-        >
-          {canUpload ? '+ Add files' : '+ Add files (paid)'}
-        </button>
+        <span className="sd-card-add-group">
+          <button
+            className="sd-card-add"
+            onClick={() => openPicker('files')}
+            title={canUpload ? undefined : 'Uploading files to the card needs a paid plan'}
+          >
+            {canUpload ? '+ Add files' : '+ Add files (paid)'}
+          </button>
+          <button
+            className="sd-card-add sd-card-add--secondary"
+            onClick={() => openPicker('folder')}
+            title={
+              canUpload
+                ? 'Upload a folder; its files keep their paths on the card'
+                : 'Uploading folders to the card needs a paid plan'
+            }
+          >
+            + Add folder
+          </button>
+        </span>
         <span className="sd-card-total">
           {humanSize(total)} / {humanSize(SD_UPLOAD_MAX_BYTES)}
         </span>
       </div>
       <input
         ref={inputRef}
+        type="file"
+        multiple
+        style={{ display: 'none' }}
+        onChange={handlePick}
+      />
+      <input
+        ref={folderInputRef}
         type="file"
         multiple
         style={{ display: 'none' }}

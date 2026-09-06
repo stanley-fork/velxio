@@ -413,6 +413,19 @@
   transform: translateY(-1px);
   box-shadow: 0 2px 8px var(--color-accent-soft-strong);
 }
+.sd-card-add-group {
+  display: inline-flex;
+  gap: 6px;
+}
+.sd-card-add--secondary {
+  background-color: transparent;
+  color: var(--color-action-primary);
+  border: 1px solid var(--color-action-primary);
+  padding: 4px 11px;
+}
+.sd-card-add--secondary:hover {
+  background-color: var(--color-accent-soft);
+}
 .sd-card-total {
   font-size: 11px;
   color: var(--wb-11);

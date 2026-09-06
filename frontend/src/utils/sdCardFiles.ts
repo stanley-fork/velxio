@@ -10,7 +10,7 @@
  * Uint8Array disk image handed to the `microsd-card` simulation part via
  * `element.sdImageData`.
  */
-import { buildFat16Image, type SdFile, type BuildFatOptions } from './fatImage';
+import { buildFat16Image, normalizeSdPath, type SdFile, type BuildFatOptions } from './fatImage';
 
 export interface WorkspaceFileLike {
   name: string;
@@ -19,6 +19,8 @@ export interface WorkspaceFileLike {
 
 /** An uploaded SD file as persisted on the component (`properties.sdFiles`). */
 export interface UploadedSdFile {
+  /** Path on the card, '/'-separated ("MUSIC/tracklist.txt"); a folder
+   *  upload keeps its tree this way. Plain names land in the root. */
   name: string;
   /** Base64 of the raw bytes (binaries included). */
   contentB64: string;
@@ -49,8 +51,10 @@ export function decodeSdFiles(raw: unknown): SdFile[] {
   const out: SdFile[] = [];
   for (const e of raw) {
     if (e && typeof e.name === 'string' && typeof e.contentB64 === 'string') {
+      const name = normalizeSdPath(e.name);
+      if (!name) continue;
       try {
-        out.push({ name: e.name, data: b64ToBytes(e.contentB64) });
+        out.push({ name, data: b64ToBytes(e.contentB64) });
       } catch {
         /* skip malformed entry */
       }
@@ -74,13 +78,19 @@ export function buildProjectSdImage(
   uploaded: SdFile[] = [],
   opts?: BuildFatOptions,
 ): Uint8Array {
+  // Keyed by normalised, case-folded PATH: FAT is case-insensitive and
+  // "MUSIC/a.txt" and "music/a.txt" are the same file.
   const byName = new Map<string, SdFile>();
   for (const f of workspaceFiles) {
     if (SD_EXCLUDED_SOURCES.test(f.name)) continue;
-    byName.set(f.name.toLowerCase(), { name: f.name, data: new TextEncoder().encode(f.content) });
+    const name = normalizeSdPath(f.name);
+    if (!name) continue;
+    byName.set(name.toLowerCase(), { name, data: new TextEncoder().encode(f.content) });
   }
   for (const f of uploaded) {
-    byName.set(f.name.toLowerCase(), f);
+    const name = normalizeSdPath(f.name);
+    if (!name) continue;
+    byName.set(name.toLowerCase(), { name, data: f.data });
   }
   return buildFat16Image([...byName.values()], opts);
 }
