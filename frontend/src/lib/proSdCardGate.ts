@@ -43,7 +43,16 @@ export function triggerSdCardUpgradePrompt(): void {
   if (typeof window === 'undefined') return;
   window.dispatchEvent(
     new CustomEvent('velxio-pro-upgrade-prompt', {
-      detail: { componentName: 'microSD file upload' },
+      detail: {
+        componentName: 'microSD file upload',
+        // Any paid plan unlocks it (not only the top tier), and the free
+        // path exists: say both, so the modal is an answer, not a wall.
+        requiredPlan: 'maker',
+        description:
+          'Uploading your own files (images, audio, data) to the microSD card is ' +
+          'included in every paid plan. On the free plan, data files you add to ' +
+          'the project workspace are copied onto the card automatically.',
+      },
     }),
   );
 }

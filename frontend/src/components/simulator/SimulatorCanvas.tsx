@@ -494,6 +494,20 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
     }
   }, [interactionRunning, setSelectedWire]);
 
+  /**
+   * Open the part inspector on a component, at a VIEWPORT anchor. Shared by
+   * the right-click and the on-canvas shortcut some parts show (the microSD
+   * card's "SD files" chip). Works while the simulation runs too: the dialog
+   * is read-only then, and the edit selection (marching ants) is not touched
+   * because the canvas is interact-only.
+   */
+  const openComponentInspector = (componentId: string, at: { x: number; y: number }) => {
+    if (!interactionRunningRef.current) setSelectedComponentId(componentId);
+    setPropertyDialogComponentId(componentId);
+    setPropertyDialogPosition(at);
+    setShowPropertyDialog(true);
+  };
+
   // Lets the touch handlers (defined in an earlier effect closure) reach the
   // drop-time breadboard seating declared further down.
   const seatDroppedComponentRef = useRef<(componentId: string) => void>(() => {});
@@ -2737,13 +2751,18 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
             onContextMenu={(e) => {
               // Right click is where properties and pins live now. Selecting
               // first means the ants mark what the dialog is about to edit.
+              // While the simulation runs the inspector still opens (boards
+              // always did), read-only: no rotate/delete/wiring, but the
+              // datasheet, the pin roles and the SD card's live contents are
+              // exactly what a running circuit makes you want to look at.
               e.preventDefault();
               e.stopPropagation();
-              if (interactionRunning) return;
-              setSelectedComponentId(component.id);
-              setPropertyDialogComponentId(component.id);
-              setPropertyDialogPosition({ x: e.clientX, y: e.clientY });
-              setShowPropertyDialog(true);
+              openComponentInspector(component.id, { x: e.clientX, y: e.clientY });
+            }}
+            onOpenInspector={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              openComponentInspector(component.id, { x: e.clientX, y: e.clientY });
             }}
           />
 
@@ -3660,6 +3679,7 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
               position={propertyDialogPosition}
               pinInfo={pinInfo || []}
               wireInProgress={Boolean(wireInProgress)}
+              readOnly={interactionRunning}
               onClose={() => setShowPropertyDialog(false)}
               onRotate={handleRotateComponent}
               onDelete={(id) => {
@@ -3681,7 +3701,7 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
                   }
                 }
               }}
-              onPinSelect={(id, pinName) => {
+              onPinSelect={interactionRunning ? undefined : (id, pinName) => {
                 // Resolve world coords the SAME way wires + the pin overlay do,
                 // via calculatePinPosition, which rotates the pin around the
                 // wrapper centre for the component's rotation. The old
@@ -3796,6 +3816,7 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
               // boards — it knows the wire count; a second ask here would stack.
               skipDeleteConfirm
               wireInProgress={Boolean(wireInProgress)}
+              readOnly={interactionRunning}
               onClose={() => setBoardContextMenu(null)}
               onPropertyChange={(id, propName, value) => {
                 // The board dialog's only editable "property" is the SD
@@ -3809,7 +3830,7 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
                 setBoardContextMenu(null);
                 setBoardToRemove(id);
               }}
-              onPinSelect={(id, pinName) => {
+              onPinSelect={interactionRunning ? undefined : (id, pinName) => {
                 const b = boards.find((x) => x.id === id);
                 const pin = (document.getElementById(id) as any)?.pinInfo?.find(
                   (p: { name: string }) => p.name === pinName,

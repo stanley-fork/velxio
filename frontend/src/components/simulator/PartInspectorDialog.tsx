@@ -129,6 +129,11 @@ interface PartInspectorDialogProps {
   previewTagName?: string;
   /** Attributes to set on the preview element (boards need board-kind). */
   previewAttributes?: Record<string, string>;
+  /** The simulation is running: the part can be inspected (pins, datasheet,
+      the SD card's live contents) but not edited. Rotate/Delete are hidden
+      and the property editors are disabled; the canvas already withholds
+      onPinSelect so pins are labels, not wire starts. */
+  readOnly?: boolean;
 }
 
 /**
@@ -160,6 +165,7 @@ export const PartInspectorDialog: React.FC<PartInspectorDialogProps> = ({
   skipDeleteConfirm,
   previewTagName,
   previewAttributes,
+  readOnly = false,
 }) => {
   const { t } = useTranslation();
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -645,6 +651,7 @@ export const PartInspectorDialog: React.FC<PartInspectorDialogProps> = ({
                       <select
                         className="pid-select"
                         value={current}
+                        disabled={readOnly}
                         onChange={(e) => onPropertyChange?.(componentId, prop.name, e.target.value)}
                       >
                         {prop.options.map((opt: string) => (
@@ -663,6 +670,7 @@ export const PartInspectorDialog: React.FC<PartInspectorDialogProps> = ({
                       type={prop.control === 'number' ? 'number' : 'text'}
                       className="pid-input"
                       value={current}
+                      disabled={readOnly}
                       onChange={(e) => onPropertyChange?.(componentId, prop.name, e.target.value)}
                     />
                   </div>
@@ -855,7 +863,7 @@ export const PartInspectorDialog: React.FC<PartInspectorDialogProps> = ({
         <div className="pid-actions">
           {/* Boards pass no onRotate (they do not rotate); they pass
               Board Options / Flash as extraActions instead. */}
-          {onRotate && (
+          {onRotate && !readOnly && (
             <button
               className="pid-action-button"
               onClick={() => onRotate(componentId)}
@@ -875,13 +883,15 @@ export const PartInspectorDialog: React.FC<PartInspectorDialogProps> = ({
               {a.label}
             </button>
           ))}
-          <button
-            className="pid-action-button pid-action-delete"
-            onClick={handleDeleteClick}
-            title={t('editor.componentProps.deleteTitle')}
-          >
-            {deleteLabel ?? t('editor.componentProps.delete')}
-          </button>
+          {!readOnly && (
+            <button
+              className="pid-action-button pid-action-delete"
+              onClick={handleDeleteClick}
+              title={t('editor.componentProps.deleteTitle')}
+            >
+              {deleteLabel ?? t('editor.componentProps.delete')}
+            </button>
+          )}
 
           {/* Buy lives here, right-aligned, so it is reachable from BOTH
               tabs — it used to sit at the end of the datasheet body, which

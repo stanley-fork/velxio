@@ -46,6 +46,11 @@ function humanSize(n: number): string {
 export const SdCardPanel: React.FC<SdCardPanelProps> = ({ files, onChange, boardId }) => {
   const inputRef = useRef<HTMLInputElement>(null);
   const total = files.reduce((s, f) => s + fileBytes(f), 0);
+  // Whether THIS user may upload. Read at render so the panel can say so
+  // before the click: a "Paid" tag alone left people clicking "Add files"
+  // and only then learning it was gated, with no word about the free way
+  // (a data file in the project workspace lands on the card by itself).
+  const canUpload = sdCardUploadAllowed();
 
   // ── Live card contents: what is ON the card right now, including files
   //    the running sketch wrote (photos, logs). Read back from the bridge's
@@ -116,11 +121,19 @@ export const SdCardPanel: React.FC<SdCardPanelProps> = ({ files, onChange, board
       <div className="sd-card-label">
         SD Card files <span className="sd-card-paid">Paid</span>
       </div>
-      {files.length === 0 && (
+      {files.length === 0 && canUpload && (
         <div className="sd-card-hint">
           Upload your own files (images, audio, data). The project's data files
           are added automatically; source files (.ino, .h, .cpp, .py) stay off
           the card.
+        </div>
+      )}
+      {!canUpload && (
+        <div className="sd-card-hint">
+          Uploading your own files (images, audio, data) to the card is part of
+          the paid plans. On the free plan, any data file you add to the project
+          workspace (a .txt, .csv, .json...) is copied onto the card
+          automatically; source files (.ino, .h, .cpp, .py) stay off it.
         </div>
       )}
       {files.map((f) => (
@@ -139,8 +152,12 @@ export const SdCardPanel: React.FC<SdCardPanelProps> = ({ files, onChange, board
         </div>
       ))}
       <div className="sd-card-footer">
-        <button className="sd-card-add" onClick={openPicker}>
-          + Add files
+        <button
+          className="sd-card-add"
+          onClick={openPicker}
+          title={canUpload ? undefined : 'Uploading files to the card needs a paid plan'}
+        >
+          {canUpload ? '+ Add files' : '+ Add files (paid)'}
         </button>
         <span className="sd-card-total">
           {humanSize(total)} / {humanSize(SD_UPLOAD_MAX_BYTES)}

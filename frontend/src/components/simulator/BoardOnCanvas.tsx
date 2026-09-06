@@ -293,6 +293,45 @@ export const BoardOnCanvas = ({
         title={board.running ? 'Running' : board.compiledProgram ? 'Compiled' : 'Idle'}
       />
 
+      {/* A board with a built-in microSD slot (XIAO Sense, M5Stack Core,
+          Cardputer): the visible way into the SD panel of its inspector,
+          which the right-click alone kept hidden from most people. Opens
+          the same board inspector, in every mode. */}
+      {getProBoard(boardKind)?.builtInSdCsPin !== undefined && onContextMenu && (
+        <button
+          type="button"
+          className="velxio-part-shortcut"
+          title="Files on the board's SD card: upload your own, download what the sketch wrote"
+          onClick={onContextMenu}
+          onMouseDown={(e) => e.stopPropagation()}
+          style={{
+            position: 'absolute',
+            left: x + 4,
+            top: y + size.h + 4,
+            zIndex: 11,
+            cursor: 'pointer',
+            fontSize: '10px',
+            fontWeight: 600,
+            lineHeight: '1.2',
+            padding: '2px 7px',
+            borderRadius: '10px',
+            border: '1px solid #0071e3',
+            background: '#0071e3',
+            color: '#fff',
+            whiteSpace: 'nowrap',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '4px',
+          }}
+        >
+          <svg width="9" height="11" viewBox="0 0 9 11" fill="none" aria-hidden="true">
+            <path d="M3 0.5h5.5v10h-8v-7.5z" stroke="#fff" strokeWidth="1" strokeLinejoin="round" />
+            <path d="M2.5 2.5v2M4.5 2.5v2M6.5 2.5v2" stroke="#fff" strokeWidth="1" />
+          </svg>
+          SD files
+        </button>
+      )}
+
       {/* Drag overlay — hidden during simulation */}
       {!running && (
         <div

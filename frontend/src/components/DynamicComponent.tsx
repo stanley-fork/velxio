@@ -64,6 +64,9 @@ interface DynamicComponentProps {
   onMouseDown?: (e: React.MouseEvent) => void;
   /** Right click: the canvas opens the properties + pins dialog here. */
   onContextMenu?: (e: React.MouseEvent) => void;
+  /** The on-canvas shortcut some parts show (the microSD card's "SD files"
+   *  chip) asks the canvas to open the same inspector, left-click, any mode. */
+  onOpenInspector?: (e: React.MouseEvent) => void;
   onDoubleClick?: (e: React.MouseEvent) => void;
   onMouseEnter?: () => void;
   onMouseLeave?: () => void;
@@ -80,6 +83,7 @@ export const DynamicComponent: React.FC<DynamicComponentProps> = ({
   isHovered = false,
   onMouseDown,
   onContextMenu,
+  onOpenInspector,
   onDoubleClick,
   onMouseEnter,
   onMouseLeave,
@@ -145,6 +149,11 @@ export const DynamicComponent: React.FC<DynamicComponentProps> = ({
     const t = setTimeout(bumpControlHint, 150);
     return () => clearTimeout(t);
   }, [interactionRunning, metadata.id, chipWasmFingerprint]);
+  // Parts with a file store the inspector manages (metadata.sdSlot marks a
+  // part with its own TF slot, the Round Display; the standalone card is
+  // keyed by id like everywhere else in the SD path).
+  const hasSdShortcut =
+    Boolean(onOpenInspector) && (metadata.id === 'microsd-card' || metadata.sdSlot === true);
   const showControlHint =
     interactionRunning &&
     metadata.id === 'custom-chip' &&
@@ -376,6 +385,12 @@ export const DynamicComponent: React.FC<DynamicComponentProps> = ({
       // the user needs to reach. If a new interactive part is added,
       // append its tag here.
       const target = e.target as HTMLElement;
+      // The part's own shortcut chip (SD files) is a button: it must neither
+      // start a drag nor reach the canvas selection logic.
+      if (target.closest?.('.velxio-part-shortcut')) {
+        e.stopPropagation();
+        return;
+      }
       const tag = target.tagName?.toLowerCase() ?? '';
       const ownsPointer =
         interactionRunning &&
@@ -842,11 +857,45 @@ export const DynamicComponent: React.FC<DynamicComponentProps> = ({
           alignItems: 'center',
           justifyContent: 'center',
           gap: '4px',
-          opacity: isHovered || isSelected ? 1 : 0,
+          opacity: isHovered || isSelected || hasSdShortcut ? 1 : 0,
           transition: 'opacity 120ms ease-out',
         }}
       >
         {properties.pin !== undefined ? `Pin ${properties.pin}` : metadata.name}
+        {/* The card's files live in the inspector, which only a right-click
+            reached: nobody found the upload there. This chip is the visible
+            way in, and it stays up while the simulation runs too (the live
+            "Card contents" listing is most useful then). */}
+        {hasSdShortcut && (
+          <button
+            type="button"
+            className="velxio-part-shortcut"
+            title="Files on the SD card: upload your own, download what the sketch wrote"
+            onClick={onOpenInspector}
+            style={{
+              pointerEvents: 'auto',
+              cursor: 'pointer',
+              fontSize: '10px',
+              fontWeight: 600,
+              lineHeight: '1.2',
+              padding: '2px 7px',
+              borderRadius: '10px',
+              border: '1px solid #0071e3',
+              background: '#0071e3',
+              color: '#fff',
+              whiteSpace: 'nowrap',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '4px',
+            }}
+          >
+            <svg width="9" height="11" viewBox="0 0 9 11" fill="none" aria-hidden="true">
+              <path d="M3 0.5h5.5v10h-8v-7.5z" stroke="#fff" strokeWidth="1" strokeLinejoin="round" />
+              <path d="M2.5 2.5v2M4.5 2.5v2M6.5 2.5v2" stroke="#fff" strokeWidth="1" />
+            </svg>
+            SD files
+          </button>
+        )}
         {isKeyBindable(metadata.id) && typeof properties.key === 'string' && properties.key && (
           <span
             style={{

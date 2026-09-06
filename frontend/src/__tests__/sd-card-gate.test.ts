@@ -56,4 +56,19 @@ describe('proSdCardGate', () => {
     expect(events[0].type).toBe('velxio-pro-upgrade-prompt');
     expect(events[0].detail.componentName).toContain('microSD');
   });
+
+  it('names the plan that unlocks it and the free path, so the modal answers', () => {
+    const events: Array<{ detail: { requiredPlan?: string; description?: string } }> = [];
+    vi.stubGlobal('window', {
+      dispatchEvent: (e: { detail: { requiredPlan?: string; description?: string } }) => {
+        events.push(e);
+        return true;
+      },
+    });
+    triggerSdCardUpgradePrompt();
+    // Any paid plan unlocks the upload: the modal must not claim the top tier.
+    expect(events[0].detail.requiredPlan).toBe('maker');
+    expect(events[0].detail.description).toMatch(/free plan/i);
+    expect(events[0].detail.description).toMatch(/copied onto the card automatically/);
+  });
 });
