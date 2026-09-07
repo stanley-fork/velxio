@@ -41,6 +41,30 @@ PRO_BOARD_MESSAGE = (
 )
 
 
+def owner_key(websocket: object) -> "str | None":
+    """Stable, opaque id for "the same person" across tabs.
+
+    The session cookie is hashed rather than stored: this is only used to
+    count concurrent guests per user, so the value never needs to be read
+    back. Falls back to the client host when there is no cookie (desktop
+    sidecar, tests), and to None when there is neither.
+
+    Lives here rather than in the simulation route because the QEMU board
+    lane, which enforces the per-owner guest capacity, is a pluggable
+    extension and must not import the route (that would be a cycle).
+    """
+    import hashlib
+
+    try:
+        token = websocket.cookies.get('access_token')  # type: ignore[attr-defined]
+    except Exception:
+        token = None
+    if token:
+        return 'u:' + hashlib.sha256(token.encode()).hexdigest()[:16]
+    host = getattr(getattr(websocket, 'client', None), 'host', None)
+    return f'h:{host}' if host else None
+
+
 def register_board_access_gate(fn: Optional[BoardAccessGate]) -> None:
     """Install the gate (pro overlay) or clear it (None)."""
     global _gate

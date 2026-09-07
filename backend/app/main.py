@@ -139,6 +139,22 @@ try:
 except ImportError:
     pass
 
+# Optional QEMU board lane. Same extension pattern as `app.pro` above, but a
+# separate package on purpose: the emulators for the paid board families
+# (Raspberry Pi Linux, STM32) ship to velxio.dev AND to Velxio Desktop, while
+# `app.pro` (billing, licence admin, agent) ships only to velxio.dev and is
+# deliberately stripped from the desktop sidecar. Keeping them apart is what
+# lets the desktop have the boards without the server-only machinery.
+#
+# `app.pro_boards` must import nothing outside the desktop sidecar's
+# requirements: a missing third-party dependency raises ModuleNotFoundError,
+# which is an ImportError, and would silently disable the boards here.
+try:
+    from app.pro_boards import register_pro_boards  # type: ignore[import-not-found]
+    register_pro_boards(app)
+except ImportError:
+    pass
+
 @app.get("/")
 def root():
     return {

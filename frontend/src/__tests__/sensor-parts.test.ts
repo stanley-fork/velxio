@@ -691,3 +691,231 @@ describe('neopixel-matrix — attachEvents', () => {
     expect(sim.pinManager.onPinChange).toHaveBeenCalledWith(6, expect.any(Function));
   });
 });
+
+// ─── The hardware (RMT) pixel path ───────────────────────────────────────────
+
+/**
+ * A board simulator that drives its pixels through a peripheral instead of by
+ * bit-banging the pad — every ESP32. `subscribeWs2812` is the whole contract:
+ * the engine already decoded the frame, and the part is HANDED it.
+ */
+function makeRmtSimulator() {
+  const sim = makeSimulator() as ReturnType<typeof makeSimulator> & {
+    subscribeWs2812: ReturnType<typeof vi.fn>;
+    emitFrame: (pin: number, pixels: Array<{ r: number; g: number; b: number }>) => void;
+  };
+  const sinks = new Map<number, (px: Array<{ r: number; g: number; b: number }>) => void>();
+  sim.subscribeWs2812 = vi.fn((pin: number, sink: (px: any) => void) => {
+    sinks.set(pin, sink);
+    return () => sinks.delete(pin);
+  });
+  sim.emitFrame = (pin, pixels) => sinks.get(pin)?.(pixels);
+  return sim;
+}
+
+/**
+ * A board that bit-bangs the line and answers the PORTABLE clock accessors —
+ * which is every simulator except the ESP32 shim. Drives a real WS2812 frame
+ * at `clockHz` so the decoder's thresholds have to scale to it.
+ */
+function makeBitBangSimulator(clockHz: number) {
+  let cycles = 0;
+  let handler: ((pin: number, high: boolean) => void) | null = null;
+  const sim = {
+    pinManager: {
+      onPinChange: vi.fn((_pin: number, cb: (p: number, h: boolean) => void) => {
+        handler = cb;
+        return () => { handler = null; };
+      }),
+      onPwmChange: vi.fn().mockReturnValue(() => {}),
+      triggerPinChange: vi.fn(),
+    },
+    getADC: vi.fn().mockReturnValue(null),
+    setPinState: vi.fn(),
+    getClockHz: () => clockHz,
+    getCurrentCycles: () => cycles,
+    /** Clock out 24 bits MSB-first, real WS2812 widths, after a reset gap. */
+    sendPixel(r: number, g: number, b: number) {
+      const us = (n: number) => Math.max(1, Math.round(clockHz * n * 1e-6));
+      cycles += us(80); // >50us latch
+      for (const byte of [g, r, b]) {
+        for (let i = 7; i >= 0; i--) {
+          const one = (byte >> i) & 1;
+          handler?.(6, true);
+          cycles += one ? us(0.7) : us(0.35);
+          handler?.(6, false);
+          cycles += one ? us(0.55) : us(0.9);
+        }
+      }
+    },
+  };
+  return sim;
+}
+
+describe('WS2812 edge decode — scales to the board clock', () => {
+  // The decoder used to hard-code 8 and 800 cycles: correct ONLY at 16 MHz.
+  // The RP2040 runs at 125 MHz, where every real pulse is far longer than 8
+  // cycles, so a naive threshold reads 0xFF out of every byte.
+  for (const [name, hz] of [['16 MHz AVR', 16_000_000], ['125 MHz RP2040', 125_000_000], ['150 MHz RP2350', 150_000_000]] as const) {
+    it(`decodes an exact frame on a ${name} board`, () => {
+      const logic = PartSimulationRegistry.get('neopixel')!;
+      const sim = makeBitBangSimulator(hz);
+      const el = makeElement() as any;
+
+      logic.attachEvents!(el, sim as any, pinMap({ DIN: 6 }));
+      sim.sendPixel(0x12, 0x34, 0x56);
+
+      expect(el.r).toBeCloseTo(0x12 / 255, 5);
+      expect(el.g).toBeCloseTo(0x34 / 255, 5);
+      expect(el.b).toBeCloseTo(0x56 / 255, 5);
+    });
+  }
+
+  it('reads a saturated byte as 0xFF, not one bit short', () => {
+    const logic = PartSimulationRegistry.get('neopixel')!;
+    const sim = makeBitBangSimulator(125_000_000);
+    const el = makeElement() as any;
+    logic.attachEvents!(el, sim as any, pinMap({ DIN: 6 }));
+    sim.sendPixel(255, 255, 255);
+    expect(el.r).toBe(1);
+    expect(el.g).toBe(1);
+    expect(el.b).toBe(1);
+  });
+
+  /**
+   * An engine whose PIO does not model instruction delays (rp2040js) emits the
+   * right SHAPE at the wrong scale: measured, a '1' comes out 2 steps high / 1
+   * low and a '0' 1 high / 2 low, a bit period of 3 where the wire says 10.
+   * Every one of those widths is far under any threshold derived from real
+   * WS2812 timing, so an absolute rule reads 0x000000 off a perfectly good
+   * frame — which is what the Pico did.
+   */
+  it('decodes a waveform compressed 3x by an engine that skips PIO delays', () => {
+    const logic = PartSimulationRegistry.get('neopixel')!;
+    let t = 0;
+    let handler: ((pin: number, high: boolean) => void) | null = null;
+    const sim = {
+      pinManager: {
+        onPinChange: vi.fn((_p: number, cb: (p: number, h: boolean) => void) => {
+          handler = cb;
+          return () => {};
+        }),
+        onPwmChange: vi.fn().mockReturnValue(() => {}),
+        triggerPinChange: vi.fn(),
+      },
+      getADC: vi.fn().mockReturnValue(null),
+      setPinState: vi.fn(),
+      getClockHz: () => 125_000_000,
+      getCurrentCycles: () => t,
+    };
+    const el = makeElement() as any;
+    logic.attachEvents!(el, sim as any, pinMap({ DIN: 6 }));
+
+    t += 4000; // latch
+    for (const byte of [0x00, 0xff, 0x00]) {
+      for (let i = 7; i >= 0; i--) {
+        const one = (byte >> i) & 1;
+        handler!(6, true);
+        t += one ? 2 : 1;
+        handler!(6, false);
+        t += one ? 1 : 2;
+      }
+    }
+
+    expect(el.r).toBe(1); // 0xFF in the R slot (GRB order)
+    expect(el.g).toBe(0);
+    expect(el.b).toBe(0);
+  });
+
+  it('does not attach the edge decoder when the board has no cycle counter', () => {
+    // The ESP32 shim answers -1. Decoding edges against a frozen clock makes
+    // every high measure 0 cycles and paints solid black over the frames the
+    // hardware feed is delivering — worse than not listening at all.
+    const logic = PartSimulationRegistry.get('neopixel')!;
+    const sim = makeSimulator();
+    (sim as any).cpu = undefined;
+    (sim as any).getCurrentCycles = () => -1;
+    const el = makeElement() as any;
+
+    logic.attachEvents!(el, sim as any, pinMap({ DIN: 6 }));
+
+    expect(sim.pinManager.onPinChange).not.toHaveBeenCalled();
+  });
+});
+
+describe('WS2812 parts — hardware-decoded frames (ESP32 RMT)', () => {
+  // The regression this guards: Adafruit_NeoPixel on ESP32 goes out over RMT,
+  // so DIN never toggles at bit rate and the edge decoder sees NOTHING. The
+  // part used to attach only that decoder, and every NeoPixel on every ESP32
+  // board stayed black while the sketch ran perfectly.
+  it('paints the single neopixel from a frame the engine decoded', () => {
+    const logic = PartSimulationRegistry.get('neopixel')!;
+    const sim = makeRmtSimulator();
+    const el = makeElement() as any;
+
+    logic.attachEvents!(el, sim as any, pinMap({ DIN: 6 }));
+    expect(sim.subscribeWs2812).toHaveBeenCalledWith(6, expect.any(Function));
+
+    sim.emitFrame(6, [{ r: 255, g: 0, b: 0 }]);
+    expect(el.r).toBeCloseTo(1);
+    expect(el.g).toBeCloseTo(0);
+    expect(el.b).toBeCloseTo(0);
+  });
+
+  it('paints a ring pixel-by-pixel, in frame order', () => {
+    const logic = PartSimulationRegistry.get('led-ring')!;
+    const sim = makeRmtSimulator();
+    const el = makeElement() as any;
+    el.setPixel = vi.fn();
+
+    logic.attachEvents!(el, sim as any, pinMap({ DIN: 6 }));
+    sim.emitFrame(6, [
+      { r: 1, g: 2, b: 3 },
+      { r: 4, g: 5, b: 6 },
+    ]);
+
+    expect(el.setPixel).toHaveBeenNthCalledWith(1, 0, { r: 1, g: 2, b: 3 });
+    expect(el.setPixel).toHaveBeenNthCalledWith(2, 1, { r: 4, g: 5, b: 6 });
+  });
+
+  it('maps a matrix frame to row/col', () => {
+    const logic = PartSimulationRegistry.get('neopixel-matrix')!;
+    const sim = makeRmtSimulator();
+    const el = makeElement() as any;
+    el.setPixel = vi.fn();
+    el.cols = 2;
+
+    logic.attachEvents!(el, sim as any, pinMap({ DIN: 6 }));
+    sim.emitFrame(6, [
+      { r: 1, g: 1, b: 1 },
+      { r: 2, g: 2, b: 2 },
+      { r: 3, g: 3, b: 3 },
+    ]);
+
+    expect(el.setPixel).toHaveBeenNthCalledWith(1, 0, 0, { r: 1, g: 1, b: 1 });
+    expect(el.setPixel).toHaveBeenNthCalledWith(2, 0, 1, { r: 2, g: 2, b: 2 });
+    expect(el.setPixel).toHaveBeenNthCalledWith(3, 1, 0, { r: 3, g: 3, b: 3 });
+  });
+
+  it('releases the pin on cleanup so a rewire hands it back', () => {
+    const logic = PartSimulationRegistry.get('neopixel')!;
+    const sim = makeRmtSimulator();
+    const el = makeElement() as any;
+
+    const cleanup = logic.attachEvents!(el, sim as any, pinMap({ DIN: 6 }));
+    cleanup!();
+    sim.emitFrame(6, [{ r: 255, g: 255, b: 255 }]);
+    expect(el.r).toBeUndefined();
+  });
+
+  it('still works on a board with no hardware feed (bit-banged AVR)', () => {
+    const logic = PartSimulationRegistry.get('neopixel')!;
+    const sim = makeSimulator(); // no subscribeWs2812
+    const el = makeElement() as any;
+
+    const cleanup = logic.attachEvents!(el, sim as any, pinMap({ DIN: 6 }));
+
+    expect(sim.pinManager.onPinChange).toHaveBeenCalledWith(6, expect.any(Function));
+    expect(() => cleanup!()).not.toThrow();
+  });
+});

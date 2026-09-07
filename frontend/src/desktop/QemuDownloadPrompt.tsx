@@ -29,10 +29,18 @@ export interface QemuRuntimeConfig {
   progressEvent: string;
   /** Approx download size note, e.g. "~30 MB". */
   sizeNote: string;
+  /**
+   * True for runtimes the operator sells only with a paid plan (STM32 and
+   * the QEMU-Linux boards since 2026-09-06). The Tauri eligibility command
+   * answers `paid_required` for a trial / personal key, and the download
+   * endpoint answers 403 for the same keys; both are rendered as an
+   * upgrade prompt rather than a download button or a raw HTTP status.
+   */
+  paidOnly?: boolean;
 }
 
 type QemuStatus = { installed: boolean; path?: string | null; version?: string | null };
-type Eligibility = 'eligible' | 'grandfather' | 'locked';
+type Eligibility = 'eligible' | 'grandfather' | 'locked' | 'paid_required';
 type ProgressPayload = {
   bytes_downloaded: number;
   total_bytes: number | null;
@@ -40,6 +48,37 @@ type ProgressPayload = {
 };
 
 type TauriInvoke = <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+
+/**
+ * Classify a failed install for the dialog. Pure so it can be unit-tested
+ * without a DOM (see __tests__/QemuDownloadPrompt.test.ts).
+ *
+ * - `paid_required`: the licence endpoint refused the asset for this key's
+ *   plan (HTTP 403). For STM32 and the QEMU-Linux runtimes that is the
+ *   expected answer on a trial / personal key, so the dialog switches to its
+ *   upgrade state instead of printing the status code.
+ * - `unavailable`: no build for this OS/arch yet (404).
+ * - `other`: anything else, shown verbatim.
+ */
+export function classifyInstallError(
+  raw: string,
+): { kind: 'paid_required' } | { kind: 'unavailable' } | { kind: 'other'; message: string } {
+  if (/HTTP\s*403\b/i.test(raw)) return { kind: 'paid_required' };
+  if (/HTTP\s*404\b|not found/i.test(raw)) return { kind: 'unavailable' };
+  return { kind: 'other', message: raw };
+}
+
+/** Which of the dialog's four shapes to render for an eligibility answer. */
+export function dialogStateFor(
+  eligibility: Eligibility | null,
+): 'download' | 'grandfather' | 'locked' | 'paid_required' {
+  if (eligibility === 'grandfather') return 'grandfather';
+  if (eligibility === 'locked') return 'locked';
+  if (eligibility === 'paid_required') return 'paid_required';
+  // 'eligible', or no answer yet: offer the download and let the server
+  // have the final word.
+  return 'download';
+}
 
 function tauriInvoke(): TauriInvoke | null {
   const w = window as { __TAURI__?: { core?: { invoke?: TauriInvoke }; invoke?: TauriInvoke } };
@@ -106,14 +145,18 @@ export const QemuDownloadPrompt = ({ config }: { config: QemuRuntimeConfig }) =>
       if (fresh.installed) setOpen(false);
     } catch (e) {
       const raw = e instanceof Error ? e.message : String(e);
-      if (/HTTP\s*404|not found/i.test(raw)) {
+      const outcome = classifyInstallError(raw);
+      if (outcome.kind === 'paid_required') {
+        setEligibility('paid_required');
+        setErr(null);
+      } else if (outcome.kind === 'unavailable') {
         setErr(
           `${config.label} support is not yet available for your platform. ` +
             'The Velxio team is preparing this build — try again in a few days, ' +
             'or use Arduino / RP2040 boards in the meantime.',
         );
       } else {
-        setErr(raw);
+        setErr(outcome.message);
       }
     } finally {
       setInstalling(false);
@@ -133,14 +176,20 @@ export const QemuDownloadPrompt = ({ config }: { config: QemuRuntimeConfig }) =>
     }
   };
 
+  const onUpgrade = () => {
+    void openExternal(`${VELXIO_BASE}/pricing?from=desktop-${config.label.toLowerCase().replace(/\s+/g, '-')}`);
+  };
+
   const onSkip = () => {
     setDismissed(true);
     setOpen(false);
   };
 
-  const isGrandfather = eligibility === 'grandfather';
-  const isLocked = eligibility === 'locked';
-  const canDownload = eligibility === 'eligible' || eligibility === null;
+  const dialogState = dialogStateFor(eligibility);
+  const isGrandfather = dialogState === 'grandfather';
+  const isLocked = dialogState === 'locked';
+  const isPaidRequired = dialogState === 'paid_required';
+  const canDownload = dialogState === 'download';
 
   let pct = -1;
   if (progress?.total_bytes && progress.total_bytes > 0) {
@@ -173,18 +222,22 @@ export const QemuDownloadPrompt = ({ config }: { config: QemuRuntimeConfig }) =>
         }}
       >
         <h2 style={{ margin: '0 0 8px', fontSize: 18 }}>
-          {isGrandfather
-            ? `Sign up to use ${config.label} boards`
-            : isLocked
-              ? `Reactivate to use ${config.label} boards`
-              : `${config.label} support not installed`}
+          {isPaidRequired
+            ? `${config.label} boards need a paid plan`
+            : isGrandfather
+              ? `Sign up to use ${config.label} boards`
+              : isLocked
+                ? `Reactivate to use ${config.label} boards`
+                : `${config.label} support not installed`}
         </h2>
         <p style={{ margin: '0 0 16px', color: '#aaa', lineHeight: 1.5 }}>
-          {isGrandfather
-            ? `${config.label} simulation requires a Velxio account. Create one in 30 seconds — 30-day free trial included, no credit card needed.`
-            : isLocked
-              ? `Your subscription is currently locked. Renew to download ${config.label} support.`
-              : `${config.label} boards need an additional QEMU runtime (${config.sizeNote}). One-time download. You can keep using AVR and RP2040 boards without it.`}
+          {isPaidRequired
+            ? `${config.label} emulation is included in the Maker and Pro plans and is not part of the free trial. Upgrade on velxio.dev, then come back: the download unlocks on the next licence check-in. AVR, ESP32 and RP2040 boards keep working on your current plan.`
+            : isGrandfather
+              ? `${config.label} simulation requires a Velxio account. Create one in 30 seconds — 30-day free trial included, no credit card needed.`
+              : isLocked
+                ? `Your subscription is currently locked. Renew to download ${config.label} support.`
+                : `${config.label} boards need an additional QEMU runtime (${config.sizeNote}). One-time download. You can keep using AVR and RP2040 boards without it.`}
         </p>
         {err && (
           <div
@@ -266,6 +319,22 @@ export const QemuDownloadPrompt = ({ config }: { config: QemuRuntimeConfig }) =>
               }}
             >
               {installing ? 'Downloading...' : `Download ${config.label} support`}
+            </button>
+          )}
+          {isPaidRequired && (
+            <button
+              type="button"
+              onClick={onUpgrade}
+              style={{
+                padding: '8px 16px',
+                background: '#007acc',
+                color: 'white',
+                border: 'none',
+                borderRadius: 4,
+                cursor: 'pointer',
+              }}
+            >
+              See plans
             </button>
           )}
           {isGrandfather && (

@@ -33,6 +33,9 @@ const PI_CONFIG: QemuRuntimeConfig = {
   // Python side pulls on the first boot. Quoting only the download this
   // button performs would understate the wait by a factor of four.
   sizeNote: '~105 MB in total',
+  // Paid-only since 2026-09-06 (operator decision): trial / personal keys get
+  // the upgrade state, never a download.
+  paidOnly: true,
 };
 
 export const RaspberryPiQemuPrompt = () => <QemuDownloadPrompt config={PI_CONFIG} />;

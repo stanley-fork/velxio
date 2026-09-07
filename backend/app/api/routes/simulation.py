@@ -1,32 +1,12 @@
-import hashlib
 import json
 import logging
 import socket
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from app.services.qemu_manager import qemu_manager
 from app.services.esp_qemu_manager import esp_qemu_manager
-from app.services.board_access import board_allowed, PRO_BOARD_MESSAGE
 from app.services.esp32_lib_manager import esp_lib_manager
-from app.services.stm32_lib_manager import stm32_lib_manager
-from app.core.hooks import dispatch_ws_sim_message
+from app.core.hooks import dispatch_ws_sim_message, dispatch_ws_sim_disconnect
 
 
-def _owner_key(websocket: WebSocket) -> str | None:
-    """Stable, opaque id for "the same person" across tabs.
-
-    The session cookie is hashed rather than stored: this is only used to
-    count concurrent guests per user, so the value never needs to be read
-    back. Falls back to the client host when there is no cookie (desktop
-    sidecar, tests), and to None when there is neither.
-    """
-    try:
-        token = websocket.cookies.get('access_token')
-    except Exception:
-        token = None
-    if token:
-        return 'u:' + hashlib.sha256(token.encode()).hexdigest()[:16]
-    host = getattr(getattr(websocket, 'client', None), 'host', None)
-    return f'h:{host}' if host else None
 
 
 def _find_free_port() -> int:
@@ -89,64 +69,29 @@ async def simulation_websocket(websocket: WebSocket, client_id: str):
             msg_type: str = message.get('type', '')
             msg_data: dict = message.get('data', {})
 
-            # ── Raspberry Pi ─────────────────────────────────────────────
-            if msg_type == 'start_pi':
-                board = msg_data.get('board', 'raspberry-pi-3')
-                if not await board_allowed(websocket, board):
-                    await qemu_callback('error', {'message': PRO_BOARD_MESSAGE})
-                else:
-                    # Capacity: a guest is a real QEMU process with its own
-                    # GBs, so the box is the limit. Refuse with words the
-                    # user can act on rather than letting the machine swap.
-                    owner = _owner_key(websocket)
-                    full = qemu_manager.capacity_error(owner)
-                    if full:
-                        await qemu_callback('error', {'message': full})
-                    else:
-                        # msg_data carries whatever the client declared for this
-                        # session (an overlay may materialise extra drives from it).
-                        qemu_manager.start_instance(
-                            client_id, board, qemu_callback, msg_data, owner=owner,
-                        )
-
-            elif msg_type == 'stop_pi':
-                qemu_manager.stop_instance(client_id)
-
-            elif msg_type == 'serial_input':
-                raw_bytes: list[int] = msg_data.get('bytes', [])
-                if raw_bytes:
-                    await qemu_manager.send_serial_bytes(client_id, bytes(raw_bytes))
-
-            elif msg_type in ('gpio_in', 'pin_change'):
-                pin   = msg_data.get('pin', 0)
-                state = msg_data.get('state', 0)
-                qemu_manager.set_pin_state(client_id, pin, state)
-
-            elif msg_type == 'pi_sensor_state':
-                # Canvas-fed named values for overlay boards' built-in
-                # sensors/buttons; the guest polls them via SENS requests.
-                values = msg_data.get('values', {})
-                if isinstance(values, dict):
-                    qemu_manager.set_sensor_state(client_id, values)
-
-            elif msg_type == 'pi_uart_rx':
-                # Bytes another board on the canvas sent down a TX->RX wire.
-                # Queued for the guest, which drains them with UARTRX.
-                rx: list[int] = msg_data.get('bytes', [])
-                if rx:
-                    qemu_manager.push_uart_rx(client_id, bytes(rx))
-
-            elif msg_type in ('pi_attach_slave', 'pi_detach_slave'):
-                # Pluggable hook — pro overlay registers the actual handler
-                # via qemu_manager.set_pi_slave_handler(). In the OSS image
-                # the hook is unset and the message is silently dropped.
-                handler = qemu_manager.get_pi_slave_handler()
-                if handler is not None:
-                    action = 'attach' if msg_type == 'pi_attach_slave' else 'detach'
-                    try:
-                        await handler(client_id, action, msg_data)
-                    except Exception:
-                        logger.exception('[%s] %s handler crashed', client_id, msg_type)
+            # ── QEMU board lane: Raspberry Pi Linux + STM32 ──────────────
+            # Both families are paid-only (velxio.dev with a paid plan, or
+            # Velxio Desktop with a paid licence), so their emulators are not
+            # part of the open-source image at all: qemu_manager, boot_images
+            # and stm32_lib_manager live in an optional `app.pro_boards`
+            # package that registers itself through register_ws_sim_handler.
+            # With no extension installed these messages are ignored and the
+            # boards never start, which is the intent — the frontend already
+            # frames them as a Pro feature (board_access.PRO_BOARD_MESSAGE).
+            #
+            # `serial_input`, `gpio_in` and `pin_change` read as generic but
+            # have only ever driven the Linux guests; the ESP32 and Pico lanes
+            # use their own prefixed message names.
+            if msg_type in (
+                'start_pi', 'stop_pi', 'serial_input', 'gpio_in', 'pin_change',
+                'pi_sensor_state', 'pi_uart_rx', 'pi_attach_slave', 'pi_detach_slave',
+                'start_stm32', 'stop_stm32', 'stm32_load_firmware', 'stm32_gpio_in',
+                'stm32_serial_input', 'stm32_sensor_attach', 'stm32_sensor_update',
+                'stm32_sensor_detach',
+            ):
+                await dispatch_ws_sim_message(
+                    websocket, client_id, msg_type, msg_data, qemu_callback,
+                )
 
             # ── ESP32 lifecycle ──────────────────────────────────────────
             elif msg_type == 'start_esp32':
@@ -187,58 +132,6 @@ async def simulation_websocket(websocket: WebSocket, client_id: str):
                         esp_lib_manager.load_firmware(client_id, firmware_b64)
                     else:
                         esp_qemu_manager.load_firmware(client_id, firmware_b64)
-
-            # ── STM32 lifecycle (libqemu-arm via stm32_lib_manager) ──────
-            elif msg_type == 'start_stm32':
-                board        = msg_data.get('board', 'stm32-bluepill')
-                firmware_b64 = msg_data.get('firmware_b64')
-                sensors      = msg_data.get('sensors', [])
-                fw_size_kb   = round(len(firmware_b64) * 0.75 / 1024) if firmware_b64 else 0
-                lib_available = stm32_lib_manager.is_available()
-                logger.info('[%s] start_stm32 board=%s firmware=%dKB lib_available=%s sensors=%d',
-                            client_id, board, fw_size_kb, lib_available, len(sensors))
-                if not await board_allowed(websocket, board):
-                    await qemu_callback('error', {'message': PRO_BOARD_MESSAGE})
-                elif lib_available:
-                    await stm32_lib_manager.start_instance(
-                        client_id, board, qemu_callback, firmware_b64, sensors)
-                else:
-                    # No binary (OSS / self-hosted) — frame it as a Pro feature
-                    # rather than a raw "missing file" error.
-                    logger.warning('[%s] libqemu-arm not available', client_id)
-                    await qemu_callback('error', {'message': PRO_BOARD_MESSAGE})
-
-            elif msg_type == 'stop_stm32':
-                await stm32_lib_manager.stop_instance(client_id)
-
-            elif msg_type == 'stm32_load_firmware':
-                firmware_b64 = msg_data.get('firmware_b64', '')
-                if firmware_b64:
-                    stm32_lib_manager.load_firmware(client_id, firmware_b64)
-
-            elif msg_type == 'stm32_gpio_in':
-                pin   = msg_data.get('pin', 0)
-                state = msg_data.get('state', 0)
-                stm32_lib_manager.set_pin_state(client_id, pin, state)
-
-            elif msg_type == 'stm32_serial_input':
-                raw_bytes: list[int] = msg_data.get('bytes', [])
-                if raw_bytes:
-                    await stm32_lib_manager.send_serial_bytes(
-                        client_id, bytes(raw_bytes), msg_data.get('uart', 0))
-
-            elif msg_type == 'stm32_sensor_attach':
-                sensor_type = msg_data.get('sensor_type', '')
-                pin = int(msg_data.get('pin', 0))
-                stm32_lib_manager.sensor_attach(client_id, sensor_type, pin, msg_data)
-
-            elif msg_type == 'stm32_sensor_update':
-                pin = int(msg_data.get('pin', 0))
-                stm32_lib_manager.sensor_update(client_id, pin, msg_data)
-
-            elif msg_type == 'stm32_sensor_detach':
-                pin = int(msg_data.get('pin', 0))
-                stm32_lib_manager.sensor_detach(client_id, pin)
 
             # ── Pico W (CYW43439) WiFi bridge — overlay-provided ─────────
             # The chip-side gSPI emulator lives in the frontend; the userspace
@@ -416,7 +309,9 @@ async def simulation_websocket(websocket: WebSocket, client_id: str):
         # A newer simulation_websocket may have already connected and replaced us.
         if manager.active_connections.get(client_id) is websocket:
             manager.disconnect(client_id)
-            qemu_manager.stop_instance(client_id)
+            # Tear down whatever an extension started for this client (a Pi
+            # guest is a real QEMU child holding 1-2 GB, so this must run).
+            await dispatch_ws_sim_disconnect(client_id)
             await esp_lib_manager.stop_instance(client_id)
             esp_qemu_manager.stop_instance(client_id)
         else:
@@ -425,6 +320,8 @@ async def simulation_websocket(websocket: WebSocket, client_id: str):
         logger.error('WebSocket error for %s: %s', client_id, exc)
         if manager.active_connections.get(client_id) is websocket:
             manager.disconnect(client_id)
-            qemu_manager.stop_instance(client_id)
+            # Tear down whatever an extension started for this client (a Pi
+            # guest is a real QEMU child holding 1-2 GB, so this must run).
+            await dispatch_ws_sim_disconnect(client_id)
             await esp_lib_manager.stop_instance(client_id)
             esp_qemu_manager.stop_instance(client_id)

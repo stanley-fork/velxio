@@ -30,6 +30,9 @@ const STM32_CONFIG: QemuRuntimeConfig = {
   // about half — the kind of surprise that makes someone cancel a
   // download they already started.
   sizeNote: '~60 MB',
+  // Paid-only since 2026-09-06 (operator decision): trial / personal keys get
+  // the upgrade state, never a download.
+  paidOnly: true,
 };
 
 export const Stm32QemuPrompt = () => <QemuDownloadPrompt config={STM32_CONFIG} />;

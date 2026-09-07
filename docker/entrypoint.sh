@@ -31,8 +31,14 @@ if [ ! -f /root/.arduino15/arduino-cli.yaml ]; then
     # STM32duino (STMicroelectronics:stm32) — needed for STM32 Blue/Black Pill
     # FQBNs. Without this URL `core install STMicroelectronics:stm32` fails with
     #   "Platform 'STMicroelectronics:stm32' not found: platform not installed".
-    arduino-cli config add board_manager.additional_urls \
-        https://github.com/stm32duino/BoardManagerFiles/raw/main/package_stmicroelectronics_index.json 2>/dev/null || true
+    # Registered only where STM32 can actually run: STM32 emulation is a paid
+    # feature of velxio.dev and Velxio Desktop, and the self-hosted image has no
+    # libqemu-arm, so the ~350 MB toolchain would only ever be downloaded to
+    # compile sketches nothing can execute. See install_stm32_core below.
+    if [ "${ENABLE_PRO:-}" = "true" ] || [ "${VELXIO_INSTALL_STM32:-}" = "1" ]; then
+        arduino-cli config add board_manager.additional_urls \
+            https://github.com/stm32duino/BoardManagerFiles/raw/main/package_stmicroelectronics_index.json 2>/dev/null || true
+    fi
 fi
 
 # Seed board-manager indexes vendored into the image (issue #254).
@@ -60,7 +66,14 @@ arduino-cli core update-index 2>/dev/null || true
 arduino-cli core install arduino:avr 2>/dev/null || true
 arduino-cli core install rp2040:rp2040 2>/dev/null || true
 arduino-cli core install ATTinyCore:avr@1.4.1 2>/dev/null || true
-arduino-cli core install STMicroelectronics:stm32 2>/dev/null || true
+# STM32 (STMicroelectronics:stm32) is paid-only (velxio.dev + Velxio Desktop),
+# and the OSS image cannot emulate it at all, so its toolchain (xpack gcc
+# 271 MiB + core + SVD, ~350 MiB from GitHub releases) is not pulled here.
+# The pro image sets ENABLE_PRO=true; a self-hoster who really wants the
+# compiler can opt in with VELXIO_INSTALL_STM32=1 (compile only, no run).
+if [ "${ENABLE_PRO:-}" = "true" ] || [ "${VELXIO_INSTALL_STM32:-}" = "1" ]; then
+    arduino-cli core install STMicroelectronics:stm32 2>/dev/null || true
+fi
 
 # ESP32 compilation now uses ESP-IDF instead of arduino-cli.
 # arduino-cli ESP32 core is no longer needed for QEMU-compatible builds.

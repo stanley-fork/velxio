@@ -26,7 +26,8 @@
  *     { type: 'ledc_duty',     data: { channel: number, duty_pct: number } }
  *     { type: 'gpio_routing',  data: { gpio: number, signal_id: number } }
  *     { type: 'gpio_routing_clear', data: { gpio: number } }
- *     { type: 'ws2812_update', data: { channel: number, pixels: [number, number, number][] } }
+ *     { type: 'ws2812_update', data: { channel: number, pin?: number,
+ *                                        pixels: Array<{r,g,b}> | [r,g,b][] } }
  *     { type: 'i2c_event',        data: { addr: number, data: number } }
  *     { type: 'i2c_transaction',  data: { addr: number, data: number[] } }
  *     { type: 'spi_event',        data: { data: number } }
@@ -226,7 +227,18 @@ export class Esp32Bridge {
   /** Pin is no longer routed to any peripheral (firmware reset the
    *  matrix entry). */
   onGpioRoutingClear: ((gpio: number) => void) | null = null;
-  onWs2812Update: ((channel: number, pixels: Ws2812Pixel[]) => void) | null = null;
+  /**
+   * A decoded WS2812 frame from the engine's RMT peripheral.
+   *
+   * `pin` is the GPIO the frame went out on, and it is what a NeoPixel PART on
+   * the canvas is keyed by — the channel alone cannot reach one. The in-browser
+   * engines know the pin (the GPIO matrix routing they emit alongside is
+   * derived from it); the QEMU worker sends the channel only, so it stays
+   * optional and the pin-keyed delivery is skipped when it is absent.
+   */
+  onWs2812Update:
+    | ((channel: number, pixels: Ws2812Pixel[], pin?: number | null) => void)
+    | null = null;
   /**
    * ePaper SSD168x backend rendering. Backend decodes SPI traffic in
    * `Ssd168xEpaperSlave` and emits this event on every 0x20
@@ -500,9 +512,18 @@ export class Esp32Bridge {
         }
         case 'ws2812_update': {
           const channel = msg.data.channel as number;
-          const raw = msg.data.pixels as [number, number, number][];
-          const pixels: Ws2812Pixel[] = raw.map(([r, g, b]) => ({ r, g, b }));
-          this.onWs2812Update?.(channel, pixels);
+          // The QEMU worker sends objects ({r,g,b}, esp32_worker._RmtDecoder);
+          // the header above documents triplets, and destructuring an object as
+          // an array yields three undefineds — a whole strip of NaN. Accept
+          // both rather than pick a side and break the other producer.
+          const raw = msg.data.pixels as Array<
+            [number, number, number] | { r: number; g: number; b: number }
+          >;
+          const pixels: Ws2812Pixel[] = raw.map((px) =>
+            Array.isArray(px) ? { r: px[0], g: px[1], b: px[2] } : px,
+          );
+          const pin = msg.data.pin as number | undefined;
+          this.onWs2812Update?.(channel, pixels, pin ?? null);
           break;
         }
         case 'epaper_update': {

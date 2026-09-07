@@ -313,27 +313,62 @@ async def iot_gateway_gate(request: Request) -> Optional[dict]:
 
 WsSimHandlerHook = Callable[[Any, str, str, dict, Any], Awaitable[bool]]
 
-_ws_sim_handler_hook: Optional[WsSimHandlerHook] = None
+# A LIST, not a single slot. Two independent extensions register here now —
+# the Pico W network stack and the QEMU board lane (Raspberry Pi Linux +
+# STM32) — and with one slot whichever registered last silently erased the
+# other. Handlers are tried in registration order and the first one that
+# returns True owns the message.
+_ws_sim_handler_hooks: list[WsSimHandlerHook] = []
 
 
 def register_ws_sim_handler(hook: WsSimHandlerHook) -> None:
-    """Install the simulation-WS message handler. Called in register_pro."""
-    global _ws_sim_handler_hook
-    _ws_sim_handler_hook = hook
+    """Add a simulation-WS message handler. Called from an extension's
+    register hook; may be called more than once by different extensions."""
+    if hook not in _ws_sim_handler_hooks:
+        _ws_sim_handler_hooks.append(hook)
 
 
 async def dispatch_ws_sim_message(
     websocket: Any, client_id: str, msg_type: str, msg_data: dict, callback: Any,
 ) -> bool:
-    """Let an overlay handle a simulation-WS message. Returns True if handled,
-    False (the OSS default) when no overlay is loaded."""
-    if _ws_sim_handler_hook is None:
-        return False
-    try:
-        return await _ws_sim_handler_hook(websocket, client_id, msg_type, msg_data, callback)
-    except Exception:
-        logger.exception("ws_sim_handler hook failed (ignoring message)")
-        return False
+    """Let an extension handle a simulation-WS message. Returns True as soon as
+    one claims it, False (the OSS default) when none does."""
+    for hook in _ws_sim_handler_hooks:
+        try:
+            if await hook(websocket, client_id, msg_type, msg_data, callback):
+                return True
+        except Exception:
+            logger.exception("ws_sim_handler hook failed (ignoring message)")
+    return False
+
+
+# ── ws_sim_disconnect ─────────────────────────────────────────────────────────
+# Called when a simulation WebSocket goes away, so an extension can tear down
+# whatever it started for that client_id. This is not a nicety: a QEMU guest is
+# a real child process holding 1-2 GB, and before this hook existed the route
+# reached into qemu_manager directly to stop it. With the board lane out of the
+# OSS tree there is no such reference left, and without a hook every closed tab
+# would leak a guest until the box swapped.
+
+WsSimDisconnectHook = Callable[[str], Awaitable[None]]
+
+_ws_sim_disconnect_hooks: list[WsSimDisconnectHook] = []
+
+
+def register_ws_sim_disconnect(hook: WsSimDisconnectHook) -> None:
+    """Add a simulation-WS disconnect handler."""
+    if hook not in _ws_sim_disconnect_hooks:
+        _ws_sim_disconnect_hooks.append(hook)
+
+
+async def dispatch_ws_sim_disconnect(client_id: str) -> None:
+    """Tell every extension that this client's simulation WS is gone. Errors
+    are logged and swallowed: one failing teardown must not skip the others."""
+    for hook in _ws_sim_disconnect_hooks:
+        try:
+            await hook(client_id)
+        except Exception:
+            logger.exception("ws_sim_disconnect hook failed (continuing)")
 
 
 # ── gateway_proxy ─────────────────────────────────────────────────────────────

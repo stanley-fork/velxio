@@ -35,6 +35,7 @@ import { calculatePinPosition } from '../utils/pinPositionCalculator';
 import { useOscilloscopeStore } from './useOscilloscopeStore';
 import { RaspberryPi3Bridge } from '../simulation/RaspberryPi3Bridge';
 import { Esp32Bridge } from '../simulation/Esp32Bridge';
+import type { Ws2812Pixel } from '../simulation/Esp32Bridge';
 import { createEsp32Bridge } from '../simulation/Esp32BridgeFactory';
 import { Stm32Bridge, stm32PinNameToLinear } from '../simulation/Stm32Bridge';
 import { STM32_LED } from '../components/velxio-components/Stm32BluePillElement';
@@ -168,6 +169,23 @@ export class Esp32BridgeShim {
    */
   private i2cBusInstance: I2CBusManager;
 
+  /**
+   * Canvas parts waiting for a decoded WS2812 frame, keyed by their DIN pin.
+   *
+   * A NeoPixel part normally recovers its colours by timing the edges on DIN
+   * (createNeopixelDecoder), which is what a bit-banging core like the AVR
+   * produces. The ESP32 does not bit-bang: Adafruit_NeoPixel drives the pixel
+   * through the RMT peripheral, the engine consumes that stream itself, and
+   * the pin never toggles — so the edge decoder sees nothing and the part
+   * stays black forever, with no error anywhere (the "NeoPixel never lights on
+   * ESP32" reports). The engine hands us the decoded frame instead; this is
+   * where a part collects it.
+   *
+   * Keyed by pin, and the shim is already per-board, so two boards each with a
+   * pixel on GPIO 6 stay separate.
+   */
+  private ws2812Sinks = new Map<number, (pixels: Ws2812Pixel[]) => void>();
+
   constructor(bridge: Esp32Bridge, pm: PinManager) {
     this.bridge = bridge;
     this.pinManager = pm;
@@ -198,6 +216,29 @@ export class Esp32BridgeShim {
   setPinState(pin: number, state: boolean): void {
     this.bridge.sendPinEvent(pin, state);
   }
+
+  /**
+   * Claim the decoded WS2812 frames going out on `pin` while the part is
+   * attached. Returns the unsubscribe, like every other part subscription.
+   */
+  subscribeWs2812(pin: number, sink: (pixels: Ws2812Pixel[]) => void): () => void {
+    this.ws2812Sinks.set(pin, sink);
+    return () => {
+      if (this.ws2812Sinks.get(pin) === sink) this.ws2812Sinks.delete(pin);
+    };
+  }
+
+  /** The store hands a frame the engine decoded to whoever claimed that pin. */
+  publishWs2812(pin: number, pixels: Ws2812Pixel[]): void {
+    const sink = this.ws2812Sinks.get(pin);
+    if (!sink) return;
+    try {
+      sink(pixels);
+    } catch (e) {
+      console.warn(`[Esp32BridgeShim] ws2812 sink for pin ${pin} threw`, e);
+    }
+  }
+
   getCurrentCycles(): number {
     // Deliberately -1, even when the in-browser engine below DOES have a cycle
     // counter: several parts read `getCurrentCycles() >= 0` to tell an AVR from
@@ -507,6 +548,10 @@ export class Esp32BridgeShim {
    *  (a pre-connect-buffering Delegating bridge) hears about each device. */
   adoptPartsFrom(prev: Esp32BridgeShim): void {
     for (const dev of prev.syncI2cParts.values()) this.addI2CDevice(dev);
+    // Same reason as the I2C devices: a NeoPixel part subscribed to the OLD
+    // shim and will not re-attach for a bridge rebuild, so without this the
+    // pixel goes black on the first recompile and never comes back.
+    for (const [pin, sink] of prev.ws2812Sinks) this.ws2812Sinks.set(pin, sink);
   }
 
   /**
@@ -769,6 +814,31 @@ function makeLedcDutyHandler(boardId: string) {
       // actual note rather than a canned one.
       if (duty.freq_hz && duty.freq_hz > 0) boardPm.setPwmFreq(pin, duty.freq_hz);
       boardPm.updatePwm(pin, dutyCycle);
+    }
+  };
+}
+
+/**
+ * A decoded WS2812 frame from the engine's RMT peripheral.
+ *
+ * Two destinations, because there are two kinds of NeoPixel on the canvas:
+ *  - a part the user placed and wired — reached by its DIN pin through the
+ *    board's shim (Esp32BridgeShim.subscribeWs2812). This is the path that
+ *    makes `neopixel` / `led-ring` / `neopixel-matrix` work on ESP32 at all:
+ *    those parts otherwise time the edges on DIN, and the RMT peripheral
+ *    produces none;
+ *  - the legacy `ws2812-{boardId}-{channel}` DOM contract, kept because a
+ *    board element that draws its own strip may still claim that id.
+ */
+function makeWs2812Handler(boardId: string) {
+  return (channel: number, pixels: Ws2812Pixel[], pin?: number | null) => {
+    if (pin != null) {
+      const shim = simulatorMap.get(boardId);
+      if (shim instanceof Esp32BridgeShim) shim.publishWs2812(pin, pixels);
+    }
+    const eventTarget = document.getElementById(`ws2812-${boardId}-${channel}`);
+    if (eventTarget) {
+      eventTarget.dispatchEvent(new CustomEvent('ws2812-pixels', { detail: { pixels } }));
     }
   };
 }
@@ -1478,15 +1548,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
     bridge.onGpioRouting = makeGpioRoutingHandler(id);
     bridge.onGpioRoutingClear = makeGpioRoutingClearHandler(id);
     bridge.onPinPull = makePinPullHandler(id);
-    bridge.onWs2812Update = (channel, pixels) => {
-      // Forward WS2812 pixel data to any DOM element with id=`ws2812-{id}-{channel}`
-      // (set by NeoPixel components rendered in SimulatorCanvas).
-      // We fire a custom event that NeoPixel components can listen to.
-      const eventTarget = document.getElementById(`ws2812-${id}-${channel}`);
-      if (eventTarget) {
-        eventTarget.dispatchEvent(new CustomEvent('ws2812-pixels', { detail: { pixels } }));
-      }
-    };
+    bridge.onWs2812Update = makeWs2812Handler(id);
     bridge.onWifiStatus = (ws) => {
       set((s) => ({
         boards: s.boards.map((b) => (b.id === id ? { ...b, wifiStatus: ws } : b)),
@@ -2901,12 +2963,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         bridge.onGpioRouting = makeGpioRoutingHandler(boardId);
         bridge.onGpioRoutingClear = makeGpioRoutingClearHandler(boardId);
         bridge.onPinPull = makePinPullHandler(boardId);
-        bridge.onWs2812Update = (channel, pixels) => {
-          const eventTarget = document.getElementById(`ws2812-${boardId}-${channel}`);
-          if (eventTarget) {
-            eventTarget.dispatchEvent(new CustomEvent('ws2812-pixels', { detail: { pixels } }));
-          }
-        };
+        bridge.onWs2812Update = makeWs2812Handler(boardId);
         esp32BridgeMap.set(boardId, bridge);
         const shim = new Esp32BridgeShim(bridge, pm);
         shim.onSerialData = serialCallback;
@@ -3026,12 +3083,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         bridge.onGpioRouting = makeGpioRoutingHandler(boardId);
         bridge.onGpioRoutingClear = makeGpioRoutingClearHandler(boardId);
         bridge.onPinPull = makePinPullHandler(boardId);
-        bridge.onWs2812Update = (channel, pixels) => {
-          const eventTarget = document.getElementById(`ws2812-${boardId}-${channel}`);
-          if (eventTarget) {
-            eventTarget.dispatchEvent(new CustomEvent('ws2812-pixels', { detail: { pixels } }));
-          }
-        };
+        bridge.onWs2812Update = makeWs2812Handler(boardId);
         esp32BridgeMap.set(boardId, bridge);
         const shim = new Esp32BridgeShim(bridge, pm);
         shim.onSerialData = serialCallback;
