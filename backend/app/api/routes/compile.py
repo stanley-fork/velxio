@@ -17,6 +17,7 @@ from app.core.hooks import (
     compile_admission,
     scope_fingerprint,
     scope_retry_allowed,
+    scope_stats,
     compile_priority,
     get_current_user_id,
     get_project_libraries,
@@ -638,17 +639,31 @@ class CompileResponse(BaseModel):
 _SCOPE_RESULT_KEYS = (
     "scope_kind", "scope_src", "scope_retry", "gallery_scope_miss", "locked_miss",
     "pinned_miss", "pin_fallback", "shadowed_by_upload", "ambiguous_headers", "lock_sha",
+    "scope_retry_headers",
 )
 
 
 def _scope_of(result: dict) -> dict | None:
-    out = {k: result[k] for k in _SCOPE_RESULT_KEYS if k in result}
+    # What the overlay's materialiser reported for this compile (hooks
+    # scope_stats): the result's own keys win, the report fills the rest.
+    reported = scope_stats.get() or {}
+    out = {k: reported[k] for k in _SCOPE_RESULT_KEYS if k in reported and reported[k]}
+    out.update({k: result[k] for k in _SCOPE_RESULT_KEYS if k in result})
     # manifest_incomplete is ALSO set on a plain scan-all build that merged
     # libraries (the client uses it to suggest a manifest), so it cannot mean
     # "the scoped attempt failed and the retry ran". The compilers say that
     # explicitly with scope_retry_failed / a retry that succeeded.
     if result.get("scope_retry_failed"):
         out.setdefault("scope_retry", True)
+    # A retry that SUCCEEDED marks the result manifest_incomplete; when a
+    # scoped attempt preceded it (the overlay reported one) that is a scoped
+    # miss rescued by scan-all, and the headers the compiler suggested
+    # libraries for are the ones the scope lacked.
+    if result.get("manifest_incomplete") and reported:
+        out.setdefault("scope_retry", True)
+        suggested = result.get("manifest_suggested_libraries")
+        if isinstance(suggested, dict) and suggested:
+            out.setdefault("scope_retry_headers", sorted(suggested))
     return out or None
 
 
@@ -853,6 +868,8 @@ async def _run_compile(
             error="ESP-IDF toolchain is not available on this server.",
         )
 
+    # One report per compile: never inherit the previous job's.
+    scope_stats.set(None)
     if request.board_fqbn.startswith("esp32:") and espidf_compiler.available:
         logger.info(
             f"[compile] Using ESP-IDF for {request.board_fqbn}"
@@ -1072,6 +1089,9 @@ async def _compile_job(
             "finished_at": time.time(),
             "result": response.model_dump(),
             "key": job_key,
+            # The overlay's classification of a gallery compile, kept on the
+            # finished record: the nightly reads it from the status payload.
+            "gallery": gallery,
             # Preserve the streamed buffer post-completion so a late poll
             # still has access to the live log (clients usually display
             # result.stdout once state=done, but having both costs nothing).
@@ -1133,6 +1153,7 @@ async def _compile_job(
             "finished_at": time.time(),
             "error": str(exc)[:500],
             "key": job_key,
+            "gallery": gallery,
             "stdout_buffer": COMPILE_JOBS.get(job_id, {}).get("stdout_buffer", ""),
         }
         await _record_async_metric(
