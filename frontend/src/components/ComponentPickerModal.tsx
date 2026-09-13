@@ -864,6 +864,9 @@ const BoardCard: React.FC<BoardCardProps> = ({ kind, onSelect, hoverApi }) => {
     const el = document.createElement(tag) as HTMLElement;
     // Use setAttribute so observedAttributes + connectedCallback read the correct value
     el.setAttribute('board-kind', kind);
+    for (const [name, value] of Object.entries(getProBoard(kind)?.thumbnailAttrs ?? {})) {
+      el.setAttribute(name, value);
+    }
     el.style.transform = 'scale(0.28)';
     el.style.transformOrigin = 'center center';
 

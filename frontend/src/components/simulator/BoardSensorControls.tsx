@@ -20,7 +20,7 @@
  * movement produces — a held tilt reads zero rotation.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { getBoardSimulator, getEsp32Bridge } from '../../store/useSimulatorStore';
+import { getBoardBridge, getBoardSimulator, getEsp32Bridge } from '../../store/useSimulatorStore';
 
 interface SensorBridge {
   setImuAcceleration?: (x: number, y: number, z: number) => void;
@@ -94,6 +94,11 @@ export const BoardSensorControls: React.FC<BoardSensorControlsProps> = ({
     const sim = getBoardSimulator(boardId) as SensorBridge | undefined;
     if (typeof sim?.setImuAcceleration === 'function' || typeof sim?.setBatteryVoltage === 'function') {
       return sim;
+    }
+    // A Linux board's Pi bridge, when its overlay builtins give it the methods.
+    const pi = getBoardBridge(boardId) as SensorBridge | undefined;
+    if (typeof pi?.setImuAcceleration === 'function' || typeof pi?.setBatteryVoltage === 'function') {
+      return pi;
     }
     return esp32;
   }, [boardId]);

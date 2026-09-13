@@ -53,6 +53,10 @@ export interface ProBoardDef {
   tag: string;
   /** True pixel size of the element (selection ring + pin overlays). */
   size: { w: number; h: number };
+  /** Attributes the picker sets on the thumbnail element. A tag shared by
+   *  several boards (one element, a `variant` attribute) otherwise previews
+   *  its default look for every one of them. */
+  thumbnailAttrs?: Record<string, string>;
   supportsMicroPython?: boolean;
   /** Board can run pure ESP-IDF projects (app_main entry, no Arduino
    *  core). Registers the kind into BOARD_SUPPORTS_ESPIDF, which is what
