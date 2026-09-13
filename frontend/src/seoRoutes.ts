@@ -9,6 +9,12 @@
  * Routes with `seoMeta` get prerendered HTML at build time.
  */
 
+// Extra indexable routes from the pro overlay (the per-board simulator
+// landings). Resolves to an empty list in OSS builds (src/__pro_stub__), the
+// same seam data/examples.ts uses for proExamples. scripts/generate-sitemap.mjs
+// parses the overlay file by text, so keep PRO_SEO_ROUTES a literal array.
+import { PRO_SEO_ROUTES } from '@pro/seoRoutes';
+
 const DOMAIN = 'https://velxio.dev';
 
 export interface SeoMeta {
@@ -33,7 +39,7 @@ export function getSeoMeta(path: string): SeoMeta | undefined {
   return SEO_ROUTES.find((r) => r.path === path)?.seoMeta;
 }
 
-export const SEO_ROUTES: SeoRoute[] = [
+const OSS_SEO_ROUTES: SeoRoute[] = [
   // ── Main pages
   {
     path: '/',
@@ -312,3 +318,5 @@ export const SEO_ROUTES: SeoRoute[] = [
   { path: '/register', noindex: true },
   { path: '/admin', noindex: true },
 ];
+
+export const SEO_ROUTES: SeoRoute[] = [...OSS_SEO_ROUTES, ...PRO_SEO_ROUTES];

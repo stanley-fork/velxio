@@ -4,7 +4,7 @@
  * Run: node scripts/generate-sitemap.mjs [--ping]
  */
 
-import { readFileSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -24,26 +24,36 @@ function parseExampleIds(source) {
   return ids;
 }
 
-// Parse seoRoutes.ts to extract the route objects
-const seoRoutesPath = resolve(__dirname, '../src/seoRoutes.ts');
-const source = readFileSync(seoRoutesPath, 'utf-8');
-
-// Extract the array content between SEO_ROUTES = [ ... ];
-const match = source.match(/SEO_ROUTES[^=]*=\s*\[([\s\S]*?)\];/);
-if (!match) {
-  console.error('Could not parse SEO_ROUTES from seoRoutes.ts');
-  process.exit(1);
+// Parse a route-table source file and evaluate the literal array bound to
+// `name` (safe: the arrays hold only string/number/boolean literals).
+// Comments are stripped first; DOMAIN is injected so template literals like
+// `${DOMAIN}/path` resolve.
+function parseRouteArray(path, name) {
+  const source = readFileSync(path, 'utf-8');
+  const match = source.match(new RegExp(`${name}[^=]*=\\s*\\[([\\s\\S]*?)\\];`));
+  if (!match) {
+    console.error(`Could not parse ${name} from ${path}`);
+    process.exit(1);
+  }
+  const arrayStr = match[1]
+    .replace(/\/\/.*$/gm, '')   // remove line comments
+    .replace(/\/\*[\s\S]*?\*\//g, ''); // remove block comments
+  return new Function('DOMAIN', `return [${arrayStr}]`)(DOMAIN);
 }
 
-// Evaluate the array (safe: only contains string/number/boolean literals)
-// Convert TS-style comments and trailing commas to valid JSON-ish
-const arrayStr = match[1]
-  .replace(/\/\/.*$/gm, '')   // remove line comments
-  .replace(/\/\*[\s\S]*?\*\//g, ''); // remove block comments
+// seoRoutes.ts binds the literal table to OSS_SEO_ROUTES and exports
+// SEO_ROUTES = [...OSS_SEO_ROUTES, ...PRO_SEO_ROUTES].
+const routes = parseRouteArray(resolve(__dirname, '../src/seoRoutes.ts'), 'OSS_SEO_ROUTES');
 
-// Use Function constructor to evaluate the JS array literal.
-// Inject DOMAIN so template literals like `${DOMAIN}/path` resolve correctly.
-const routes = new Function('DOMAIN', `return [${arrayStr}]`)(DOMAIN);
+// The overlay's own SEO routes (per-board simulator landings) are spread into
+// SEO_ROUTES through the `@pro/seoRoutes` alias, which this text parser cannot
+// follow — read the overlay file directly, as for proExamples below.
+if (process.env.VITE_PRO_BUILD && process.env.PRO_OVERLAY_PATH) {
+  const proRoutesPath = resolve(process.env.PRO_OVERLAY_PATH, 'seoRoutes.ts');
+  if (existsSync(proRoutesPath)) {
+    routes.push(...parseRouteArray(proRoutesPath, 'PRO_SEO_ROUTES'));
+  }
+}
 
 const indexable = routes.filter((r) => !r.noindex);
 

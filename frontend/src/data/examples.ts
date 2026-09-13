@@ -5789,6 +5789,7 @@ void loop() {
     category: 'communication',
     difficulty: 'advanced',
     code: '', // unused — each board has its own code in boards[]
+    boardFilter: 'raspberry-pi-3',
     boards: [
       {
         boardKind: 'raspberry-pi-3',
@@ -11141,6 +11142,7 @@ void loop() {
     category: 'basics',
     difficulty: 'beginner',
     code: '',
+    boardFilter: 'raspberry-pi-3',
     boards: [
       {
         boardKind: 'raspberry-pi-3',
@@ -11204,6 +11206,7 @@ except KeyboardInterrupt:
     category: 'basics',
     difficulty: 'intermediate',
     code: '',
+    boardFilter: 'raspberry-pi-3',
     boards: [
       {
         boardKind: 'raspberry-pi-3',
@@ -11351,6 +11354,7 @@ except KeyboardInterrupt:
     category: 'basics',
     difficulty: 'beginner',
     code: '',
+    boardFilter: 'raspberry-pi-4',
     boards: [
       {
         boardKind: 'raspberry-pi-4',
@@ -11428,6 +11432,7 @@ except KeyboardInterrupt:
     category: 'basics',
     difficulty: 'intermediate',
     code: '',
+    boardFilter: 'raspberry-pi-4',
     boards: [
       {
         boardKind: 'raspberry-pi-4',
@@ -11523,6 +11528,7 @@ except KeyboardInterrupt:
     category: 'sensors',
     difficulty: 'intermediate',
     code: '',
+    boardFilter: 'raspberry-pi-5',
     boards: [
       {
         boardKind: 'raspberry-pi-5',
@@ -11605,6 +11611,7 @@ except KeyboardInterrupt:
     category: 'basics',
     difficulty: 'intermediate',
     code: '',
+    boardFilter: 'raspberry-pi-5',
     boards: [
       {
         boardKind: 'raspberry-pi-5',

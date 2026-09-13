@@ -6,6 +6,7 @@
 
 import React, { useState, useCallback, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useSearchParams } from 'react-router-dom';
 import {
   exampleProjects,
   subscribeProExamples,
@@ -71,7 +72,25 @@ function getBoardFilter(example: ExampleProject): string {
 
 export const ExamplesGallery: React.FC<ExamplesGalleryProps> = ({ onLoadExample }) => {
   const { t } = useTranslation();
-  const [selectedBoard, setSelectedBoard] = useState<string>('all');
+  // The board filter lives in the URL (`/examples?board=xiao-esp32s3`) so a
+  // board's page can link straight to its examples and the filtered gallery
+  // is shareable; the other filters stay local state.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedBoard = searchParams.get('board') || 'all';
+  const setSelectedBoard = useCallback(
+    (id: string) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (id === 'all') next.delete('board');
+          else next.set('board', id);
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
   const [selectedCategory, setSelectedCategory] = useState<ExampleProject['category'] | 'all'>(
     'all',
   );
