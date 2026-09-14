@@ -1567,7 +1567,11 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
   }
 
   function wireEsp32Board(id: string, boardKind: BoardKind, pm: PinManager): void {
-    const serialCallback = (ch: string) => appendSerial(id, ch);
+    // UART0 only, as in setBoardType: a bridge that names another UART is
+    // talking to a peripheral on the header, not to the console.
+    const serialCallback = (ch: string, uart?: number) => {
+      if (!uart) appendSerial(id, ch);
+    };
     const bridge = createEsp32Bridge(id, boardKind);
     bridge.onSerialData = serialCallback;
     bridge.onError = (message: string) => {
@@ -1718,7 +1722,11 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       const pm = new PinManager();
       pinManagerMap.set(id, pm);
 
-      const serialCallback = (ch: string) => appendSerial(id, ch);
+      // UART0 only, as in setBoardType: a bridge that names another UART is
+      // talking to a peripheral on the header, not to the console.
+      const serialCallback = (ch: string, uart?: number) => {
+        if (!uart) appendSerial(id, ch);
+      };
 
       if (isPiBoardKind(boardKind)) {
         const bridge = new RaspberryPi3Bridge(id, boardKind);
