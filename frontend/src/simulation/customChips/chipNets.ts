@@ -308,3 +308,44 @@ export function resolveChipNetMembers(
   out.sort((a, b) => (a.pin < b.pin ? -1 : a.pin > b.pin ? 1 : 0));
   return out;
 }
+
+// ── Cross-board nets ─────────────────────────────────────────────────────────
+//
+// A pure chip-to-chip net (no board pin on it) whose chips belong to two or
+// more boards. Inside one board every browser-hosted endpoint already shares
+// the PinManager key `syntheticNetPin(net)`, and a worker-hosted board keeps
+// its own bus; nothing joined the boards. Interconnect.ts mirrors the level
+// between the boards on this list: PinManager to PinManager for the browser
+// side, `chip_net` events for a worker side.
+
+export interface CrossBoardChipNet {
+  /** Net id, the canonical endpoint key both the browser and the workers use. */
+  net: string;
+  /** The PinManager key every browser-hosted endpoint of this net resolves to. */
+  pin: number;
+  /** Boards that own a chip on the net (two or more, sorted). */
+  boards: string[];
+}
+
+export function resolveCrossBoardChipNets(state: ChipNetState): CrossBoardChipNet[] {
+  if (!chipBusEnabled()) return [];
+  const idx = getChipNetIndex(state);
+  const owners = new Map<string, string | null>();
+  const ownerOf = (chipId: string): string | null => {
+    if (!owners.has(chipId)) owners.set(chipId, chipOwnerBoard(idx, chipId));
+    return owners.get(chipId) ?? null;
+  };
+  const out: CrossBoardChipNet[] = [];
+  for (const info of idx.nets.values()) {
+    if (info.hasBoardPin || info.chipEndpoints.size < 2) continue;
+    const boards = new Set<string>();
+    for (const ep of info.chipEndpoints) {
+      const owner = ownerOf(parseEpKey(ep).componentId);
+      if (owner !== null) boards.add(owner);
+    }
+    if (boards.size < 2) continue;
+    out.push({ net: info.canonical, pin: syntheticNetPin(info.canonical), boards: [...boards].sort() });
+  }
+  out.sort((a, b) => (a.net < b.net ? -1 : a.net > b.net ? 1 : 0));
+  return out;
+}

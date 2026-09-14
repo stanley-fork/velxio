@@ -242,6 +242,22 @@ def _get_chip_net_bus(chip_net_bus_cls):
 _chip_net_rx_stats = [0, 0, 0, 0]
 
 
+# Time the command thread spends waiting for QEMU's iothread lock before it can
+# apply a bridged edge: [count, max_ns, sum_ns]. A slow lock here is a slow
+# net, whatever the bridge did.
+_chip_net_lock_stats = [0, 0, 0]
+
+
+def _note_chip_net_lock_wait(wait_ns: int) -> None:
+    st = _chip_net_lock_stats
+    st[0] += 1
+    st[1] = max(st[1], wait_ns)
+    st[2] += wait_ns
+    if st[0] % 200 == 0:
+        _log(f'[custom-chip chip_net] lock wait us over {st[0]} edges: '
+             f'avg={st[2] / st[0] / 1000:.0f} max={st[1] / 1000:.0f}')
+
+
 def _note_chip_net_latency(ts_ns: int) -> None:
     if ts_ns <= 0:
         return
@@ -578,13 +594,26 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
 
     # Predicate: is the iothread lock currently held by this thread?
     # Used to avoid re-acquiring when we're already inside a QEMU callback
-    # (e.g., chip's vx_uart_write fired from inside _on_uart_tx).
-    try:
-        _iothread_locked = lib.qemu_mutex_iothread_locked
-        _iothread_locked.restype  = ctypes.c_bool
-        _iothread_locked.argtypes = []
-    except AttributeError:
-        _iothread_locked = None
+    # (e.g., chip's vx_uart_write fired from inside _on_uart_tx) or on a
+    # thread of ours that took the lock itself (chip_net, the timer thread).
+    # Same story as the lock pair above: the current fork exports the modern
+    # `bql_locked`, and asking only for the legacy name left this None, so a
+    # chip's vx_uart_write from a locked context re-locked the BQL and QEMU
+    # died with `bql_lock_impl: assertion failed: (!bql_locked())` the moment
+    # a custom chip answered on a UART (the KQ-130F receiver's first frame).
+    _iothread_locked = None
+    for locked_name in ('bql_locked', 'qemu_mutex_iothread_locked'):
+        try:
+            _iothread_locked = getattr(lib, locked_name)
+            _iothread_locked.restype  = ctypes.c_bool
+            _iothread_locked.argtypes = []
+            break
+        except AttributeError:
+            _iothread_locked = None
+    if _iothread_locked is None and _lock_iothread is not None:
+        _log('BQL "locked" predicate not found in libqemu (bql_locked / '
+             'qemu_mutex_iothread_locked) — a custom chip writing a UART from '
+             'a locked context will re-lock and abort QEMU.')
 
     # qemu_system_shutdown_request() schedules a clean shutdown from inside
     # the QEMU main-loop thread (which owns the AIO context).  Calling
@@ -1927,6 +1956,171 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
         os._exit(1)
 
     # Pre-register initial sensors before letting QEMU execute firmware.
+    # ── Custom chips: attach / detach, shared by the boot list and the live
+    # `sensor_attach` / `sensor_detach` commands. A chip placed on the canvas
+    # while the guest runs used to wait for the next Run; now it loads here,
+    # and one removed from the canvas leaves every dispatch list it joined.
+    def _attach_custom_chip_sensor(gpio: int, s: dict, sensor_data: dict) -> None:
+        """Load the chip in `s` (a custom-chip sensor record) into this worker
+        and hook it to QEMU's live peripherals. Fills `sensor_data` with the
+        runtime and, for an I2C chip, its slave and address."""
+        del gpio  # the slot is the caller's key; the chip itself is pinless
+        # User-supplied chip compiled to WASM. The runtime loads the
+        # binary in this same Python process so I2C callbacks fire
+        # synchronously when QEMU calls _on_i2c_event — same fidelity
+        # as the hardcoded slaves above.
+        # See docs/wiki/custom-chips-esp32-backend-runtime.md
+        try:
+            from app.services.wasm_chip_runtime import ChipNetBus, WasmChipRuntime
+            from app.services.wasm_chip_slave   import WasmChipI2CSlave
+        except ImportError:
+            # Fallback: same pattern as esp32_i2c_slaves at the top of
+            # this file. The worker subprocess may run from a cwd that
+            # doesn't have `app.services` on sys.path.
+            import importlib.util, pathlib as _pl
+            _here = _pl.Path(__file__).parent
+            _spec_rt = importlib.util.spec_from_file_location(
+                'wasm_chip_runtime', _here / 'wasm_chip_runtime.py'
+            )
+            _mod_rt = importlib.util.module_from_spec(_spec_rt)
+            _spec_rt.loader.exec_module(_mod_rt)
+            WasmChipRuntime = _mod_rt.WasmChipRuntime
+            ChipNetBus = _mod_rt.ChipNetBus
+            _spec_sl = importlib.util.spec_from_file_location(
+                'wasm_chip_slave', _here / 'wasm_chip_slave.py'
+            )
+            _mod_sl = importlib.util.module_from_spec(_spec_sl)
+            # The slave module imports from app.services.wasm_chip_runtime;
+            # patch sys.modules so that import resolves to our loaded module.
+            sys.modules['app.services.wasm_chip_runtime'] = _mod_rt
+            _spec_sl.loader.exec_module(_mod_sl)
+            WasmChipI2CSlave = _mod_sl.WasmChipI2CSlave
+        wasm_b64 = s.get('wasm_b64', '')
+        if not wasm_b64:
+            _log("[custom-chip] missing wasm_b64 in sensor payload")
+        else:
+            try:
+                wasm_bytes = base64.b64decode(wasm_b64)
+                attrs      = s.get('attrs', {}) or {}
+                pin_map    = s.get('pin_map', {}) or {}
+                # Chip-to-chip nets, resolved by the frontend with the
+                # same union-find chipNets.ts runs for browser boards.
+                # Each entry: {'pin': <chip pin>, 'net': <net id>,
+                # 'remote': bool}. Absent on older frontends.
+                nets       = s.get('nets', []) or []
+                # {gpio: uart_id} for the UART pins the diagram wires to
+                # this chip, so vx_uart_attach binds to the UART the
+                # sketch actually talks on. Absent on older frontends.
+                uart_map   = {int(k): int(v)
+                              for k, v in (s.get('uart_map', {}) or {}).items()}
+                net_map    = {str(n['pin']): str(n['net'])
+                              for n in nets if n.get('pin') and n.get('net')}
+                net_bus    = None
+                if net_map:
+                    net_bus = _get_chip_net_bus(ChipNetBus)
+                    net_bus.mark_remote(
+                        str(n['net']) for n in nets
+                        if n.get('net') and n.get('remote')
+                    )
+
+                # ── Plumbing: hook the runtime to QEMU's live peripherals ──
+                # GPIO output: chip's vx_pin_write → qemu_picsimlab_set_pin
+                def _chip_pin_writer(gpio: int, value: int, _lib=lib):
+                    _lib.qemu_picsimlab_set_pin(gpio + 1, value)
+
+                # GPIO input: chip reads current QEMU pin state.
+                def _chip_pin_reader(gpio: int, _store=_pin_state):
+                    return int(_store.get(gpio, 0)) & 1
+
+                # UART RX: chip's vx_uart_write → inject bytes into firmware UART.
+                # Acquire the iothread lock ONLY if we don't already hold it
+                # (typical case: the chip's vx_uart_write is fired from inside
+                # _on_uart_tx, which is already in the QEMU thread holding the
+                # lock — re-acquiring there triggers an assertion).
+                def _chip_uart_writer(uart_id: int, data: bytes,
+                                      _lib=lib,
+                                      _lock=_lock_iothread,
+                                      _unlock=_unlock_iothread,
+                                      _is_locked=_iothread_locked):
+                    buf = (ctypes.c_uint8 * len(data))(*data)
+                    need_lock = bool(_lock) and (not _is_locked or not _is_locked())
+                    if need_lock:
+                        _lock(b'esp32_worker.py:custom-chip', 0)
+                    try:
+                        _lib.qemu_picsimlab_uart_receive(int(uart_id), buf, len(data))
+                    finally:
+                        if need_lock and _unlock:
+                            _unlock()
+
+                # Timer arm: just track this runtime so the scheduler thread
+                # picks up the new deadline on its next iteration.
+                def _chip_timer_scheduler(rt):
+                    if rt not in _chip_timer_runtimes:
+                        _chip_timer_runtimes.append(rt)
+
+                runtime = WasmChipRuntime(
+                    wasm_bytes, attrs, _emit,
+                    pin_map=pin_map,
+                    pin_writer=_chip_pin_writer,
+                    pin_reader=_chip_pin_reader,
+                    uart_writer=_chip_uart_writer,
+                    timer_scheduler=_chip_timer_scheduler,
+                    net_map=net_map,
+                    net_bus=net_bus,
+                    uart_map=uart_map,
+                )
+                runtime.run_chip_setup()
+
+                if runtime.i2c_address is not None:
+                    slave = WasmChipI2CSlave(runtime.i2c_address, runtime)
+                    _i2c_slaves[runtime.i2c_address] = slave
+                    sensor_data['i2c_addr'] = runtime.i2c_address
+                    sensor_data['slave']    = slave
+                    _log(f"[custom-chip] I2C slave registered at 0x{runtime.i2c_address:02x}")
+                if runtime.uart_config is not None:
+                    _chip_uart_runtimes.append(runtime)
+                    _log(f"[custom-chip] UART chip registered on UART{runtime.uart_id}")
+                if runtime.spi_config is not None:
+                    _chip_spi_runtimes.append(runtime)
+                    _sync_cs_events()
+                    _log("[custom-chip] SPI chip registered")
+                if runtime.has_pin_watches():
+                    _chip_pin_watch_runtimes.append(runtime)
+                    _log(f"[custom-chip] pin watches registered: {list(runtime._pin_watches.keys())}")
+                if net_map:
+                    _log(f"[custom-chip] chip nets: {net_map} "
+                         f"watching={runtime.has_net_watches()}")
+                if (runtime.i2c_address is None and runtime.uart_config is None
+                        and runtime.spi_config is None):
+                    _log("[custom-chip] WASM loaded but no I2C/UART/SPI peripherals declared "
+                         "— chip is GPIO-only")
+                sensor_data['runtime'] = runtime
+            except Exception as e:
+                _log(f"[custom-chip] failed to load: {e!r}")
+
+    def _detach_custom_chip_sensor(sensor_data: dict) -> None:
+        """Undo _attach_custom_chip_sensor for a chip removed from the canvas.
+        The I2C slave is popped by the caller (the generic `i2c_addr` rule)."""
+        rt = sensor_data.get('runtime')
+        if rt is None:
+            return
+        for lst in (_chip_uart_runtimes, _chip_spi_runtimes,
+                    _chip_pin_watch_runtimes, _chip_timer_runtimes):
+            while rt in lst:
+                lst.remove(rt)
+        bus = _chip_net_bus[0]
+        if bus is not None:
+            try:
+                bus.unregister(rt)
+            except Exception as e:
+                _log(f'[custom-chip] net unregister failed: {e!r}')
+        try:
+            _sync_cs_events()
+        except Exception:
+            pass
+        sensor_data['runtime'] = None
+        _log('[custom-chip] detached')
+
     for s in initial_sensors:
         gpio = int(s.get('pin', 0))
         sensor_type = s.get('sensor_type', '')
@@ -2096,138 +2290,7 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                 sensor_data['i2c_addr'] = i2c_addr
                 sensor_data['slave'] = sink
             elif sensor_type == 'custom-chip':
-                # User-supplied chip compiled to WASM. The runtime loads the
-                # binary in this same Python process so I2C callbacks fire
-                # synchronously when QEMU calls _on_i2c_event — same fidelity
-                # as the hardcoded slaves above.
-                # See docs/wiki/custom-chips-esp32-backend-runtime.md
-                try:
-                    from app.services.wasm_chip_runtime import ChipNetBus, WasmChipRuntime
-                    from app.services.wasm_chip_slave   import WasmChipI2CSlave
-                except ImportError:
-                    # Fallback: same pattern as esp32_i2c_slaves at the top of
-                    # this file. The worker subprocess may run from a cwd that
-                    # doesn't have `app.services` on sys.path.
-                    import importlib.util, pathlib as _pl
-                    _here = _pl.Path(__file__).parent
-                    _spec_rt = importlib.util.spec_from_file_location(
-                        'wasm_chip_runtime', _here / 'wasm_chip_runtime.py'
-                    )
-                    _mod_rt = importlib.util.module_from_spec(_spec_rt)
-                    _spec_rt.loader.exec_module(_mod_rt)
-                    WasmChipRuntime = _mod_rt.WasmChipRuntime
-                    ChipNetBus = _mod_rt.ChipNetBus
-                    _spec_sl = importlib.util.spec_from_file_location(
-                        'wasm_chip_slave', _here / 'wasm_chip_slave.py'
-                    )
-                    _mod_sl = importlib.util.module_from_spec(_spec_sl)
-                    # The slave module imports from app.services.wasm_chip_runtime;
-                    # patch sys.modules so that import resolves to our loaded module.
-                    sys.modules['app.services.wasm_chip_runtime'] = _mod_rt
-                    _spec_sl.loader.exec_module(_mod_sl)
-                    WasmChipI2CSlave = _mod_sl.WasmChipI2CSlave
-                wasm_b64 = s.get('wasm_b64', '')
-                if not wasm_b64:
-                    _log("[custom-chip] missing wasm_b64 in sensor payload")
-                else:
-                    try:
-                        wasm_bytes = base64.b64decode(wasm_b64)
-                        attrs      = s.get('attrs', {}) or {}
-                        pin_map    = s.get('pin_map', {}) or {}
-                        # Chip-to-chip nets, resolved by the frontend with the
-                        # same union-find chipNets.ts runs for browser boards.
-                        # Each entry: {'pin': <chip pin>, 'net': <net id>,
-                        # 'remote': bool}. Absent on older frontends.
-                        nets       = s.get('nets', []) or []
-                        # {gpio: uart_id} for the UART pins the diagram wires to
-                        # this chip, so vx_uart_attach binds to the UART the
-                        # sketch actually talks on. Absent on older frontends.
-                        uart_map   = {int(k): int(v)
-                                      for k, v in (s.get('uart_map', {}) or {}).items()}
-                        net_map    = {str(n['pin']): str(n['net'])
-                                      for n in nets if n.get('pin') and n.get('net')}
-                        net_bus    = None
-                        if net_map:
-                            net_bus = _get_chip_net_bus(ChipNetBus)
-                            net_bus.mark_remote(
-                                str(n['net']) for n in nets
-                                if n.get('net') and n.get('remote')
-                            )
-
-                        # ── Plumbing: hook the runtime to QEMU's live peripherals ──
-                        # GPIO output: chip's vx_pin_write → qemu_picsimlab_set_pin
-                        def _chip_pin_writer(gpio: int, value: int, _lib=lib):
-                            _lib.qemu_picsimlab_set_pin(gpio + 1, value)
-
-                        # GPIO input: chip reads current QEMU pin state.
-                        def _chip_pin_reader(gpio: int, _store=_pin_state):
-                            return int(_store.get(gpio, 0)) & 1
-
-                        # UART RX: chip's vx_uart_write → inject bytes into firmware UART.
-                        # Acquire the iothread lock ONLY if we don't already hold it
-                        # (typical case: the chip's vx_uart_write is fired from inside
-                        # _on_uart_tx, which is already in the QEMU thread holding the
-                        # lock — re-acquiring there triggers an assertion).
-                        def _chip_uart_writer(uart_id: int, data: bytes,
-                                              _lib=lib,
-                                              _lock=_lock_iothread,
-                                              _unlock=_unlock_iothread,
-                                              _is_locked=_iothread_locked):
-                            buf = (ctypes.c_uint8 * len(data))(*data)
-                            need_lock = bool(_lock) and (not _is_locked or not _is_locked())
-                            if need_lock:
-                                _lock(b'esp32_worker.py:custom-chip', 0)
-                            try:
-                                _lib.qemu_picsimlab_uart_receive(int(uart_id), buf, len(data))
-                            finally:
-                                if need_lock and _unlock:
-                                    _unlock()
-
-                        # Timer arm: just track this runtime so the scheduler thread
-                        # picks up the new deadline on its next iteration.
-                        def _chip_timer_scheduler(rt):
-                            if rt not in _chip_timer_runtimes:
-                                _chip_timer_runtimes.append(rt)
-
-                        runtime = WasmChipRuntime(
-                            wasm_bytes, attrs, _emit,
-                            pin_map=pin_map,
-                            pin_writer=_chip_pin_writer,
-                            pin_reader=_chip_pin_reader,
-                            uart_writer=_chip_uart_writer,
-                            timer_scheduler=_chip_timer_scheduler,
-                            net_map=net_map,
-                            net_bus=net_bus,
-                            uart_map=uart_map,
-                        )
-                        runtime.run_chip_setup()
-
-                        if runtime.i2c_address is not None:
-                            slave = WasmChipI2CSlave(runtime.i2c_address, runtime)
-                            _i2c_slaves[runtime.i2c_address] = slave
-                            sensor_data['i2c_addr'] = runtime.i2c_address
-                            sensor_data['slave']    = slave
-                            _log(f"[custom-chip] I2C slave registered at 0x{runtime.i2c_address:02x}")
-                        if runtime.uart_config is not None:
-                            _chip_uart_runtimes.append(runtime)
-                            _log(f"[custom-chip] UART chip registered on UART{runtime.uart_id}")
-                        if runtime.spi_config is not None:
-                            _chip_spi_runtimes.append(runtime)
-                            _sync_cs_events()
-                            _log("[custom-chip] SPI chip registered")
-                        if runtime.has_pin_watches():
-                            _chip_pin_watch_runtimes.append(runtime)
-                            _log(f"[custom-chip] pin watches registered: {list(runtime._pin_watches.keys())}")
-                        if net_map:
-                            _log(f"[custom-chip] chip nets: {net_map} "
-                                 f"watching={runtime.has_net_watches()}")
-                        if (runtime.i2c_address is None and runtime.uart_config is None
-                                and runtime.spi_config is None):
-                            _log("[custom-chip] WASM loaded but no I2C/UART/SPI peripherals declared "
-                                 "— chip is GPIO-only")
-                        sensor_data['runtime'] = runtime
-                    except Exception as e:
-                        _log(f"[custom-chip] failed to load: {e!r}")
+                _attach_custom_chip_sensor(gpio, s, sensor_data)
             _sensors[gpio] = sensor_data
     _sensors_ready.set()
     _log(f'_i2c_slaves registered: {list(_i2c_slaves.keys())}')
@@ -2355,8 +2418,10 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
             # re-enter QEMU from this thread.
             bus = _chip_net_bus[0]
             if bus is not None:
+                _t_wait = time.monotonic_ns()
                 if _lock_iothread:
                     _lock_iothread(b'esp32_worker.py:chip_net', 0)
+                _note_chip_net_lock_wait(time.monotonic_ns() - _t_wait)
                 try:
                     ts_ns = int(cmd.get('ts', 0))
                     _note_chip_net_latency(ts_ns)
@@ -2481,6 +2546,8 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                     _i2c_slaves[i2c_addr] = slave
                     sensor_data['i2c_addr'] = i2c_addr
                     sensor_data['slave'] = slave
+                elif sensor_type == 'custom-chip':
+                    _attach_custom_chip_sensor(gpio, cmd, sensor_data)
                 elif sensor_type in ('ssd1306', 'pcf8574', 'i2c-write-sink'):
                     default_addr = 0x3C if sensor_type == 'ssd1306' else 0x27
                     i2c_addr = int(cmd.get('addr', default_addr))
@@ -2665,6 +2732,8 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                 sensor = _sensors.pop(gpio, None)
                 if sensor and sensor.get('type') == 'matrix-keypad':
                     _keypad_uninstall(sensor)
+                if sensor and sensor.get('type') == 'custom-chip':
+                    _detach_custom_chip_sensor(sensor)
                 if sensor and 'i2c_addr' in sensor:
                     _i2c_slaves.pop(sensor['i2c_addr'], None)
                 if sensor and 'epaper_component_id' in sensor:

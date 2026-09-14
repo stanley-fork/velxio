@@ -38,6 +38,7 @@ import asyncio
 import base64
 import dataclasses
 import json
+import time
 import logging
 import os
 import pathlib
@@ -473,16 +474,28 @@ class EspLibManager:
     def chip_net(self, client_id: str, net: str, level: int, ts: int) -> None:
         """Replay a chip-to-chip net level another board's worker drove.
 
-        `ts` is the sender's monotonic clock in nanoseconds. The two workers do
-        not share an epoch, so it is diagnostic and ordering information only:
-        the receiving chip sees the edge when it arrives.
+        `ts` is the sender's CLOCK_MONOTONIC stamp in nanoseconds; the workers
+        on one host share that clock and the receiving chip sees the edge at
+        that instant (ChipNetBus.apply_remote).
         """
         with self._instances_lock:
             inst = self._instances.get(client_id)
         if inst and inst.running and inst.process.returncode is None:
+            # Count what the bridge hands this worker, so a lossy hop shows
+            # up next to the worker's own "N hops" line.
+            n = inst.chip_net_in = getattr(inst, 'chip_net_in', 0) + 1
+            t0 = time.monotonic()
             self._write_cmd(inst, {
                 'cmd': 'chip_net', 'net': net, 'level': 1 if level else 0, 'ts': ts,
             })
+            dt_ms = (time.monotonic() - t0) * 1000.0
+            slow = getattr(inst, 'chip_net_slow_ms', 0.0)
+            if dt_ms > slow:
+                inst.chip_net_slow_ms = dt_ms
+            if n % 200 == 0:
+                logger.info('[%s] chip_net: %d edges handed to the worker, slowest pipe write %.1f ms',
+                            client_id, n, getattr(inst, 'chip_net_slow_ms', 0.0))
+                inst.chip_net_slow_ms = 0.0
 
     def sensor_detach(self, client_id: str, pin: int) -> None:
         """Remove a sensor from a GPIO pin."""
@@ -641,6 +654,12 @@ class EspLibManager:
                                 for be in ble_evts:
                                     self._dispatch(inst, 'ble_status', dict(be))
                 elif etype:
+                    if etype in ('chip_log', 'chip_warning', 'chip_error'):
+                        # A custom chip's vx_log / runtime diagnostics. Kept in
+                        # the backend log too: the browser gets the event, but
+                        # a chip misbehaving inside the worker is debugged here.
+                        logger.info('[%s] [%s] %s', client_id, etype,
+                                    event.get('text') or event.get('error') or event)
                     self._dispatch(inst, etype, event)
 
         except Exception as exc:

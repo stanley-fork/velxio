@@ -506,6 +506,17 @@ export class Esp32Bridge {
           );
           break;
         }
+        case 'chip_log':
+        case 'chip_warning':
+        case 'chip_error': {
+          // A worker-hosted custom chip's vx_log and runtime diagnostics, the
+          // same lines the browser runtime prints for its chips.
+          const text = String(msg.data.text ?? msg.data.error ?? JSON.stringify(msg.data));
+          const line = `[chip:${this.boardId}] ${text.replace(/\n$/, '')}`;
+          if (msg.type === 'chip_log') console.log(line);
+          else console.warn(line);
+          break;
+        }
         case 'gpio_dir': {
           const pin = msg.data.pin as number;
           const dir = msg.data.dir as 0 | 1;

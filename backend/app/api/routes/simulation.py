@@ -17,6 +17,9 @@ def _find_free_port() -> int:
         return s.getsockname()[1]
 
 router = APIRouter()
+
+# Per-client count of chip_net edges received from the browser (diagnostics).
+_chip_net_in_counts: dict[str, int] = {}
 logger = logging.getLogger(__name__)
 
 
@@ -245,6 +248,14 @@ async def simulation_websocket(websocket: WebSocket, client_id: str):
                 net = str(msg_data.get('net', ''))
                 level = 1 if msg_data.get('level') else 0
                 ts = int(msg_data.get('ts', 0))
+                # Count what the socket delivers, next to the lib manager's
+                # and the worker's own counts: three numbers that locate a
+                # lossy or slow hop without a debugger.
+                _chip_net_in = _chip_net_in_counts.get(client_id, 0) + 1
+                _chip_net_in_counts[client_id] = _chip_net_in
+                if _chip_net_in % 200 == 0:
+                    logger.info('[%s] chip_net: %d edges received on the socket',
+                                client_id, _chip_net_in)
                 if net and _use_lib():
                     esp_lib_manager.chip_net(client_id, net, level, ts)
 

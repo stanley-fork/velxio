@@ -200,11 +200,9 @@ firmware's critical path.
 | `backend/app/services/wasm_chip_slave.py` | `WasmChipI2CSlave` — implements the same `handle_event(event) -> int` contract as the hardcoded slaves |
 | `backend/app/services/esp32_worker.py` | Hooked at `_init_sensors` to instantiate runtime + slave on `sensor_type == 'custom-chip'` |
 | `frontend/src/simulation/parts/CustomChipPart.ts` | Detects ESP32 sim → calls `registerSensor('custom-chip', …)` instead of running WASM in the browser |
-| `test/test_chip_backend_runtime/test_wasm_runtime.py` | Unit tests: load chip WASM in pure Python, exercise GPIO / I2C / UART / SPI / pin_watch / timers without QEMU (11 tests) |
-| `test/test_custom_chips_boards/test_esp32_chip_i2c.py` | E2E: ESP32 sketch with `Wire.h` ↔ chip 24C01 (I2C round-trip) |
-| `test/test_custom_chips_boards/test_esp32_chip_uart.py` | E2E: ESP32 sketch ↔ chip ROT13 (UART round-trip) |
-| `test/test_custom_chips_boards/test_esp32_chip_spi.py` | E2E: ESP32 sketch ↔ chip 74HC595 (SPI byte → RCLK pin_watch → 8 GPIO outputs) |
-| `test/test_custom_chips_boards/sketches/esp32_*/` | Arduino sketches used by the E2E tests |
+| `test/backend/unit/test_chip_nets.py`, `test_chip_uart_binding.py` | Unit tests (no QEMU): the chip net bus and the UART binding on two real chips compiled on demand (`chip_fixtures.py`) |
+| velxio-prod checkout, `test/test_chip_backend_runtime/test_wasm_runtime.py` | Unit tests: GPIO / I2C / UART / SPI / pin_watch / timers in pure Python (pruned from OSS in `cd3fdded`) |
+| velxio-prod checkout, `test/test_custom_chips_boards/test_esp32_chip_{i2c,uart,spi}.py` | E2E: ESP32 sketch ↔ chip over I2C (24C01), UART (ROT13), SPI (74HC595), with their sketches |
 
 ---
 
@@ -288,7 +286,8 @@ thread. To add a new peripheral:
    `_lock_iothread` (see `_chip_uart_writer` for the "only acquire if not
    already locked" pattern).
 3. **Tests** — add a runtime unit test in
-   `test/test_chip_backend_runtime/test_wasm_runtime.py` that exercises the
+   `test/backend/unit/` (or, in the velxio-prod checkout,
+   `test/test_chip_backend_runtime/test_wasm_runtime.py`) that exercises the
    chain in pure Python, then a `test_esp32_chip_*.py` E2E with a real Arduino
    sketch.
 
@@ -312,10 +311,12 @@ self-contained host-import block in `_define_velxio`.
 
 ## Verification
 
-- **Unit tests** (no QEMU, no firmware): `pytest test/test_chip_backend_runtime/ -v`
+- **Unit tests in this repository** (no QEMU, no firmware): `pytest test/backend/unit/test_chip_*.py -v`
+  → compiles the SX1262 and KQ-130F models and drives them over a net and a UART. **15/15 pass in ~2 s** where a wasi-sdk is installed (the Docker image).
+- **Unit tests, velxio-prod checkout** (no QEMU, no firmware): `pytest test/test_chip_backend_runtime/ -v`
   → loads `eeprom-24c01.wasm` and `eeprom-24lc256.wasm` directly, drives I2C events,
   verifies state. **5/5 pass in ~0.3 s.**
-- **E2E** (full QEMU + sketch): `pytest test/test_custom_chips_boards/test_esp32_chip_i2c.py`
+- **E2E, velxio-prod checkout** (full QEMU + sketch): `pytest test/test_custom_chips_boards/test_esp32_chip_i2c.py`
   → compiles `eeprom-24c01.c` to WASM, compiles `esp32_eeprom_demo.ino` to firmware,
   boots them together, asserts the 4-byte round-trip. **1/1 passes in ~1.5 min.**
 - **Sandbox regression**: `cd test/test_custom_chips && npm test` → **70/70 still pass**.

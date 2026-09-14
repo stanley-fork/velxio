@@ -31,6 +31,11 @@ import type { BoardKind } from '../types/board';
 import type { Wire } from '../types/wire';
 import { boardPinToNumber } from '../utils/boardPinMapping';
 import { classifyPin, isUartWire } from '../utils/boardProtocols';
+import {
+  resolveCrossBoardChipNets,
+  type ChipNetState,
+  type CrossBoardChipNet,
+} from './customChips/chipNets';
 
 // ── Bridge / sim runtime references ──────────────────────────────────────────
 //
@@ -44,6 +49,10 @@ interface RuntimeAccessors {
   getBoardBridge: (id: string) => any | undefined; // Pi3B
   getEsp32Bridge: (id: string) => any | undefined;
   getStm32Bridge: (id: string) => any | undefined;
+  /** The diagram as chipNets.ts reads it (wires, components, boards), for
+   *  the cross-board chip-net links. Optional: a runtime without it has no
+   *  such links, which is what every caller before this seam had. */
+  getChipNetState?: () => ChipNetState | null;
 }
 
 let runtime: RuntimeAccessors | null = null;
@@ -79,6 +88,75 @@ interface RouteHandle {
 const boards = new Map<string, BoardEntry>();
 const routes = new Map<string, RouteHandle>();
 const propagatingPins = new Set<string>(); // re-entrancy guard
+
+// ── Cross-board chip nets ────────────────────────────────────────────────────
+//
+// A chip-to-chip net with chips on two boards (see resolveCrossBoardChipNets).
+// Browser-hosted endpoints live on their board's PinManager under one shared
+// synthetic key; a worker-hosted board (ESP32 QEMU, STM32) keeps the net on
+// its own bus and publishes `chip_net`. This mirrors a level change from any
+// of them to all the others: PinManager.setPinState on the browser boards,
+// sendChipNet on the worker bridges. Last writer wins, like the worker bus.
+const chipNetLinks = new Map<string, CrossBoardChipNet>();
+let chipNetUnsubs: Array<() => void> = [];
+const propagatingChipNets = new Set<string>();
+
+function propagateChipNet(net: string, fromBoardId: string, level: boolean, ts: number): void {
+  if (!runtime) return;
+  const link = chipNetLinks.get(net);
+  if (!link) return;
+  if (propagatingChipNets.has(net)) return;
+  propagatingChipNets.add(net);
+  try {
+    for (const boardId of link.boards) {
+      if (boardId === fromBoardId) continue;
+      const entry = boards.get(boardId);
+      // The browser side: every endpoint on this board reads the shared key.
+      const pm = runtime.getBoardPinManager(boardId);
+      if (pm?.setPinState && pm.getPinState?.(link.pin) !== level) pm.setPinState(link.pin, level);
+      // The worker side, when this board has one. A bridge without
+      // sendChipNet (an in-browser engine) hosts its chips in the browser
+      // and was served by the PinManager write above.
+      if (entry && isEsp32Bridge(entry.kind)) {
+        runtime.getEsp32Bridge(boardId)?.sendChipNet?.(net, level ? 1 : 0, ts);
+      } else if (entry && isStm32Bridge(entry.kind)) {
+        runtime.getStm32Bridge(boardId)?.sendChipNet?.(net, level ? 1 : 0, ts);
+      }
+    }
+  } finally {
+    propagatingChipNets.delete(net);
+  }
+}
+
+/** Rebuild the cross-board chip-net links from the diagram. Called with every
+ *  wire update; idempotent. */
+function updateChipNetLinks(): void {
+  for (const u of chipNetUnsubs) u();
+  chipNetUnsubs = [];
+  chipNetLinks.clear();
+  const state = runtime?.getChipNetState?.();
+  if (!runtime || !state) return;
+  for (const link of resolveCrossBoardChipNets(state)) {
+    chipNetLinks.set(link.net, link);
+    for (const boardId of link.boards) {
+      const pm = runtime.getBoardPinManager(boardId);
+      if (!pm?.onPinChange) continue;
+      const unsub = pm.onPinChange(link.pin, (_p: number, state: boolean) => {
+        propagateChipNet(link.net, boardId, state, nowNs());
+      });
+      if (typeof unsub === 'function') chipNetUnsubs.push(unsub);
+    }
+  }
+}
+
+function nowNs(): number {
+  return Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) * 1e6);
+}
+
+/** Diagnostic: the cross-board chip-net links in force (for tests). */
+export function getChipNetLinks(): CrossBoardChipNet[] {
+  return [...chipNetLinks.values()];
+}
 
 /**
  * Cross-board I2C bridges installed when two boards share a wired
@@ -423,6 +501,26 @@ function ensureChipNetHook(entry: BoardEntry): void {
       if (other.id === boardId) continue;
       if (!isEsp32Bridge(other.kind)) continue;
       runtime.getEsp32Bridge(other.id)?.sendChipNet?.(net, level, ts);
+    }
+    // A browser-hosted chip on another board sits on the same net under its
+    // PinManager key; the worker bridges above were already served, so the
+    // link propagation only has the PinManagers left to write.
+    const link = chipNetLinks.get(net);
+    if (!link) return;
+    for (const other of link.boards) {
+      if (other === boardId) continue;
+      const entry = boards.get(other);
+      if (entry && isEsp32Bridge(entry.kind)) continue;
+      const pm = runtime.getBoardPinManager(other);
+      const lv = !!level;
+      if (pm?.setPinState && pm.getPinState?.(link.pin) !== lv) {
+        propagatingChipNets.add(net);
+        try {
+          pm.setPinState(link.pin, lv);
+        } finally {
+          propagatingChipNets.delete(net);
+        }
+      }
     }
   };
 }
@@ -787,6 +885,7 @@ export function updateWires(wires: readonly Wire[]): void {
   // Chip-to-chip nets are not routed per wire (the worker keys them by net id),
   // so the relay is installed per board rather than per route.
   ensureChipNetHooks();
+  updateChipNetLinks();
 }
 
 /**
@@ -833,6 +932,10 @@ export function resetInterconnect(): void {
   }
   boards.clear();
   propagatingPins.clear();
+  for (const u of chipNetUnsubs) u();
+  chipNetUnsubs = [];
+  chipNetLinks.clear();
+  propagatingChipNets.clear();
   lastWireSnapshot = '';
 }
 

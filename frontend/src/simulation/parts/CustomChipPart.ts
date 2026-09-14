@@ -19,6 +19,7 @@ import {
   detectSimulatorKind,
 } from '../customChips';
 import { hostsChipsInWorker } from '../customChips/simulatorBridges';
+import { chipVirtualPin } from '../customChips/chipVirtualPin';
 import { useSimulatorStore } from '../../store/useSimulatorStore';
 import { useElectricalStore } from '../../store/useElectricalStore';
 import { normalizeChipPinNames } from '../customChips/chipJson';
@@ -171,8 +172,10 @@ PartSimulationRegistry.register('custom-chip', {
         }
       }
 
-      // Synthetic slot — backend doesn't index custom-chip sensors by pin.
-      const virtualPin = 0xFF;
+      // The worker keys sensor records by pin and a chip has none: each chip
+      // gets its own synthetic slot (see chipVirtualPin), so live attribute
+      // updates and a detach reach this chip and not the last one registered.
+      const virtualPin = chipVirtualPin(componentId);
       try {
         sim.registerSensor('custom-chip', virtualPin, {
           wasm_b64: wasmBase64,
@@ -192,9 +195,16 @@ PartSimulationRegistry.register('custom-chip', {
       const cleanupExtensions = runChipAttachExtensions({
         kind: 'esp32', componentId, simulator: sim, virtualPin,
       });
-      // Cleanup: the QEMU instance is torn down on stop_esp32.
+      // Cleanup: tell the worker the chip is gone. While the guest runs this
+      // is a live detach (a chip deleted from the canvas leaves the bus and
+      // every dispatch list); on Stop the bridge drops the record from the
+      // list it would replay at the next Run, and the part re-registers when
+      // it attaches again. The same cleanup as the ePaper part.
       return () => {
         cleanupExtensions();
+        try {
+          sim.unregisterSensor?.(virtualPin);
+        } catch { /* bridge gone */ }
       };
     }
     // ── End ESP32 path ──────────────────────────────────────────────────────

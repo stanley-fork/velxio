@@ -53,9 +53,11 @@ class _StubMember:
 
     def __init__(self) -> None:
         self.seen: list[tuple[int, int]] = []
+        self.stamps: list[int | None] = []
 
-    def notify_net_change(self, handle: int, value: int) -> None:
+    def notify_net_change(self, handle: int, value: int, at_ns: int | None = None) -> None:
         self.seen.append((handle, value))
+        self.stamps.append(at_ns)
 
 
 def test_bus_drives_every_member_but_the_writer():
@@ -127,6 +129,20 @@ def test_bus_publishes_only_nets_marked_remote():
 
     assert bus.is_remote('remote-net') and not bus.is_remote('local-net')
     assert published == [('remote-net', 1, 1234)]
+
+
+def test_bus_unregister_drops_a_detached_member():
+    bus = ChipNetBus()
+    a, b, c = _StubMember(), _StubMember(), _StubMember()
+    bus.register('n', a, 0)
+    bus.register('n', b, 0)
+    bus.register('n', c, 0)
+    bus.unregister(b)
+    bus.drive('n', 1, source=(a, 0))
+    assert b.seen == []
+    assert c.seen == [(0, 1)]
+    # The net keeps its level for whoever asks.
+    assert bus.level('n') == 1
 
 
 def test_bus_never_republishes_what_a_peer_drove():
@@ -271,13 +287,18 @@ def test_chip_net_bridges_two_buses(virtual_clock):
         hops[0] += 1
         bus_a.apply_remote(net, level, ts)
 
-    bus_a = ChipNetBus(publisher=to_b)
-    bus_b = ChipNetBus(publisher=to_a)
+    # Both buses stamp with the shared clock (CLOCK_MONOTONIC in a worker,
+    # the virtual clock here), and the runtimes anchor on the same origin.
+    clock = lambda: virtual_clock[0]  # noqa: E731
+    bus_a = ChipNetBus(publisher=to_b, clock=clock)
+    bus_b = ChipNetBus(publisher=to_a, clock=clock)
     bus_a.mark_remote(['mains'])
     bus_b.mark_remote(['mains'])
 
     a = _Plc(bus_a, 'mains', 'plcA', 10)
     b = _Plc(bus_b, 'mains', 'plcB', 10)
+    a.rt._t0 = 0
+    b.rt._t0 = 0
 
     msg = b'xkoin plc 3\n'
     a.host_send(msg)
@@ -286,6 +307,63 @@ def test_chip_net_bridges_two_buses(virtual_clock):
     assert bytes(b.out) == msg
     assert hops[0] > 0                  # it really did cross the bridge
     assert bytes(a.out) == b''
+
+
+def _bridged_pair(virtual_clock, jitter_ns, stamped: bool):
+    """Two buses joined by a hop that ARRIVES late by a rotating jitter, as
+    the real bridge does (measured 2.6 ms min, 8 ms mean, 100 ms max on a
+    loaded host). The receiver's clock is the virtual clock plus that lag at
+    the moment each edge lands. With `stamped`, the hop forwards the sender's
+    stamp; without it, the receiver only has its arrival time."""
+    k = [0]
+    lag = [0]
+    bus_a: ChipNetBus
+    bus_b: ChipNetBus
+
+    def to_b(net: str, level: int, ts: int) -> None:
+        lag[0] = jitter_ns[k[0] % len(jitter_ns)]
+        k[0] += 1
+        bus_b.apply_remote(net, level, ts if stamped else 0)
+
+    def to_a(net: str, level: int, ts: int) -> None:
+        bus_a.apply_remote(net, level, ts if stamped else 0)
+
+    clock = lambda: virtual_clock[0]  # noqa: E731
+    bus_a = ChipNetBus(publisher=to_b, clock=clock)
+    bus_b = ChipNetBus(publisher=to_a, clock=clock)
+    bus_a.mark_remote(['mains'])
+    bus_b.mark_remote(['mains'])
+    a = _Plc(bus_a, 'mains', 'plcA', 10)
+    b = _Plc(bus_b, 'mains', 'plcB', 10)
+    a.rt._t0 = 0
+    b.rt._t0 = 0
+    # The receiver's own clock runs late by the current hop lag.
+    b.rt.sim_now_nanos = lambda: virtual_clock[0] + lag[0]  # type: ignore[method-assign]
+    return a, b
+
+
+@pytestmark_wasm
+def test_bridge_jitter_breaks_an_unstamped_edge_stream(virtual_clock):
+    # Half cell is 100 us at bit_period_us 200; a lag swing of 60 us to 150 us
+    # is more than the half-cell margin, and the frame is lost.
+    jitter = [0, 150_000, 30_000, 90_000]
+    a, b = _bridged_pair(virtual_clock, jitter, stamped=False)
+    msg = b'xkoin plc 4\n'
+    a.host_send(msg)
+    _pump(virtual_clock, [a.rt, b.rt])
+    assert bytes(b.out) != msg
+
+
+@pytestmark_wasm
+def test_stamped_edges_survive_bridge_jitter(virtual_clock):
+    # Same hop, same lag, but each edge carries the sender's stamp and the
+    # receiving chip sees it at that instant: the frame decodes.
+    jitter = [0, 150_000, 30_000, 90_000]
+    a, b = _bridged_pair(virtual_clock, jitter, stamped=True)
+    msg = b'xkoin plc 5\n'
+    a.host_send(msg)
+    _pump(virtual_clock, [a.rt, b.rt], stop=lambda: bytes(b.out) == msg)
+    assert bytes(b.out) == msg
 
 
 # ── SX1262 over a chip-to-chip ANT net ───────────────────────────────────────

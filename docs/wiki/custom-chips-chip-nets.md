@@ -173,9 +173,15 @@ set that floor: the bridge's p99 of about 3 ms, and the sender's own timer
 thread, a `threading.Event.wait` loop that overshoots a 2.5 ms target to
 3.3 ms at p99. Both are host scheduling.
 
-**Rule of thumb: a bit-level protocol on a bridged chip net needs a bit
-period around 40 ms.** A frame-level bridge message is the obvious follow-up
-and is out of scope here.
+Those numbers were taken before edges carried a stamp. Since PR #324's
+follow-ups every published edge carries the sender's `CLOCK_MONOTONIC`
+instant (a timer callback stamps its scheduled deadline, not the thread's
+wake-up time) and the receiving chip sees the edge at that instant, so the
+hop's jitter no longer reaches the bit timing: on the same loaded host the
+KQ-130F pair delivered 7 of 7 frames at a 40 ms bit period with one-way
+latency between 9 ms and 65 ms. What still bounds a bridged protocol is
+throughput (each edge is two WebSocket messages) and ordering, which the
+sockets preserve.
 
 ## Limits that remain
 
@@ -186,24 +192,29 @@ and is out of scope here.
   no such jitter.
 - **Every bridged edge is two WebSocket messages.** A protocol that toggles a
   line quickly saturates that path first, and a background tab widens the
-  jitter.
+  latency. The latency no longer reaches the bit timing, though: every edge
+  travels with the sender's `CLOCK_MONOTONIC` stamp, the workers on one host
+  share that clock, and the receiving chip sees the edge at that instant
+  (`ChipNetBus.apply_remote`), so a self-clocked protocol measures the
+  spacing the sender drove and the hop only delays the frame. Measured on a
+  loaded host before the stamp: 2.6 ms min, 8 ms mean, 101 ms max one way,
+  and the KQ-130F receiver never locked; with it, the frames decode.
 - **No resynchronisation.** A level change is a message, not a state sync. If
   one is dropped the two workers disagree until the next edge.
-- **Only ESP32-family boards are bridged.** A chip net drawn between a chip on
-  an ESP32 board and a chip on an AVR or RP2040 board is not carried: those
-  chips run in the browser under a different net identity (`syntheticNetPin`),
-  and nothing joins the two worlds.
+- **Browser boards join the net too.** A chip net between a chip on an ESP32
+  board and one on an AVR or RP2040 board (or two browser boards) is carried
+  by `Interconnect.ts`: the browser endpoints share `syntheticNetPin(net)` on
+  their board's PinManager, a worker-hosted board keeps its bus, and a level
+  change on any of them is mirrored to the others once
+  (`resolveCrossBoardChipNets`).
 - **Last-writer-wins, not a bus model.** Two chips driving opposite levels do
   not produce contention or a wired-AND; the later write sets the level. A
   chip that expects open-drain behaviour will not get it.
-- **One custom-chip slot per board for live attribute updates.**
-  `CustomChipPart.ts` registers every chip on the same synthetic pin `0xFF`,
-  so `_sensors[0xFF]` holds only the last chip registered. Several chips all
-  load and all join the bus; only the `sensor_update` path used by live
-  control sliders reaches the last one.
-- **A chip only loads at Run.** The worker instantiates chips from the
-  `sensors` list that arrives with `start_esp32`; the live `sensor_attach`
-  command has no `custom-chip` branch.
+- **One worker slot per chip.** Each chip registers on its own synthetic
+  slot (`chipVirtualPin`, from 0x1000), so live attribute updates and a
+  detach reach that chip. A chip placed on the canvas while the guest runs
+  loads at once through the live `sensor_attach` command, and one removed
+  leaves every dispatch list and the net bus.
 - **The power-line fixture transmits across the bridge but does not decode.**
   The KQ-130F pair was run at the 40 ms bit period: UART binding confirmed
   live (`uartMap={"17":2}`, `UART chip registered on UART2`), the sender

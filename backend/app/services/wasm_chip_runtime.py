@@ -94,14 +94,20 @@ class ChipNetBus:
     def __init__(
         self,
         publisher: Optional[Callable[[str, int, int], None]] = None,
+        clock: Callable[[], int] = time.monotonic_ns,
     ) -> None:
         """
         Args:
             publisher: (net_id, level, ts_ns) -> void, called for a net marked
                        remote when a local member drives it. None keeps the bus
                        local to this worker.
+            clock:     the timeline a published edge is stamped with. Every
+                       worker on one host reads CLOCK_MONOTONIC, so the stamp
+                       is meaningful to the receiving worker; tests pass their
+                       virtual clock.
         """
         self._publisher = publisher
+        self._clock = clock
         self._levels: dict[str, int] = {}
         self._members: dict[str, list[tuple["WasmChipRuntime", int]]] = {}
         self._remote: set[str] = set()
@@ -113,6 +119,17 @@ class ChipNetBus:
     def register(self, net_id: str, runtime: "WasmChipRuntime", handle: int) -> None:
         self._members.setdefault(net_id, []).append((runtime, handle))
         self._levels.setdefault(net_id, 0)
+
+    def unregister(self, runtime: "WasmChipRuntime") -> None:
+        """Drop every membership of `runtime` (a chip detached at runtime).
+        Nets it leaves empty keep their last level: the wire is still there,
+        only the driver left."""
+        for net_id, members in list(self._members.items()):
+            kept = [(rt, h) for rt, h in members if rt is not runtime]
+            if kept:
+                self._members[net_id] = kept
+            else:
+                del self._members[net_id]
 
     def mark_remote(self, net_ids) -> None:
         """Flag nets that have a member in another worker, so local writes are
@@ -132,15 +149,16 @@ class ChipNetBus:
         source: Optional[tuple["WasmChipRuntime", int]] = None,
         publish: bool = True,
         ts_ns: int | None = None,
+        at_ns: int | None = None,
     ) -> None:
-        """Set the net level and fire every other member's pin watches."""
+        """Set the net level and fire every other member's pin watches.
+        `at_ns` (absolute, the bus clock) makes the members see the edge at
+        that instant instead of now; see apply_remote."""
         v = 1 if value else 0
         self._levels[net_id] = v
         if publish and self._publisher is not None and net_id in self._remote:
             try:
-                self._publisher(
-                    net_id, v, ts_ns if ts_ns is not None else time.monotonic_ns()
-                )
+                self._publisher(net_id, v, self._stamp(ts_ns, source))
             except Exception:
                 pass
         if net_id in self._driving:
@@ -150,15 +168,43 @@ class ChipNetBus:
             for runtime, handle in self._members.get(net_id, ()):
                 if source is not None and runtime is source[0] and handle == source[1]:
                     continue
-                runtime.notify_net_change(handle, v)
+                if at_ns is None:
+                    runtime.notify_net_change(handle, v)
+                else:
+                    runtime.notify_net_change(handle, v, at_ns=at_ns)
         finally:
             self._driving.discard(net_id)
 
+    def _stamp(self, ts_ns: int | None, source) -> int:
+        """The instant a published edge carries. An explicit stamp wins; a
+        write from a chip's timer callback (or from a watch delivering a
+        stamped remote edge) carries the chip's own current instant, which is
+        the timer's deadline rather than the scheduler's wake-up time; anything
+        else is stamped with the bus clock."""
+        if ts_ns is not None:
+            return int(ts_ns)
+        if source is not None:
+            rt = source[0]
+            override = getattr(rt, "_now_override_ns", None)
+            t0 = getattr(rt, "_t0", None)
+            if override is not None and t0 is not None:
+                return int(t0) + int(override)
+        return int(self._clock())
+
     def apply_remote(self, net_id: str, value: int, ts_ns: int = 0) -> None:
         """Replay a level change a peer worker drove. Never republished, so two
-        bridged workers cannot ping-pong one edge forever."""
-        del ts_ns  # carried for diagnostics; arrival order is what drives here
-        self.drive(net_id, value, source=None, publish=False)
+        bridged workers cannot ping-pong one edge forever.
+
+        The edge is applied AT THE SENDER'S TIME: the members' watch callbacks
+        see `ts_ns` from vx_sim_now_nanos, not the arrival time. The bridge
+        (worker, backend, browser, backend, worker) adds milliseconds of jitter
+        with a tail past 100 ms, and a self-clocked protocol measures the
+        spacing between edges; stamped this way it measures what the sender
+        drove, and the hop only delays the frame. Both workers on one host read
+        CLOCK_MONOTONIC, which is what makes the stamp portable. A stamp of 0
+        (an older worker) falls back to the arrival time."""
+        self.drive(net_id, value, source=None, publish=False,
+                   at_ns=ts_ns if ts_ns > 0 else None)
 
 
 class WasmChipRuntime:
@@ -279,6 +325,9 @@ class WasmChipRuntime:
 
         # Timestamp anchor for sim_now_nanos
         self._t0 = time.monotonic_ns()
+        # Set while a remote net edge is delivered (notify_net_change with a
+        # stamp): the instant the chip's callbacks read as "now".
+        self._now_override_ns: int | None = None
 
         # Build the linker
         linker = wasmtime.Linker(self._engine)
@@ -684,7 +733,7 @@ class WasmChipRuntime:
 
         # ── Time + timers ──
         def vx_sim_now_nanos() -> int:
-            return self.sim_now_nanos()
+            return self._now_nanos_for_chip()
 
         def vx_timer_create(cb_idx: int, user_data: int) -> int:
             handle = len(self._timers)
@@ -817,6 +866,14 @@ class WasmChipRuntime:
     def sim_now_nanos(self) -> int:
         return time.monotonic_ns() - self._t0
 
+    def _now_nanos_for_chip(self) -> int:
+        """What vx_sim_now_nanos answers: the stamped instant while a remote
+        net edge is being delivered (see ChipNetBus.apply_remote), the live
+        clock otherwise."""
+        if self._now_override_ns is not None:
+            return self._now_override_ns
+        return self.sim_now_nanos()
+
     def _flush_stdout(self) -> None:
         if not self._stdout_buf:
             return
@@ -875,16 +932,24 @@ class WasmChipRuntime:
                     new_state,
                 )
 
-    def notify_net_change(self, handle: int, value: int) -> None:
+    def notify_net_change(self, handle: int, value: int, at_ns: int | None = None) -> None:
         """Called by ChipNetBus when another chip drives a net this chip's pin
         `handle` sits on. Edge detection is per watch entry, so a member that
-        already reads the new level fires nothing."""
+        already reads the new level fires nothing. With `at_ns` (an absolute
+        instant on the bus clock) the watch callbacks read that instant from
+        vx_sim_now_nanos, so a remote edge keeps the spacing its sender gave
+        it whatever the bridge latency was."""
         if 0 <= handle < len(self._pins):
             self._pins[handle]["value"] = value & 1
         entries = self._net_watches.get(handle)
         if not entries:
             return
-        self._fire_watches(entries, value)
+        if at_ns is not None:
+            self._now_override_ns = max(0, at_ns - self._t0)
+        try:
+            self._fire_watches(entries, value)
+        finally:
+            self._now_override_ns = None
         self._flush_stdout()
 
     def notify_pin_change(self, gpio: int, value: int) -> None:
@@ -960,7 +1025,19 @@ class WasmChipRuntime:
                 if t["active"] and now >= t["next_fire_ns"]
             ]
         for _i, t in due:
-            self._call_indirect(t["cb_idx"], t["user_data"])
+            # The callback runs "at" its deadline: vx_sim_now_nanos answers the
+            # scheduled instant, not the moment the scheduler thread woke up.
+            # A periodic timer's deadlines are exact multiples of its period,
+            # so the edges a chip places from its callback are spaced exactly
+            # in that timeline whatever the host's wake-up lag was, and a net
+            # edge published from here is stamped with that instant (see
+            # ChipNetBus.drive) rather than with the lag.
+            prev_override = self._now_override_ns
+            self._now_override_ns = int(t["next_fire_ns"])
+            try:
+                self._call_indirect(t["cb_idx"], t["user_data"])
+            finally:
+                self._now_override_ns = prev_override
             with self._timer_lock:
                 if t["repeat"]:
                     t["next_fire_ns"] += t["period_ns"]

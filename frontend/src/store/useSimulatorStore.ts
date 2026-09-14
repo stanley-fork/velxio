@@ -4314,6 +4314,10 @@ setInterconnectRuntime({
   getBoardBridge: (id: string) => bridgeMap.get(id),
   getEsp32Bridge: (id: string) => esp32BridgeMap.get(id),
   getStm32Bridge: (id: string) => stm32BridgeMap.get(id),
+  getChipNetState: () => {
+    const s = useSimulatorStore.getState();
+    return { wires: s.wires, components: s.components, boards: s.boards };
+  },
 });
 
 // Bind the initial Arduino Uno that ships with the store.
