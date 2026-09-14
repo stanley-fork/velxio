@@ -3046,7 +3046,15 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       getEsp32Bridge(boardId)?.disconnect();
       esp32BridgeMap.delete(boardId);
 
-      const serialCallback = (ch: string) => appendSerial(boardId, ch);
+      // The monitor is UART0. A bridge that names another UART (the C3/C5/C6
+      // engines and the QEMU worker pass 1 for Serial1) is talking to a
+      // peripheral on the header, and on the real chip nothing of that
+      // reaches the USB console - so it stays off the monitor here too. The
+      // Interconnect still sees every byte with its UART number and routes
+      // it to a wired board; parts listen on the UART TX bus.
+      const serialCallback = (ch: string, uart?: number) => {
+        if (!uart) appendSerial(boardId, ch);
+      };
 
       if (isEsp32Kind(type as BoardKind)) {
         // ESP32: use bridge, not AVR simulator
@@ -3166,7 +3174,15 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       getEsp32Bridge(boardId)?.disconnect();
       esp32BridgeMap.delete(boardId);
 
-      const serialCallback = (ch: string) => appendSerial(boardId, ch);
+      // The monitor is UART0. A bridge that names another UART (the C3/C5/C6
+      // engines and the QEMU worker pass 1 for Serial1) is talking to a
+      // peripheral on the header, and on the real chip nothing of that
+      // reaches the USB console - so it stays off the monitor here too. The
+      // Interconnect still sees every byte with its UART number and routes
+      // it to a wired board; parts listen on the UART TX bus.
+      const serialCallback = (ch: string, uart?: number) => {
+        if (!uart) appendSerial(boardId, ch);
+      };
 
       if (isEsp32Kind(boardType as BoardKind)) {
         // ESP32: create bridge + shim (same as setBoardType)

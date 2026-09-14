@@ -312,7 +312,8 @@ class ArduinoCLIService:
             elif isinstance(urls, list):
                 existing.update(urls)
 
-            for url in self._all_core_urls().values():
+            wanted = set(self._all_core_urls().values())
+            for url in wanted:
                 if url not in existing:
                     print(f"[arduino-cli] Adding board manager URL: {url}")
                     subprocess.run(
@@ -326,6 +327,7 @@ class ArduinoCLIService:
                 [self.cli_path, "core", "update-index"],
                 capture_output=True, text=True
             )
+            self._registered_urls = existing | wanted
         except Exception as e:
             print(f"Warning: Could not configure board URLs: {e}")
 
@@ -395,6 +397,15 @@ class ArduinoCLIService:
 
         if self._is_core_installed(core_id):
             return {"needed": False, "installed": True, "core_id": core_id, "log": ""}
+
+        # The service is built when compile.py is imported, which is before an
+        # overlay's register_extra_core() runs - so __init__'s URL pass never
+        # saw that core's index, and `core install` answered
+        # "Platform 'Seeeduino:nrf52' not found". Register it now.
+        index_url = self._all_core_urls().get(core_id)
+        if index_url and index_url not in getattr(self, "_registered_urls", set()):
+            print(f"[arduino-cli] Registering the index for {core_id} before installing it...")
+            await asyncio.to_thread(self._ensure_board_urls)
 
         # Install the core (optionally pinned to a specific version)
         version = self._install_version_for(core_id)
