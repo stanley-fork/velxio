@@ -350,6 +350,13 @@ export class PiBridgeShim {
     }
     (this.bridge as Partial<RaspberryPi3Bridge>).sendUartBytes?.(bytes);
   }
+  /** One byte, the RP2040 name: the OSS custom-chip bridge (avrUartTx)
+   *  routes a browser-hosted chip's vx_uart_write through `serialWriteByte`
+   *  on an rp2040-kind simulator, which this shim is. Without it the board
+   *  heard the chip (onSerialData) but the chip's replies went nowhere. */
+  serialWriteByte(byte: number): void {
+    this.sendSerialBytes([byte & 0xff]);
+  }
   /** Text counterpart, the uniform `sim.feedUart(uart, data)` seam. */
   feedUart(uart: number, data: string): boolean {
     this.sendSerialBytes(Array.from(new TextEncoder().encode(data)), uart);

@@ -53,6 +53,7 @@ import {
   piMainScript,
 } from '../store/useSimulatorStore';
 import { PiBridgeShim } from '../simulation/PiBridgeShim';
+import { avrUartTx, detectSimulatorKind } from '../simulation/customChips/simulatorBridges';
 import { VirtualBMP280, VirtualDS3231, VirtualPCF8574 } from '../simulation/I2CBusManager';
 import { PartSimulationRegistry } from '../simulation/parts';
 import { lineGaps, clearLineGaps } from '../simulation/line/requestLine';
@@ -80,6 +81,22 @@ describe('a Pi board has a simulator entry', () => {
     const { id, shim } = addPi();
     expect(() => shim.setPinState(17, true)).not.toThrow();
     expect(getBoardPinManager(id)?.getPinState(17)).toBe(true);
+  });
+});
+
+describe("a custom chip's UART", () => {
+  it('is the rp2040 browser path, and the chip\'s reply reaches the guest header UART', () => {
+    const { id, shim } = addPi();
+    // avrUartTx routes an rp2040-kind simulator through serialWriteByte; the
+    // shim used to have only sendSerialBytes, so the board could talk to a
+    // chip (onSerialData) but never hear it.
+    expect(detectSimulatorKind(shim)).toBe('rp2040');
+    const bridge = getBoardBridge(id) as unknown as { sendUartBytes?: (b: number[]) => void };
+    bridge.sendUartBytes = vi.fn();
+    avrUartTx(shim, 0x41);
+    avrUartTx(shim, 0x1ff);
+    expect(bridge.sendUartBytes).toHaveBeenNthCalledWith(1, [0x41]);
+    expect(bridge.sendUartBytes).toHaveBeenNthCalledWith(2, [0xff]);
   });
 });
 

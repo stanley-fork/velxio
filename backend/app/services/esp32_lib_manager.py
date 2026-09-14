@@ -470,6 +470,20 @@ class EspLibManager:
                 **{k: v for k, v in properties.items() if k != 'pin'},
             })
 
+    def chip_net(self, client_id: str, net: str, level: int, ts: int) -> None:
+        """Replay a chip-to-chip net level another board's worker drove.
+
+        `ts` is the sender's monotonic clock in nanoseconds. The two workers do
+        not share an epoch, so it is diagnostic and ordering information only:
+        the receiving chip sees the edge when it arrives.
+        """
+        with self._instances_lock:
+            inst = self._instances.get(client_id)
+        if inst and inst.running and inst.process.returncode is None:
+            self._write_cmd(inst, {
+                'cmd': 'chip_net', 'net': net, 'level': 1 if level else 0, 'ts': ts,
+            })
+
     def sensor_detach(self, client_id: str, pin: int) -> None:
         """Remove a sensor from a GPIO pin."""
         with self._instances_lock:

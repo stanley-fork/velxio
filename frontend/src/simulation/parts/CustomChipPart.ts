@@ -18,11 +18,14 @@ import {
   getI2CBus,
   detectSimulatorKind,
 } from '../customChips';
+import { hostsChipsInWorker } from '../customChips/simulatorBridges';
 import { useSimulatorStore } from '../../store/useSimulatorStore';
 import { useElectricalStore } from '../../store/useElectricalStore';
 import { normalizeChipPinNames } from '../customChips/chipJson';
 import { clearChipDrives } from '../customChips/chipPinDrives';
 import { isSyntheticChipPin } from '../customChips/syntheticPins';
+import { resolveChipNetMembers, resolveChipOwnerBoardId } from '../customChips/chipNets';
+import { classifyPin } from '../../utils/boardProtocols';
 import { requestElectricalResolve } from '../spice/electricalResolveHook';
 import { runChipAttachExtensions } from '../customChips/chipAttachExtensions';
 import { createUartBitBanger, type UartBitBanger } from '../customChips/uartBitBang';
@@ -118,7 +121,15 @@ PartSimulationRegistry.register('custom-chip', {
     // RP2040 simulators also expose `registerSensor` for I2C sensor proxies —
     // taking that branch on AVR routes the chip to the (non-existent) ESP32
     // backend and the client-side ChipInstance never runs.
-    if (detectSimulatorKind(sim) === 'esp32' && typeof sim.registerSensor === 'function') {
+    //
+    // The same shim also fronts an overlay's in-browser ESP32 engine, which
+    // has no worker either: it answers hostsChipsInWorker() false and the
+    // chip takes the browser path below, like any other browser board.
+    if (
+      detectSimulatorKind(sim) === 'esp32' &&
+      typeof sim.registerSensor === 'function' &&
+      hostsChipsInWorker(sim)
+    ) {
       // Resolve each chip pin name → ESP32 GPIO via the diagram's wires. The
       // backend runtime uses this to call qemu_picsimlab_set_pin when the chip
       // does vx_pin_write, and to read live GPIO state for vx_pin_read.
@@ -126,7 +137,38 @@ PartSimulationRegistry.register('custom-chip', {
       for (const name of pins) {
         if (!name) continue;
         const gpio = getArduinoPin(name);
-        if (gpio !== null && gpio >= 0) pinMap[name] = gpio;
+        // Synthetic pin numbers (100000+) are a browser-side PinManager key for
+        // a chip pin with no board GPIO on its net. They are not GPIOs, and the
+        // worker would hand one straight to qemu_picsimlab_set_pin. Such a pin
+        // belongs to `nets` below, or to nothing at all.
+        if (gpio !== null && gpio >= 0 && !isSyntheticChipPin(gpio)) pinMap[name] = gpio;
+      }
+
+      // Chip-to-chip nets. A pin wired only to another chip's pin has no GPIO
+      // and so is absent from pinMap; the worker's ChipNetBus carries it
+      // instead, and `remote` marks a net whose other end is a chip on a
+      // different board (a second QEMU worker) for the interconnect to bridge.
+      const nets = resolveChipNetMembers(useSimulatorStore.getState(), componentId);
+
+      // Which board UART each wired GPIO belongs to. The chip's vx_uart_attach
+      // names its own RX/TX pins, and the backend runtime turns those into
+      // GPIOs through pinMap; this table is the last hop, GPIO to UART number,
+      // and it is board-specific so it has to come from here. Without it every
+      // chip landed on one fixed UART whatever the diagram said, which put a
+      // module wired to Serial2 on the wrong end of the board.
+      const uartMap: Record<number, number> = {};
+      {
+        const st = useSimulatorStore.getState();
+        const ownerId = resolveChipOwnerBoardId(st, componentId);
+        const ownerKind = st.boards.find((b) => b.id === ownerId)?.boardKind;
+        if (ownerKind) {
+          for (const gpio of Object.values(pinMap)) {
+            const role = classifyPin(ownerKind, String(gpio));
+            if (role.kind === 'uart-tx' || role.kind === 'uart-rx') {
+              uartMap[gpio] = role.uart;
+            }
+          }
+        }
       }
 
       // Synthetic slot — backend doesn't index custom-chip sensors by pin.
@@ -136,9 +178,11 @@ PartSimulationRegistry.register('custom-chip', {
           wasm_b64: wasmBase64,
           attrs: attrsObj,
           pin_map: pinMap,
+          nets,
+          uart_map: uartMap,
         });
         console.info(
-          `[custom-chip:${componentId}] sent to backend ESP32 worker (chip runs synchronously inside QEMU process). pinMap=${JSON.stringify(pinMap)}`,
+          `[custom-chip:${componentId}] sent to backend ESP32 worker (chip runs synchronously inside QEMU process). pinMap=${JSON.stringify(pinMap)} nets=${JSON.stringify(nets)} uartMap=${JSON.stringify(uartMap)}`,
         );
       } catch (e) {
         console.error(`[custom-chip:${componentId}] failed to register on ESP32 backend:`, e);
@@ -193,7 +237,8 @@ PartSimulationRegistry.register('custom-chip', {
           componentId,
           pinManager: sim.pinManager,
           // Polymorphic I2C: AVR returns the I2CBusManager directly, RP2040
-          // returns a thin adapter, ESP32 returns null (chip won't get I2C).
+          // and a browser-hosted ESP32 (in-browser engine) a thin adapter,
+          // anything else null (chip won't get I2C).
           i2cBus: getI2CBus(sim, 0) as any,
           spiBus: bridges.spiBus,
           wires,
@@ -243,7 +288,13 @@ PartSimulationRegistry.register('custom-chip', {
         //     that pin, so SoftwareSerial(rx=that pin) actually receives.
         //     Before this, GPIO-wired chip streams (the NMEA GPS scenario)
         //     delivered nothing at all.
-        if (inst.hasUart) {
+        //
+        // An ESP32-kind simulator hosting the chip in the browser (an
+        // overlay's in-browser engine) is left to the attach extensions: the
+        // engine publishes its UART bytes on the overlay's own bus, and the
+        // shim's onSerialData is never invoked, so there is nothing here to
+        // listen on. Pure OSS never reaches this branch with kind esp32.
+        if (inst.hasUart && detectSimulatorKind(sim) !== 'esp32') {
           uartListener = (byte: number) => inst.feedUart(byte);
           bridges.uartListeners.add(uartListener);
           const route = inst.getUartTxRoute();

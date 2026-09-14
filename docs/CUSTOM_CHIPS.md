@@ -211,15 +211,16 @@ Each is fully explained in
 | See the 11 chip examples worked through | [Examples walkthrough](./wiki/custom-chips-examples.md) |
 | Set up the toolchain or write tests | [Build & test guide](./wiki/custom-chips-build-and-test.md) |
 | Run custom chips on ESP32 (backend runtime architecture) | [ESP32 backend runtime](./wiki/custom-chips-esp32-backend-runtime.md) |
+| Wire two chips to each other on ESP32 boards, or across two boards | [Chip-to-chip nets](./wiki/custom-chips-chip-nets.md) |
 | Know which boards support which protocols | [Board support matrix](../test/autosearch/07_multi_board_support.md) |
 
 ### Quick links to source
 
 - C SDK header — [`backend/sdk/velxio-chip.h`](../backend/sdk/velxio-chip.h)
 - Frontend runtime — [`frontend/src/simulation/customChips/`](../frontend/src/simulation/customChips/)
-- Example chips — [`test/test_custom_chips/sdk/examples/`](../test/test_custom_chips/sdk/examples/)
+- Example chips — [`frontend/src/components/customChips/examples/`](../frontend/src/components/customChips/examples/) (the ones the designer offers) and [`test/fixtures/chip-nets/`](../test/fixtures/chip-nets/) (two radio-style models with a chip-to-chip net)
 - Backend compile service — [`backend/app/services/chip_compile.py`](../backend/app/services/chip_compile.py)
-- Sandbox test suite — [`test/test_custom_chips/`](../test/test_custom_chips/)
+- Tests — [`frontend/src/__tests__/`](../frontend/src/__tests__/) (`chip*.test.ts`) and [`test/backend/unit/`](../test/backend/unit/) (`test_chip_*.py`); the Node sandbox suite moved to the maintainers' checkout, see the [build & test guide](./wiki/custom-chips-build-and-test.md#tests-in-this-repository)
 
 ---
 

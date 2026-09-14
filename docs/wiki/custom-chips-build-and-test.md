@@ -186,10 +186,27 @@ curl http://localhost:8001/api/compile-chip/status
 
 ---
 
-## The sandbox test suite
+## Tests in this repository
+
+The chip tests that run in CI live next to the code:
+
+| Where | What | Run |
+|---|---|---|
+| `frontend/src/__tests__/chip*.test.ts`, `chipbus-*.test.ts`, `chipnets-*.test.ts`, `customchip-*.test.ts` | Browser runtime: chip.json normalisation, the bus kernel and nets, UART bit-bang, .vlx round trip, the ESP32 hosting seam, the net description sent to the ESP32 worker | `cd frontend && npx vitest run src/__tests__/chip` |
+| `test/backend/unit/test_chip_nets.py`, `test_chip_uart_binding.py` | Backend `WasmChipRuntime`: `ChipNetBus` semantics, two real chips over a net, the UART binding | `pytest test/backend/unit/test_chip_*.py` (needs `wasmtime`; the Docker image has it) |
+| `test/fixtures/chip-nets/` | The SX1262 and KQ-130F models those backend cases load, with sources and a standalone self test | see its README |
+
+## The sandbox test suite (maintainers' checkout)
+
+> The sandbox below, the multi-board pytest suite and
+> `test/test_chip_backend_runtime/` were pruned from this repository
+> (commit `cd3fdded`, "prune research/exploration dirs not run by CI") and
+> live on in the maintainers' velxio-prod checkout under `test/`. The
+> instructions are kept because the sandbox is still the fastest way to
+> develop a chip; the paths do not resolve in a plain OSS clone.
 
 Velxio ships a Node.js sandbox at
-[`test/test_custom_chips/`](../../test/test_custom_chips/) that mirrors the
+`test/test_custom_chips/` (velxio-prod checkout) that mirrors the
 production runtime. It uses the **same** chip API, the **same** I2C bus
 manager, and the **same** `avr8js` instance the browser uses — all the
 chips work identically.
@@ -240,7 +257,7 @@ npm run test:e2e    # Tests requiring compiled .wasm — 7 tests
 ## Multi-board validation suite
 
 The pytest suite at
-[`test/test_custom_chips_boards/`](../../test/test_custom_chips_boards/)
+`test/test_custom_chips_boards/` (velxio-prod checkout, see the note above)
 exercises the **backend** services that custom chips depend on, across all
 supported board families.
 
@@ -274,9 +291,11 @@ Expected: 24 tests pass.
 The ESP32 tests skip cleanly if `libqemu-xtensa` is missing.
 
 For pure-runtime tests (no QEMU, no WebSocket, just the Python WASM runtime in
-isolation) see [`test/test_chip_backend_runtime/test_wasm_runtime.py`](../../test/test_chip_backend_runtime/test_wasm_runtime.py)
-— 11 tests covering GPIO, I2C, UART, SPI, pin_watch and timers. Run with
-`pytest test/test_chip_backend_runtime/`.
+isolation) this repository has `test/backend/unit/test_chip_nets.py` and
+`test_chip_uart_binding.py` (see "Tests in this repository" above); the
+older 11-case `test_wasm_runtime.py` covering GPIO, I2C, UART, SPI,
+pin_watch and timers is in the velxio-prod checkout under
+`test/test_chip_backend_runtime/`.
 
 ---
 
@@ -353,8 +372,8 @@ expect(responses[2]).toBe(/* expected */);
 ```
 
 For full E2E with a real Arduino sketch, see
-[`test/test_custom_chips/test/e2e/07_chip_eeprom_avr_e2e.test.js`](../../test/test_custom_chips/test/e2e/07_chip_eeprom_avr_e2e.test.js)
-— it loads a compiled `.hex` of `Wire.h` code into `avr8js` and runs the
+`test/test_custom_chips/test/e2e/07_chip_eeprom_avr_e2e.test.js` (velxio-prod
+checkout) — it loads a compiled `.hex` of `Wire.h` code into `avr8js` and runs the
 chip alongside.
 
 ---
@@ -418,7 +437,7 @@ peripheral callbacks fire **synchronously** in the QEMU thread:
 | `vx_pin_read` | Cached `_pin_state[gpio]` from `_on_pin_change` | Live |
 | `vx_pin_watch` | Dispatched from `_on_pin_change` (edge filtered) | Sync, lock held |
 | `vx_i2c_attach` | Registered as `_i2c_slaves[addr]` | `_on_i2c_event` |
-| `vx_uart_attach` / `vx_uart_write` | `_on_uart_tx` ↔ `qemu_picsimlab_uart_receive` | UART0 only |
+| `vx_uart_attach` / `vx_uart_write` | `_on_uart_tx` ↔ `qemu_picsimlab_uart_receive` | the UART the diagram wires (Serial1 when unwired) |
 | `vx_spi_attach` | Dispatched from `_on_spi_event` (op = `data << 8`) | Re-arm pattern supported |
 | `vx_timer_*` | Dedicated scheduler thread that takes the IO-thread lock | Wakes on soonest deadline |
 

@@ -750,6 +750,22 @@ export class ChipInstance {
     };
   }
 
+  /**
+   * The chip pad names a UART was attached with (`vx_uart_config.rx/.tx`),
+   * so a host can route each direction by the board pin the user wired to
+   * that pad. Null pads for handles the chip never registered. The names,
+   * not the pin numbers: the host owns the wire map and the board's pin
+   * table, and a pad wired to nothing still has a name to log.
+   */
+  getUartPads(handle = 0): { rxPad: string | null; txPad: string | null } | null {
+    const u = this.uarts[handle];
+    if (!u) return null;
+    return {
+      rxPad: this.pins[u.rx]?.name ?? null,
+      txPad: this.pins[u.tx]?.name ?? null,
+    };
+  }
+
   /** True if the chip declared at least one UART (post-chip_setup). */
   get hasUart(): boolean {
     return this.uarts.length > 0;

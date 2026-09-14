@@ -75,6 +75,10 @@ interface NetInfo {
   hasBoardPin: boolean;
   /** Distinct custom-chip endpoint keys on the net. */
   chipEndpoints: Set<string>;
+  /** Board component ids with a numbered pin on this net. Used to work out
+   *  which board owns a chip, and so whether a chip-to-chip net crosses two
+   *  backend workers (see resolveChipNetMembers). */
+  boardIds: Set<string>;
 }
 
 interface ChipNetIndex {
@@ -149,7 +153,12 @@ function buildIndex(state: ChipNetState): ChipNetIndex {
   for (const [key, root] of uf.entries()) {
     let info = nets.get(root);
     if (!info) {
-      info = { canonical: key, hasBoardPin: false, chipEndpoints: new Set() };
+      info = {
+        canonical: key,
+        hasBoardPin: false,
+        chipEndpoints: new Set(),
+        boardIds: new Set(),
+      };
       nets.set(root, info);
     }
     if (key < info.canonical) info.canonical = key;
@@ -160,7 +169,10 @@ function buildIndex(state: ChipNetState): ChipNetIndex {
       const kind = board?.boardKind ?? componentId;
       // A real numbered board pin (including -1 power/GND) means a board owns
       // this net; defer to traceDetailed's board-priority rule.
-      if (boardPinToNumber(kind, pinName) !== null) info.hasBoardPin = true;
+      if (boardPinToNumber(kind, pinName) !== null) {
+        info.hasBoardPin = true;
+        info.boardIds.add(componentId);
+      }
     } else if (compById.get(componentId)?.metadataId === 'custom-chip') {
       info.chipEndpoints.add(key);
     }
@@ -206,4 +218,93 @@ export function resolveChipNetKey(
   const info = idx.nets.get(root);
   if (!info || info.hasBoardPin || info.chipEndpoints.size < 2) return null;
   return syntheticNetPin(info.canonical);
+}
+
+// ── Backend (ESP32) net description ──────────────────────────────────────────
+//
+// The browser chip runtime gets its chip-to-chip nets from resolveChipNetKey
+// above: one shared PinManager key and the synchronous fan-out that key already
+// has. A chip on an ESP32 board runs in the backend QEMU worker instead, which
+// sees only the `pin_map` the frontend sends it, so a pin with no board GPIO
+// arrives with nothing to stand on. These members are the same union-find
+// answer in a form the worker can act on.
+
+export interface ChipNetMember {
+  /** chip.json pin name on this chip. */
+  pin: string;
+  /** Net id shared by every endpoint on the net, stable across resolves. */
+  net: string;
+  /** True when another chip on this net is owned by a different board, so the
+   *  two ends live in different QEMU workers and the net has to be bridged. */
+  remote: boolean;
+}
+
+/** Board that owns a chip: the board on any net the chip's pins reach. Ties
+ *  resolve to the lexicographically smallest id so the answer does not depend
+ *  on Map iteration order. */
+function chipOwnerBoard(idx: ChipNetIndex, chipId: string): string | null {
+  let owner: string | null = null;
+  for (const info of idx.nets.values()) {
+    let touches = false;
+    for (const ep of info.chipEndpoints) {
+      if (parseEpKey(ep).componentId === chipId) {
+        touches = true;
+        break;
+      }
+    }
+    if (!touches) continue;
+    for (const b of info.boardIds) if (owner === null || b < owner) owner = b;
+  }
+  return owner;
+}
+
+/**
+ * The board a chip belongs to: the board its pins reach through the wires.
+ * Null for a chip wired to no board at all (a board-less canvas, or a chip
+ * wired only to other chips). Used to pick the UART pin table for the chip's
+ * board and to tell a cross-worker net from a local one.
+ */
+export function resolveChipOwnerBoardId(
+  state: ChipNetState,
+  componentId: string,
+): string | null {
+  return chipOwnerBoard(getChipNetIndex(state), componentId);
+}
+
+/**
+ * Every pin of `componentId` that shares a net with another chip pin, with the
+ * net id the worker keys its fan-out on. Unlike resolveChipNetKey this does NOT
+ * skip nets that carry a board pin: on the backend the GPIO behaviour stays and
+ * the chip members are driven as well, which is what lets one board's firmware
+ * and two chips sit on one line.
+ */
+export function resolveChipNetMembers(
+  state: ChipNetState,
+  componentId: string,
+): ChipNetMember[] {
+  if (!chipBusEnabled()) return [];
+  const idx = getChipNetIndex(state);
+  const owners = new Map<string, string | null>();
+  const ownerOf = (chipId: string): string | null => {
+    if (!owners.has(chipId)) owners.set(chipId, chipOwnerBoard(idx, chipId));
+    return owners.get(chipId) ?? null;
+  };
+
+  const out: ChipNetMember[] = [];
+  for (const info of idx.nets.values()) {
+    if (info.chipEndpoints.size < 2) continue;
+    const mine: string[] = [];
+    const boardsOnNet = new Set<string>();
+    for (const ep of info.chipEndpoints) {
+      const { componentId: cid, pinName } = parseEpKey(ep);
+      if (cid === componentId) mine.push(pinName);
+      const owner = ownerOf(cid);
+      if (owner !== null) boardsOnNet.add(owner);
+    }
+    if (mine.length === 0) continue;
+    const remote = boardsOnNet.size > 1;
+    for (const pin of mine) out.push({ pin, net: info.canonical, remote });
+  }
+  out.sort((a, b) => (a.pin < b.pin ? -1 : a.pin > b.pin ? 1 : 0));
+  return out;
 }

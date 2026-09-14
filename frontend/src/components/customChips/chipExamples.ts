@@ -20,6 +20,8 @@ import mcp3008C       from './examples/mcp3008.c?raw';
 import pcf8574C       from './examples/pcf8574.c?raw';
 import ds3231C        from './examples/ds3231.c?raw';
 import pulseCounterC  from './examples/pulse-counter.c?raw';
+import sx1262C        from './examples/sx1262.c?raw';
+import kq130fC        from './examples/kq130f.c?raw';
 
 // .chip.json sources
 import inverterJ      from './examples/inverter.chip.json?raw';
@@ -33,6 +35,8 @@ import mcp3008J       from './examples/mcp3008.chip.json?raw';
 import pcf8574J       from './examples/pcf8574.chip.json?raw';
 import ds3231J        from './examples/ds3231.chip.json?raw';
 import pulseCounterJ  from './examples/pulse-counter.chip.json?raw';
+import sx1262J        from './examples/sx1262.chip.json?raw';
+import kq130fJ        from './examples/kq130f.chip.json?raw';
 
 // .c sources — clean-room retro Intel/Zilog CPUs and bus chips
 // (test/test_intel — 129 tests, all passing; manuals cited in autosearch/)
@@ -194,6 +198,22 @@ export const CHIP_EXAMPLES: ChipExample[] = [
     category: 'protocol',
     sourceC: uartRot13C,
     chipJson: uartRot13J,
+  },
+  {
+    id: 'sx1262',
+    name: 'SX1262 LoRa',
+    description: 'Semtech SX1262 over SPI (commands, buffers, IRQs, DIO1/BUSY) with a synthetic ANT pin: wire two together and frames cross between boards.',
+    category: 'protocol',
+    sourceC: sx1262C,
+    chipJson: sx1262J,
+  },
+  {
+    id: 'kq130f',
+    name: 'KQ-130F Power-Line',
+    description: 'KQ-130F power-line carrier module: 9600 8N1 UART in, framed onto a synthetic LINE pin, replayed on every other KQ-130F on the same LINE.',
+    category: 'protocol',
+    sourceC: kq130fC,
+    chipJson: kq130fJ,
   },
   {
     id: 'pulse-counter',

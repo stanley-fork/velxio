@@ -14,7 +14,9 @@
 >
 > See also:
 > [`docs/wiki/esp32-i2c-slave-simulation.md`](./esp32-i2c-slave-simulation.md) — the
-> doc that established this pattern for hardcoded sensors.
+> doc that established this pattern for hardcoded sensors;
+> [`docs/wiki/custom-chips-chip-nets.md`](./custom-chips-chip-nets.md) — chip-to-chip
+> nets, the cross-worker bridge and the UART binding.
 
 ---
 
@@ -219,11 +221,19 @@ firmware's critical path.
   cache (updated from every `_on_pin_change` event).
 - ✅ `vx_attr_register` / `vx_attr_read` (frontend pushes attrs into the sensor payload)
 - ✅ `vx_i2c_attach` with the 4 callbacks → registers as a `_i2c_slaves[addr]` entry
-- ✅ **`vx_uart_attach` / `vx_uart_write`** — the chip is wired into UART0:
-  firmware's `Serial.print()` triggers the chip's `on_rx_byte` synchronously
-  via `_on_uart_tx`; chip's `vx_uart_write` injects bytes back via
-  `qemu_picsimlab_uart_receive` (acquiring the IO-thread lock). ROT13-style
-  chips work end-to-end with `Serial.write` / `Serial.read`.
+- ✅ **`vx_uart_attach` / `vx_uart_write`** — the chip binds to the UART
+  whose TX/RX pins the diagram wires to it (`uart_map` from the frontend),
+  falling back to `CHIP_UART` (Serial1) when nothing is wired. UART0 is never
+  the default: it is the serial monitor. Firmware writes on that UART trigger
+  the chip's `on_rx_byte` synchronously via `_on_uart_tx`; the chip's
+  `vx_uart_write` injects bytes back via `qemu_picsimlab_uart_receive`
+  (acquiring the IO-thread lock). See
+  [custom-chips-chip-nets.md](./custom-chips-chip-nets.md#uart-binding).
+- ✅ **Chip-to-chip nets** — a chip pin wired only to another chip's pin is
+  carried by the worker's `ChipNetBus` (`nets` in the payload), and a net
+  whose members live in two ESP32 workers is bridged through the frontend
+  interconnect. Details, measured latency and limits in
+  [custom-chips-chip-nets.md](./custom-chips-chip-nets.md).
 - ✅ **`vx_spi_attach` / `vx_spi_start` / `vx_spi_stop`** — `_on_spi_event`
   routes byte exchanges to the chip synchronously. The buffer-based model
   matches the JS runtime's `SPIBus`. The re-arm pattern (chip calls

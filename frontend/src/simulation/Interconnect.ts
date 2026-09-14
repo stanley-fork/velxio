@@ -389,6 +389,54 @@ function ensureSerialHook(entry: BoardEntry): void {
   };
 }
 
+// ── Chip-to-chip net bridge (cross-worker) ───────────────────────────────────
+//
+// A custom chip on an ESP32 board runs inside that board's QEMU worker. Two
+// chips wired to each other across two boards are therefore two processes, and
+// the worker's ChipNetBus fans a level out only to the chips it hosts. The
+// worker publishes those nets as `chip_net` events; this relays each one to
+// every other bound ESP32 board, which applies it to its own bus.
+//
+// Cost: one WebSocket hop out and one back per edge, through the browser. That
+// is milliseconds, not microseconds, so a chip protocol carried this way needs
+// a bit period well above the round trip. Measured numbers and the bit period
+// they imply are in docs/wiki/custom-chips-chip-nets.md.
+//
+// No wire lookup is involved: the net id already names the net, both workers
+// were handed the same id by chipNets.ts, and a board with no member for that
+// id ignores the message.
+
+function ensureChipNetHook(entry: BoardEntry): void {
+  if (!runtime) return;
+  if (!isEsp32Bridge(entry.kind)) return;
+  const bridge = runtime.getEsp32Bridge(entry.id);
+  if (!bridge) return;
+  if ((bridge as any).__icChipNetHookInstalled) return;
+  (bridge as any).__icChipNetHookInstalled = true;
+
+  const prev = bridge.onChipNet ?? null;
+  const boardId = entry.id;
+  bridge.onChipNet = (net: string, level: 0 | 1, ts: number) => {
+    prev?.(net, level, ts);
+    if (!runtime) return;
+    for (const other of boards.values()) {
+      if (other.id === boardId) continue;
+      if (!isEsp32Bridge(other.kind)) continue;
+      runtime.getEsp32Bridge(other.id)?.sendChipNet?.(net, level, ts);
+    }
+  };
+}
+
+/**
+ * Install (or reinstall) the chip-net relay on every bound ESP32 board. The
+ * bridge object is created at Run, after the routes are built, so the store
+ * calls this again from `reensureSerialHooks`; the flag on the instance keeps
+ * it idempotent.
+ */
+export function ensureChipNetHooks(): void {
+  for (const entry of boards.values()) ensureChipNetHook(entry);
+}
+
 function installSerialFanout(
   fromBoardId: string,
   fromUart: number,
@@ -735,6 +783,10 @@ export function updateWires(wires: readonly Wire[]): void {
   // After per-wire pin/UART routes are in place, reconcile the
   // higher-level I2C bridges that need BOTH SDA and SCL present.
   updateI2CBridges(wires);
+
+  // Chip-to-chip nets are not routed per wire (the worker keys them by net id),
+  // so the relay is installed per board rather than per route.
+  ensureChipNetHooks();
 }
 
 /**
@@ -756,7 +808,11 @@ export function notifyBoardReady(_boardId: string, wires: readonly Wire[]): void
  */
 export function reensureSerialHooks(boardId: string): void {
   const entry = boards.get(boardId);
-  if (!entry || entry.serialFanout.size === 0) return;
+  if (!entry) return;
+  // The chip-net relay lives on the same fresh bridge instance and, unlike the
+  // serial hook, is needed even when this board has no UART wire at all.
+  ensureChipNetHook(entry);
+  if (entry.serialFanout.size === 0) return;
   // The hook lives on the sim/bridge INSTANCE and marks it with a flag.
   // A fresh instance carries no flag, so ensureSerialHook installs on it;
   // this call is what makes that happen after a compile or a reconnect.

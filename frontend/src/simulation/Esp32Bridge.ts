@@ -17,6 +17,7 @@
  *     { type: 'esp32_sensor_attach', data: { sensor_type: string, pin: number, ... } }
  *     { type: 'esp32_sensor_update', data: { pin: number, ... } }
  *     { type: 'esp32_sensor_detach', data: { pin: number } }
+ *     { type: 'esp32_chip_net',     data: { net: string, level: 0 | 1, ts: number } }
  *
  *   Backend → Frontend
  *     { type: 'serial_output', data: { data: string, uart?: number } }
@@ -31,6 +32,7 @@
  *     { type: 'i2c_event',        data: { addr: number, data: number } }
  *     { type: 'i2c_transaction',  data: { addr: number, data: number[] } }
  *     { type: 'spi_event',        data: { data: number } }
+ *     { type: 'chip_net',      data: { net: string, level: 0 | 1, ts: number } }
  *     { type: 'system',        data: { event: string, ... } }
  *     { type: 'error',         data: { message: string } }
  */
@@ -204,6 +206,14 @@ export class Esp32Bridge {
    */
   onPinChangeWithTime: ((gpioPin: number, state: boolean, timeMs: number) => void) | null = null;
   onPinDir: ((gpioPin: number, dir: 0 | 1) => void) | null = null;
+  /**
+   * A custom chip on this board drove a chip-to-chip net that also has members
+   * in another board's worker.  `ts` is the sender's monotonic nanosecond
+   * clock, carried for diagnostics and ordering. The two workers do not share
+   * an epoch, so only the differences between a sender's own timestamps are
+   * meaningful.  Wired by Interconnect.ts; see docs/wiki/custom-chips-chip-nets.md.
+   */
+  onChipNet: ((net: string, level: 0 | 1, ts: number) => void) | null = null;
   /** Internal pull config the guest programmed into IO_MUX (INPUT_PULLUP /
    *  INPUT_PULLDOWN). 0 = none, 1 = pull-up, 2 = pull-down. The frontend
    *  netlist adds the matching weak resistor so idle inputs read the right
@@ -486,6 +496,16 @@ export class Esp32Bridge {
           this.onPinChangeWithTime?.(pin, state, performance.now());
           break;
         }
+        case 'chip_net': {
+          // A custom chip on this board drove a chip-to-chip net whose other
+          // members live in another board's worker; the interconnect relays it.
+          this.onChipNet?.(
+            String(msg.data.net ?? ''),
+            (msg.data.level as number) ? 1 : 0,
+            Number(msg.data.ts ?? 0),
+          );
+          break;
+        }
         case 'gpio_dir': {
           const pin = msg.data.pin as number;
           const dir = msg.data.dir as 0 | 1;
@@ -749,6 +769,15 @@ export class Esp32Bridge {
   sendPinEvent(gpioPin: number, state: boolean): void {
     if (this.ownsSensorPin(gpioPin)) return;
     this._send({ type: 'esp32_gpio_in', data: { pin: gpioPin, state: state ? 1 : 0 } });
+  }
+
+  /**
+   * Replay a chip-to-chip net level a chip on ANOTHER board drove, into this
+   * board's worker. The worker never republishes what it receives here, so two
+   * bridged workers cannot echo one edge back and forth.
+   */
+  sendChipNet(net: string, level: 0 | 1, ts: number): void {
+    this._send({ type: 'esp32_chip_net', data: { net, level, ts } });
   }
 
   /** Set an ADC channel voltage (millivolts, 0–3300) */

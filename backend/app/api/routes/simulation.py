@@ -236,6 +236,18 @@ async def simulation_websocket(websocket: WebSocket, client_id: str):
                         client_id, bytes(raw_bytes), uart_id=2
                     )
 
+            # ── ESP32 custom-chip net bridge (cross-board) ────────────────
+            # A custom chip on another board drove a chip-to-chip net this
+            # board's chips also sit on. The frontend interconnect relays the
+            # worker's `chip_net` event here; the worker applies it to its own
+            # ChipNetBus without publishing it again.
+            elif msg_type == 'esp32_chip_net':
+                net = str(msg_data.get('net', ''))
+                level = 1 if msg_data.get('level') else 0
+                ts = int(msg_data.get('ts', 0))
+                if net and _use_lib():
+                    esp_lib_manager.chip_net(client_id, net, level, ts)
+
             # ── ESP32 sensor protocol offloading (generic) ────────────────
             elif msg_type == 'esp32_sensor_attach':
                 sensor_type = msg_data.get('sensor_type', '')

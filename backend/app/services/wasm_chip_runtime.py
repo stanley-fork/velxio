@@ -72,6 +72,95 @@ _UART_CONFIG_FMT = "<IIIIII"      # 24 bytes (ignore reserved trailer)
 _SPI_CONFIG_FMT = "<IIIIIII"      # 28 bytes (ignore reserved trailer)
 
 
+class ChipNetBus:
+    """Level fan-out across the chip pins that share one diagram net.
+
+    A chip pin wired only to other chip pins has no board GPIO, so nothing in
+    the QEMU pin plumbing ever sees it: vx_pin_watch used to drop the watch and
+    the net carried nothing. This bus is the missing conductor. It mirrors what
+    chipNets.ts plus syntheticNetPin already do for the browser chip runtime,
+    where every endpoint of a pure chip-to-chip net resolves to one shared
+    PinManager key.
+
+    Net ids are opaque strings minted by the frontend (chipNets.ts canonical
+    endpoint key), so both ends of a net agree on the name without the worker
+    having to see the diagram.
+
+    A net whose members live in different QEMU workers is bridged by the
+    frontend: `publisher` is called on every local level change for such a net,
+    and `apply_remote` replays the peer's changes here.
+    """
+
+    def __init__(
+        self,
+        publisher: Optional[Callable[[str, int, int], None]] = None,
+    ) -> None:
+        """
+        Args:
+            publisher: (net_id, level, ts_ns) -> void, called for a net marked
+                       remote when a local member drives it. None keeps the bus
+                       local to this worker.
+        """
+        self._publisher = publisher
+        self._levels: dict[str, int] = {}
+        self._members: dict[str, list[tuple["WasmChipRuntime", int]]] = {}
+        self._remote: set[str] = set()
+        # Re-entrancy guard: a watch callback may drive the same net straight
+        # back. The nested write still sets the level, it just does not fan out
+        # a second time, so a chip cannot recurse the worker to death.
+        self._driving: set[str] = set()
+
+    def register(self, net_id: str, runtime: "WasmChipRuntime", handle: int) -> None:
+        self._members.setdefault(net_id, []).append((runtime, handle))
+        self._levels.setdefault(net_id, 0)
+
+    def mark_remote(self, net_ids) -> None:
+        """Flag nets that have a member in another worker, so local writes are
+        published to the frontend bridge."""
+        self._remote.update(str(n) for n in net_ids)
+
+    def is_remote(self, net_id: str) -> bool:
+        return net_id in self._remote
+
+    def level(self, net_id: str) -> int | None:
+        return self._levels.get(net_id)
+
+    def drive(
+        self,
+        net_id: str,
+        value: int,
+        source: Optional[tuple["WasmChipRuntime", int]] = None,
+        publish: bool = True,
+        ts_ns: int | None = None,
+    ) -> None:
+        """Set the net level and fire every other member's pin watches."""
+        v = 1 if value else 0
+        self._levels[net_id] = v
+        if publish and self._publisher is not None and net_id in self._remote:
+            try:
+                self._publisher(
+                    net_id, v, ts_ns if ts_ns is not None else time.monotonic_ns()
+                )
+            except Exception:
+                pass
+        if net_id in self._driving:
+            return
+        self._driving.add(net_id)
+        try:
+            for runtime, handle in self._members.get(net_id, ()):
+                if source is not None and runtime is source[0] and handle == source[1]:
+                    continue
+                runtime.notify_net_change(handle, v)
+        finally:
+            self._driving.discard(net_id)
+
+    def apply_remote(self, net_id: str, value: int, ts_ns: int = 0) -> None:
+        """Replay a level change a peer worker drove. Never republished, so two
+        bridged workers cannot ping-pong one edge forever."""
+        del ts_ns  # carried for diagnostics; arrival order is what drives here
+        self.drive(net_id, value, source=None, publish=False)
+
+
 class WasmChipRuntime:
     """Wraps a single chip WASM instance.
 
@@ -96,6 +185,9 @@ class WasmChipRuntime:
         pin_reader: Optional[Callable[[int], int]] = None,
         uart_writer: Optional[Callable[[int, bytes], None]] = None,
         timer_scheduler: Optional[Callable[["WasmChipRuntime"], None]] = None,
+        net_map: dict[str, str] | None = None,
+        net_bus: Optional[ChipNetBus] = None,
+        uart_map: dict[int, int] | None = None,
     ):
         """
         Args:
@@ -108,9 +200,19 @@ class WasmChipRuntime:
             pin_reader: (gpio) → 0/1 — reads current GPIO state from QEMU. If absent,
                         vx_pin_read returns the runtime's last-known cached value.
             uart_writer: (uart_id, bytes) → void — injects bytes into the firmware's
-                         UART RX. Called by vx_uart_write, always with CHIP_UART.
+                         UART RX. Called by vx_uart_write with the UART this chip
+                         resolved to (see uart_map), CHIP_UART when none does.
             timer_scheduler: callback invoked when the chip arms a timer; the worker
                              starts the actual scheduling thread.
+            net_map:    {chip_pin_name: net_id} - chip pins that share a diagram net
+                        with another chip's pin. Resolved by the frontend with the
+                        same union-find over wires that chipNets.ts uses. Omitted
+                        by older frontends, which is why it defaults to empty.
+            net_bus:    the shared ChipNetBus every chip in this worker registers
+                        its net pins on.
+            uart_map:   {gpio: uart_id} for the UART pins this chip is wired to,
+                        from the board's UART pin table in the frontend. Decides
+                        which UART vx_uart_attach binds to; empty keeps CHIP_UART.
         """
         self._engine = wasmtime.Engine()
         self._store = wasmtime.Store(self._engine)
@@ -136,9 +238,12 @@ class WasmChipRuntime:
         self._pin_reader = pin_reader
         self._uart_writer = uart_writer
         self._timer_scheduler = timer_scheduler
+        self._net_map = {str(k): str(v) for k, v in (net_map or {}).items()}
+        self._net_bus = net_bus
+        self._uart_map = {int(k): int(v) for k, v in (uart_map or {}).items()}
 
         # Per-instance state
-        self._pins: list[dict] = []           # [{name, mode, value, gpio}]
+        self._pins: list[dict] = []           # [{name, mode, value, gpio, net}]
         self._attr_handles: list[dict] = []   # [{name, default}]
 
         # I2C state populated by vx_i2c_attach
@@ -147,6 +252,9 @@ class WasmChipRuntime:
 
         # UART state — at most one UART per chip in MVP
         self.uart_config: dict | None = None      # {rx, tx, baud_rate, on_rx_byte, on_tx_done, user_data}
+        # Which of the board's UARTs this chip is on. Resolved from the wired
+        # pins at vx_uart_attach; CHIP_UART until then and when nothing resolves.
+        self.uart_id: int = CHIP_UART
 
         # SPI state
         self.spi_config: dict | None = None       # {sck, mosi, miso, cs, mode, on_done, user_data}
@@ -163,6 +271,11 @@ class WasmChipRuntime:
         # worker can dispatch on _on_pin_change(gpio) without iterating chips.
         # Each entry: {handle, edge (1=R,2=F,3=BOTH), cb_idx, user_data, last_value}
         self._pin_watches: dict[int, list[dict]] = {}
+
+        # Pin watches on chip-to-chip net pins, indexed by pin handle. A pin can
+        # sit in both maps (a net that also carries a board GPIO); the two
+        # entries keep separate last_value so neither source double-fires.
+        self._net_watches: dict[int, list[dict]] = {}
 
         # Timestamp anchor for sim_now_nanos
         self._t0 = time.monotonic_ns()
@@ -228,6 +341,32 @@ class WasmChipRuntime:
             "rx": rx, "tx": tx, "baud_rate": baud,
             "on_rx_byte": on_rx, "on_tx_done": on_tx_done, "user_data": user_data,
         }
+
+    def _resolve_uart_id(self, cfg: dict) -> int:
+        """Which board UART this chip's vx_uart_attach binds to.
+
+        `cfg["rx"]` and `cfg["tx"]` are pin handles from vx_pin_register, so
+        they resolve through this chip's own pin list to the GPIOs the diagram
+        wired. `uart_map` says which UART each of those GPIOs belongs to. A
+        chip's RX is wired to the board's TX and its TX to the board's RX, so
+        either end names the same UART and the first one that resolves wins.
+
+        With no map and no wire (a chip whose UART pins go nowhere) the answer
+        is CHIP_UART, which is where every chip used to land unconditionally.
+        """
+        if not self._uart_map:
+            return CHIP_UART
+        for key in ("rx", "tx"):
+            handle = int(cfg.get(key, -1))
+            if not (0 <= handle < len(self._pins)):
+                continue
+            gpio = self._pins[handle]["gpio"]
+            if gpio is None:
+                continue
+            uart = self._uart_map.get(int(gpio))
+            if uart is not None:
+                return int(uart)
+        return CHIP_UART
 
     def _read_spi_config(self, ptr: int) -> dict:
         raw = self._read_bytes(ptr, struct.calcsize(_SPI_CONFIG_FMT))
@@ -364,7 +503,11 @@ class WasmChipRuntime:
             handle = len(self._pins)
             initial = 1 if mode == self.MODE_OUTPUT_HIGH else 0
             gpio = self._pin_map.get(name)
-            self._pins.append({"name": name, "mode": mode, "value": initial, "gpio": gpio})
+            net = self._net_map.get(name)
+            self._pins.append({"name": name, "mode": mode, "value": initial,
+                               "gpio": gpio, "net": net})
+            if net is not None and self._net_bus is not None:
+                self._net_bus.register(net, self, handle)
             # Drive the initial level into QEMU if this is an OUTPUT_LOW/HIGH pin
             # AND we have a real GPIO for it.
             if gpio is not None and self._pin_writer and mode in (self.MODE_OUTPUT_LOW, self.MODE_OUTPUT_HIGH):
@@ -384,6 +527,12 @@ class WasmChipRuntime:
                     return self._pin_reader(p["gpio"]) & 1
                 except Exception:
                     pass
+            # No board GPIO: the net level is the pin level, so a chip reads
+            # what another chip on the same net last drove.
+            if p["net"] is not None and self._net_bus is not None:
+                level = self._net_bus.level(p["net"])
+                if level is not None:
+                    return level & 1
             return p["value"] & 1
 
         def vx_pin_write(handle: int, value: int) -> None:
@@ -397,6 +546,14 @@ class WasmChipRuntime:
                     self._pin_writer(p["gpio"], v)
                 except Exception as e:
                     self._emit({"type": "chip_error", "where": "pin_write", "error": str(e)})
+            # A net with a board GPIO on it keeps the GPIO behaviour above AND
+            # fans out to the chip members, so a chip wired to both a board pin
+            # and another chip drives both.
+            if p["net"] is not None and self._net_bus is not None:
+                try:
+                    self._net_bus.drive(p["net"], v, source=(self, handle))
+                except Exception as e:
+                    self._emit({"type": "chip_error", "where": "net_write", "error": str(e)})
 
         def vx_pin_read_analog(handle: int) -> float:
             if 0 <= handle < len(self._pins):
@@ -420,21 +577,29 @@ class WasmChipRuntime:
             if not (0 <= handle < len(self._pins)):
                 return
             p = self._pins[handle]
-            if p["gpio"] is None:
-                # Chip's logical pin not wired to a real GPIO — no edges to detect.
+            if p["gpio"] is None and p["net"] is None:
+                # Chip's logical pin is on neither a real GPIO nor a chip net -
+                # no edges to detect.
                 return
-            entries = self._pin_watches.setdefault(p["gpio"], [])
-            entries.append({
-                "handle": handle,
-                "edge": edge & 3,
-                "cb_idx": cb_idx,
-                "user_data": user_data,
-                "last_value": p["value"] & 1,
-            })
+
+            def _entry() -> dict:
+                return {
+                    "handle": handle,
+                    "edge": edge & 3,
+                    "cb_idx": cb_idx,
+                    "user_data": user_data,
+                    "last_value": p["value"] & 1,
+                }
+
+            if p["gpio"] is not None:
+                self._pin_watches.setdefault(p["gpio"], []).append(_entry())
+            if p["net"] is not None:
+                self._net_watches.setdefault(handle, []).append(_entry())
 
         def vx_pin_watch_stop(handle: int) -> None:
             if not (0 <= handle < len(self._pins)):
                 return
+            self._net_watches.pop(handle, None)
             gpio = self._pins[handle]["gpio"]
             if gpio is None:
                 return
@@ -468,6 +633,7 @@ class WasmChipRuntime:
         # ── UART ──
         def vx_uart_attach(cfg_ptr: int) -> int:
             self.uart_config = self._read_uart_config(cfg_ptr)
+            self.uart_id = self._resolve_uart_id(self.uart_config)
             return 0
 
         def vx_uart_write(_handle: int, buf_ptr: int, count: int) -> int:
@@ -476,12 +642,15 @@ class WasmChipRuntime:
             data = self._read_bytes(buf_ptr, count)
             if self._uart_writer is not None:
                 try:
-                    # CHIP_UART, not UART0: UART0 is the serial monitor on
-                    # every ESP32 family, so a chip writing there appears in
-                    # the console as garbage and reads the sketch's own
-                    # prints back. Chips live on Serial1 — the browser
-                    # bridge (simulatorBridges.ts CHIP_UART) agrees.
-                    self._uart_writer(CHIP_UART, data)
+                    # The UART whose TX/RX the diagram wires to this chip, so a
+                    # module on Serial2 is read by Serial2 and not by the
+                    # console. When no wire resolves this stays CHIP_UART, not
+                    # UART0: UART0 is the serial monitor on every ESP32 family,
+                    # so a chip writing there appears in the console as garbage
+                    # and reads the sketch's own prints back. Chips default to
+                    # Serial1, which the browser bridge
+                    # (simulatorBridges.ts CHIP_UART) agrees with.
+                    self._uart_writer(self.uart_id, data)
                 except Exception as e:
                     self._emit({"type": "chip_error", "where": "uart_write", "error": str(e)})
                     return 0
@@ -684,6 +853,40 @@ class WasmChipRuntime:
     def has_pin_watches(self) -> bool:
         return bool(self._pin_watches)
 
+    def has_net_watches(self) -> bool:
+        return bool(self._net_watches)
+
+    def _fire_watches(self, entries: list[dict], value: int) -> None:
+        """Edge-detect per watch entry and call the ones whose edge matches."""
+        new_state = value & 1
+        for entry in entries:
+            last = entry["last_value"]
+            entry["last_value"] = new_state
+            if last == new_state:
+                continue
+            edge = entry["edge"]
+            is_rising = (last == 0 and new_state == 1)
+            is_falling = (last == 1 and new_state == 0)
+            if (is_rising and (edge & 1)) or (is_falling and (edge & 2)):
+                self._call_indirect(
+                    entry["cb_idx"],
+                    entry["user_data"],
+                    entry["handle"],
+                    new_state,
+                )
+
+    def notify_net_change(self, handle: int, value: int) -> None:
+        """Called by ChipNetBus when another chip drives a net this chip's pin
+        `handle` sits on. Edge detection is per watch entry, so a member that
+        already reads the new level fires nothing."""
+        if 0 <= handle < len(self._pins):
+            self._pins[handle]["value"] = value & 1
+        entries = self._net_watches.get(handle)
+        if not entries:
+            return
+        self._fire_watches(entries, value)
+        self._flush_stdout()
+
     def notify_pin_change(self, gpio: int, value: int) -> None:
         """Called by the worker for every QEMU GPIO transition. Fires any
         chip-side watches whose edge condition matches.
@@ -694,22 +897,7 @@ class WasmChipRuntime:
         entries = self._pin_watches.get(gpio)
         if not entries:
             return
-        new_state = value & 1
-        for entry in entries:
-            last = entry["last_value"]
-            entry["last_value"] = new_state
-            if last == new_state:
-                continue
-            edge = entry["edge"]
-            is_rising  = (last == 0 and new_state == 1)
-            is_falling = (last == 1 and new_state == 0)
-            if (is_rising and (edge & 1)) or (is_falling and (edge & 2)):
-                self._call_indirect(
-                    entry["cb_idx"],
-                    entry["user_data"],
-                    entry["handle"],
-                    new_state,
-                )
+        self._fire_watches(entries, value)
         self._flush_stdout()
 
     # ── UART hook (chip ← firmware) ──────────────────────────────────────────

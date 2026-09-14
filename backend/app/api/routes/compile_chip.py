@@ -13,7 +13,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.services.chip_compile import chip_compile_service
+from app.services.chip_compile import MAX_SOURCE_BYTES, chip_compile_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -39,6 +39,11 @@ async def compile_chip(
 ):
     if not request.source or not request.source.strip():
         raise HTTPException(status_code=422, detail="`source` cannot be empty.")
+    if len(request.source.encode("utf-8")) > MAX_SOURCE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"`source` is larger than {MAX_SOURCE_BYTES // 1024} KB.",
+        )
 
     try:
         result = await chip_compile_service.compile(request.source)

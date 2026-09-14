@@ -30,6 +30,8 @@ those alongside the C source to see the expected behavior under load.
 | 9 | [24LC256 EEPROM](#9-24lc256-eeprom)   | Advanced | I2C 16-bit addressing  | ~90 |
 | 10 | [DS3231 RTC](#10-ds3231-rtc)         | Advanced | I2C state + BCD    | ~110 |
 | 11 | [ROT13 UART](#11-rot13-uart)         | Intermediate | UART RX/TX        | ~50 |
+| 12 | [SX1262 LoRa](#12-sx1262-lora)       | Advanced | SPI slave + timers + chip-to-chip net | ~760 |
+| 13 | [KQ-130F Power-Line](#13-kq-130f-power-line) | Advanced | UART + timers + chip-to-chip net | ~430 |
 
 ---
 
@@ -440,6 +442,33 @@ When wired to the Arduino's `Serial`, every `Serial.print('A')` from the
 sketch makes the chip echo `'N'` — visible in the Serial Monitor.
 
 ---
+
+## 12. SX1262 LoRa
+
+A model of the Semtech SX1262 transceiver by Martin Thuku (MIT). SPI slave
+on NSS/SCK/MOSI/MISO with BUSY, DIO1 and RESET, implementing the command
+sequence a real driver runs (SetStandby, SetRfFrequency, WriteBuffer, SetTx,
+SetRx, GetIrqStatus, ...). The `ANT` pin is the air: the chip serialises its
+TX buffer onto it as a Manchester bit stream with a CRC, and every SX1262
+wired to the same `ANT` net decodes it into its RX buffer. Attributes: RSSI
+reported to the sketch, frame drop percentage, air bit period.
+
+Wire two of them, one per board, `ANT` to `ANT`, and a frame sent on one
+board arrives on the other. On ESP32 boards the two chips run in two QEMU
+workers and the net crosses through the bridge described in
+[custom-chips-chip-nets.md](./custom-chips-chip-nets.md); the bit period has
+to sit around 40 ms there. What it does not model: LoRa modulation,
+spreading factors, airtime, sensitivity.
+
+## 13. KQ-130F Power-Line
+
+A model of the KQ-130F narrowband power-line carrier module, same author
+and licence. 9600 8N1 UART on TX/RX plus a synthetic `LINE` pin that is the
+mains: bytes arriving on RX are framed onto `LINE` (up to 128 per burst),
+and every other KQ-130F on the same `LINE` net replays them on its TX once
+the frame completes, CRC permitting. Attributes: line noise percentage and
+line bit period. The UART binds to whichever hardware UART the sketch's
+TX/RX pins are wired to.
 
 ## How to learn from these
 

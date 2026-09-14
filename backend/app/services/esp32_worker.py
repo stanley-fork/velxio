@@ -214,6 +214,51 @@ def _log(msg: str) -> None:
     sys.stderr.flush()
 
 
+# ─── Custom-chip net bus ────────────────────────────────────────────────────
+# One bus per worker, shared by every custom chip on this board, so a chip pin
+# wired only to another chip's pin still carries a level. Created on the first
+# chip that ships a `nets` list; older frontends send none, the bus stays None
+# and the GPIO-only behaviour is exactly what it was.
+_chip_net_bus: list = [None]
+
+
+def _get_chip_net_bus(chip_net_bus_cls):
+    """Lazily build the worker's ChipNetBus. A level change on a net whose
+    members live in another worker is published as a `chip_net` event; the
+    frontend interconnect relays it to the peer board's worker."""
+    if _chip_net_bus[0] is None:
+        def _publish(net_id: str, level: int, ts_ns: int) -> None:
+            _emit({'type': 'chip_net', 'net': net_id, 'level': level, 'ts': ts_ns})
+        _chip_net_bus[0] = chip_net_bus_cls(publisher=_publish)
+    return _chip_net_bus[0]
+
+
+# One-way latency of the chip-net bridge in nanoseconds: [count, min, max, sum].
+# Both workers stamp with time.monotonic_ns and CLOCK_MONOTONIC is system-wide on
+# Linux, so the two processes read one clock and this subtraction is a real
+# one-way time rather than a clock offset. It is the floor under the bit period a
+# chip protocol can use across two boards, so it is worth stating rather than
+# leaving people to guess.
+_chip_net_rx_stats = [0, 0, 0, 0]
+
+
+def _note_chip_net_latency(ts_ns: int) -> None:
+    if ts_ns <= 0:
+        return
+    delta = time.monotonic_ns() - ts_ns
+    if delta < 0:
+        return
+    st = _chip_net_rx_stats
+    st[0] += 1
+    st[1] = delta if st[0] == 1 else min(st[1], delta)
+    st[2] = max(st[2], delta)
+    st[3] += delta
+    if st[0] % 200 == 0:
+        _log(f'[custom-chip chip_net] {st[0]} hops, one-way us: '
+             f'min={st[1] / 1000:.0f} avg={st[3] / st[0] / 1000:.0f} '
+             f'max={st[2] / 1000:.0f}')
+
+
 # ─── GPIO pinmap (identity: slot i → GPIO i-1) ──────────────────────────────
 # ESP32 has 40 GPIOs (0-39), ESP32-C3 only has 22 (0-21).
 # The pinmap is rebuilt after reading config (see main()), defaulting to ESP32.
@@ -1445,18 +1490,19 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
         if _stopped.is_set():
             return
         _emit({'type': 'uart_tx', 'uart': uart_id, 'byte': byte_val})
-        # Dispatch to any custom-chip runtimes that declared a UART, but only
-        # from CHIP_UART. UART0 is the serial monitor: feeding it to a chip
-        # means the chip receives the sketch's own console output, and the
-        # chip's replies land in the monitor as garbage. Chips live on
-        # Serial1, which is what the browser bridge does too.
+        # Dispatch to the custom-chip runtimes bound to THIS UART. A chip binds
+        # to the UART whose TX/RX the diagram wires to it, and to CHIP_UART when
+        # nothing resolves: UART0 is the serial monitor, so a chip listening
+        # there by default would receive the sketch's own console output and its
+        # replies would land in the monitor as garbage.
         # The chip's on_rx_byte callback runs synchronously in this thread.
-        if uart_id == CHIP_UART:
-            for rt in _chip_uart_runtimes:
-                try:
-                    rt.feed_uart_byte(byte_val)
-                except Exception as e:
-                    _log(f'[custom-chip uart_tx] error: {e!r}')
+        for rt in _chip_uart_runtimes:
+            if getattr(rt, 'uart_id', CHIP_UART) != uart_id:
+                continue
+            try:
+                rt.feed_uart_byte(byte_val)
+            except Exception as e:
+                _log(f'[custom-chip uart_tx] error: {e!r}')
         # Crash / reboot detection on UART0 only
         if uart_id == 0:
             _uart0_buf.append(byte_val)
@@ -2056,7 +2102,7 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                 # as the hardcoded slaves above.
                 # See docs/wiki/custom-chips-esp32-backend-runtime.md
                 try:
-                    from app.services.wasm_chip_runtime import WasmChipRuntime
+                    from app.services.wasm_chip_runtime import ChipNetBus, WasmChipRuntime
                     from app.services.wasm_chip_slave   import WasmChipI2CSlave
                 except ImportError:
                     # Fallback: same pattern as esp32_i2c_slaves at the top of
@@ -2070,6 +2116,7 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                     _mod_rt = importlib.util.module_from_spec(_spec_rt)
                     _spec_rt.loader.exec_module(_mod_rt)
                     WasmChipRuntime = _mod_rt.WasmChipRuntime
+                    ChipNetBus = _mod_rt.ChipNetBus
                     _spec_sl = importlib.util.spec_from_file_location(
                         'wasm_chip_slave', _here / 'wasm_chip_slave.py'
                     )
@@ -2087,6 +2134,25 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                         wasm_bytes = base64.b64decode(wasm_b64)
                         attrs      = s.get('attrs', {}) or {}
                         pin_map    = s.get('pin_map', {}) or {}
+                        # Chip-to-chip nets, resolved by the frontend with the
+                        # same union-find chipNets.ts runs for browser boards.
+                        # Each entry: {'pin': <chip pin>, 'net': <net id>,
+                        # 'remote': bool}. Absent on older frontends.
+                        nets       = s.get('nets', []) or []
+                        # {gpio: uart_id} for the UART pins the diagram wires to
+                        # this chip, so vx_uart_attach binds to the UART the
+                        # sketch actually talks on. Absent on older frontends.
+                        uart_map   = {int(k): int(v)
+                                      for k, v in (s.get('uart_map', {}) or {}).items()}
+                        net_map    = {str(n['pin']): str(n['net'])
+                                      for n in nets if n.get('pin') and n.get('net')}
+                        net_bus    = None
+                        if net_map:
+                            net_bus = _get_chip_net_bus(ChipNetBus)
+                            net_bus.mark_remote(
+                                str(n['net']) for n in nets
+                                if n.get('net') and n.get('remote')
+                            )
 
                         # ── Plumbing: hook the runtime to QEMU's live peripherals ──
                         # GPIO output: chip's vx_pin_write → qemu_picsimlab_set_pin
@@ -2130,6 +2196,9 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                             pin_reader=_chip_pin_reader,
                             uart_writer=_chip_uart_writer,
                             timer_scheduler=_chip_timer_scheduler,
+                            net_map=net_map,
+                            net_bus=net_bus,
+                            uart_map=uart_map,
                         )
                         runtime.run_chip_setup()
 
@@ -2141,7 +2210,7 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                             _log(f"[custom-chip] I2C slave registered at 0x{runtime.i2c_address:02x}")
                         if runtime.uart_config is not None:
                             _chip_uart_runtimes.append(runtime)
-                            _log("[custom-chip] UART chip registered on UART0")
+                            _log(f"[custom-chip] UART chip registered on UART{runtime.uart_id}")
                         if runtime.spi_config is not None:
                             _chip_spi_runtimes.append(runtime)
                             _sync_cs_events()
@@ -2149,6 +2218,9 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                         if runtime.has_pin_watches():
                             _chip_pin_watch_runtimes.append(runtime)
                             _log(f"[custom-chip] pin watches registered: {list(runtime._pin_watches.keys())}")
+                        if net_map:
+                            _log(f"[custom-chip] chip nets: {net_map} "
+                                 f"watching={runtime.has_net_watches()}")
                         if (runtime.i2c_address is None and runtime.uart_config is None
                                 and runtime.spi_config is None):
                             _log("[custom-chip] WASM loaded but no I2C/UART/SPI peripherals declared "
@@ -2272,6 +2344,26 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                     _lock_iothread(b'esp32_worker.py:set_pin', 0)
                 try:
                     lib.qemu_picsimlab_set_pin(int(cmd['pin']) + 1, int(cmd['value']))
+                finally:
+                    if _unlock_iothread:
+                        _unlock_iothread()
+
+        elif c == 'chip_net':
+            # A chip on another board drove a net this board's chips share.
+            # Same lock discipline as set_pin: the fan-out runs the receiving
+            # chip's vx_pin_watch callback, which may call vx_pin_write and so
+            # re-enter QEMU from this thread.
+            bus = _chip_net_bus[0]
+            if bus is not None:
+                if _lock_iothread:
+                    _lock_iothread(b'esp32_worker.py:chip_net', 0)
+                try:
+                    ts_ns = int(cmd.get('ts', 0))
+                    _note_chip_net_latency(ts_ns)
+                    bus.apply_remote(str(cmd.get('net', '')),
+                                     int(cmd.get('level', 0)), ts_ns)
+                except Exception as e:
+                    _log(f'[custom-chip chip_net] error: {e!r}')
                 finally:
                     if _unlock_iothread:
                         _unlock_iothread()

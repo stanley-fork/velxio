@@ -205,6 +205,36 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh \
     | BINDIR=/usr/local/bin sh
 
+# ---- WASI-SDK: the custom-chip compiler ----
+# POST /api/compile-chip/ shells out to clang from the WASI-SDK (see
+# app/services/chip_compile.py, which looks in /opt/wasi-sdk first). Without
+# it the route reports available:false and the Compile button in the custom
+# chip designer cannot work, so the image has to ship the toolchain.
+#
+# Only amd64 has an official wasi-sdk 22 Linux tarball. On any other arch the
+# download is skipped rather than failing the build: the rest of the image is
+# fine and the chip compiler degrades to the same available:false it had
+# before, with the reason printed in the build log.
+ARG WASI_SDK_VERSION=22
+ARG WASI_SDK_RELEASE=22.0
+# sha256 of wasi-sdk-22.0-linux.tar.gz as published on the GitHub release.
+# Bump it together with the version: a mismatch fails the build on purpose.
+ARG WASI_SDK_SHA256=fa46b8f1b5170b0fecc0daf467c39f44a6d326b80ced383ec4586a50bc38d7b8
+RUN set -eu; \
+    arch="$(dpkg --print-architecture)"; \
+    if [ "$arch" = "amd64" ]; then \
+      url="https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION}/wasi-sdk-${WASI_SDK_RELEASE}-linux.tar.gz"; \
+      echo "[wasi-sdk] downloading $url"; \
+      curl -fSL -o /tmp/wasi-sdk.tar.gz "$url"; \
+      echo "${WASI_SDK_SHA256}  /tmp/wasi-sdk.tar.gz" | sha256sum -c -; \
+      tar -xzf /tmp/wasi-sdk.tar.gz -C /opt; \
+      mv "/opt/wasi-sdk-${WASI_SDK_RELEASE}" /opt/wasi-sdk; \
+      rm -f /tmp/wasi-sdk.tar.gz; \
+      /opt/wasi-sdk/bin/clang --version; \
+    else \
+      echo "[wasi-sdk] no official wasi-sdk ${WASI_SDK_VERSION} build for $arch - custom chip compilation will report available:false"; \
+    fi
+
 # Only install arduino-cli binary here. Core installation (arduino:avr,
 # rp2040:rp2040) is done at first boot by entrypoint.sh and persisted
 # in the mounted /root/.arduino15 volume.
@@ -227,6 +257,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy backend application code
 COPY backend/app/ ./app/
+
+# The custom-chip SDK header. chip_compile.py passes this directory to clang
+# as -I, and reports available:false without it, so a chip that includes
+# velxio-chip.h cannot compile on an image that leaves it out.
+COPY backend/sdk/ ./sdk/
 
 # One-off maintenance scripts (e.g. backfill_boards_2026_05). Pure stdlib —
 # run with: docker exec velxio-app python /app/scripts/<script> --apply

@@ -219,6 +219,37 @@ export class Esp32BridgeShim {
   }
 
   /**
+   * The same thing under the name the bridge uses. `detectSimulatorKind` in
+   * simulation/customChips/simulatorBridges.ts identifies an ESP32 host by
+   * this method, and says so in its own header comment, but the shim only
+   * ever had `setPinState`. So a custom chip on an ESP32 board was classified
+   * 'unknown' and took the browser chip runtime rather than the backend one:
+   * the chip ran in the tab while its firmware ran in QEMU, which is exactly
+   * the split docs/wiki/custom-chips-esp32-backend-runtime.md exists to avoid.
+   */
+  sendPinEvent(pin: number, state: boolean): void {
+    this.bridge.sendPinEvent(pin, state);
+  }
+
+  /**
+   * Whether custom chips wired to this board run in the bridge's backend
+   * worker (CustomChipPart ships the WASM with registerSensor) or in the
+   * browser runtime. The OSS QEMU bridge has no opinion and hosts them; an
+   * overlay's in-browser engine answers false, because a chip handed to it
+   * as a sensor would never run. Read by simulatorBridges.hostsChipsInWorker.
+   */
+  hostsCustomChips(): boolean {
+    const b = this.bridge as unknown as { hostsCustomChips?: () => boolean };
+    return typeof b.hostsCustomChips === 'function' ? b.hostsCustomChips() !== false : true;
+  }
+
+  /** One byte into the guest's UART RX; the custom-chip bridge (avrUartTx)
+   *  calls this for a browser-hosted chip's vx_uart_write on CHIP_UART. */
+  sendSerialByte(byte: number, uart = 0): void {
+    this.sendSerialBytes([byte & 0xff], uart);
+  }
+
+  /**
    * Claim the decoded WS2812 frames going out on `pin` while the part is
    * attached. Returns the unsubscribe, like every other part subscription.
    */
@@ -924,6 +955,24 @@ class Stm32BridgeShim {
   /** Drive a GPIO input from a part. `pin` is the linear pin (port*16+pin). */
   setPinState(pin: number, state: boolean): void {
     this.bridge.sendPinEvent(pin, state);
+  }
+
+  /**
+   * The same thing under the name the custom-chip part keys on:
+   * `detectSimulatorKind` reads `sendPinEvent` as "a worker-backed board",
+   * and with it CustomChipPart ships a chip's WASM to this board's worker
+   * through registerSensor instead of running it in the browser with GPIO
+   * alone. The STM32 worker has hosted `custom-chip` sensors (I2C slave,
+   * pin watches, timers) since it was split from the ESP32 one; only this
+   * name was missing for a user's chip to reach it.
+   */
+  sendPinEvent(pin: number, state: boolean): void {
+    this.bridge.sendPinEvent(pin, state);
+  }
+
+  /** The STM32 worker hosts custom chips; see Esp32BridgeShim.hostsCustomChips. */
+  hostsCustomChips(): boolean {
+    return true;
   }
 
   /** Raw-byte counterpart of `feedUart` — see the note on the ESP32 shim:

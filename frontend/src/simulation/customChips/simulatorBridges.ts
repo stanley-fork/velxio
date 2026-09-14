@@ -5,7 +5,13 @@
  *   - AVR (avr8js)   — `simulator.usart` / `simulator.spi` / `simulator.i2cBus`
  *   - RP2040 (rp2040js) — `simulator.serialWriteByte` / `simulator.setSPIHandler` /
  *                         `simulator.addI2CDevice` (per-bus indexing)
- *   - ESP32 (QEMU shim) — `simulator.sendPinEvent` (no I2C/SPI/UART today)
+ *   - ESP32 (bridge shim) — `simulator.sendPinEvent`. The shim wraps either
+ *     the backend QEMU bridge, which hosts custom chips in its worker
+ *     (CustomChipPart hands the WASM over and no browser instance exists),
+ *     or an overlay's in-browser engine, which answers `hostsCustomChips()`
+ *     false so the chip runs here: GPIO through the shim's PinManager, I2C
+ *     through `addI2CDevice` (synchronous on the engine bus), SPI through
+ *     the shim's `spi` adapter, UART on CHIP_UART.
  *
  * The bridges in this module install a single dispatcher per simulator that
  * fans out to every chip subscribed, regardless of family.
@@ -22,6 +28,24 @@ export function detectSimulatorKind(simulator: any): SimulatorKind {
   }
   if (typeof simulator.sendPinEvent === 'function') return 'esp32';
   return 'unknown';
+}
+
+/**
+ * Whether an ESP32-kind simulator hosts custom chips in a backend worker
+ * (the QEMU path: the WASM is shipped with `registerSensor` and runs next
+ * to the guest) or leaves them to the browser runtime. The shim answers
+ * for whichever bridge the build installed; a bridge with no opinion is the
+ * OSS QEMU one, and QEMU hosts them. An in-browser engine has no worker,
+ * so it must say no, or the chip is filed as a sensor nothing runs.
+ */
+export function hostsChipsInWorker(simulator: any): boolean {
+  if (!simulator) return false;
+  if (typeof simulator.hostsCustomChips !== 'function') return true;
+  try {
+    return simulator.hostsCustomChips() !== false;
+  } catch {
+    return true;
+  }
 }
 
 export interface SimulatorBridges {
@@ -117,25 +141,13 @@ export function ensureUartBridge(simulator: any): void {
     b.uartInstalled = true;
     return;
   }
-  if (kind === 'esp32') {
-    // The ESP32 bridge tags every TX byte with the UART it came from.
-    // UART0 is the serial monitor: a chip must never be fed the sketch's
-    // own console output, and a chip must never write into it. So chips
-    // live on CHIP_UART, which is Serial1 on the Arduino side — the UART
-    // a sketch opens with `Serial1.begin(baud, SERIAL_8N1, rx, tx)`.
-    const previous = simulator.onSerialData;
-    simulator.onSerialData = (charStr: string, uart?: number) => {
-      if (previous) { try { previous(charStr, uart); } catch { /* swallow */ } }
-      if ((uart ?? 0) !== CHIP_UART) return;
-      const code = typeof charStr === 'string' ? charStr.charCodeAt(0) : Number(charStr);
-      if (!Number.isFinite(code)) return;
-      for (const listener of b.uartListeners) {
-        try { listener(code & 0xff); } catch { /* swallow */ }
-      }
-    };
-    b.uartInstalled = true;
-    return;
-  }
+  // esp32: nothing to install. The shim's `onSerialData` is a property the
+  // store never calls for an ESP32 board (the bridge's own handler feeds the
+  // monitor), so a dispatcher hung on it would never fire; a version of it
+  // lived here and silently did nothing. A chip hosted in the browser next
+  // to an overlay engine gets its UART from that overlay's attach extension
+  // (the engines publish every TX byte on the overlay's uart bus), and a
+  // chip on the OSS QEMU bridge is hosted in the worker, not here.
   // unknown: no client-side UART bridge (QEMU has its own path).
 }
 
@@ -217,7 +229,10 @@ export function ensureSpiBridge(simulator: any): void {
   if (b.spiInstalled) return;
   const kind = detectSimulatorKind(simulator);
 
-  if (kind === 'avr' && simulator.spi) {
+  // The ESP32 shim exposes the same `{ onByte, completeTransfer }` adapter
+  // (completeTransfer hands MISO to the bridge's setSpiResponse), so a chip
+  // hosted in the browser next to an in-browser engine gets SPI the AVR way.
+  if ((kind === 'avr' || kind === 'esp32') && simulator.spi) {
     b.spiPreviousOnByte = simulator.spi.onByte ?? null;
     simulator.spi.onByte = (mosi: number) => {
       const miso = b.spiBus.transferByte(mosi);
@@ -257,7 +272,14 @@ export function getI2CBus(simulator: any, bus: 0 | 1 = 0): {
   if (kind === 'avr' && simulator.i2cBus) {
     return simulator.i2cBus;
   }
-  if (kind === 'rp2040' && typeof simulator.addI2CDevice === 'function') {
+  if (
+    (kind === 'rp2040' || kind === 'esp32') &&
+    typeof simulator.addI2CDevice === 'function'
+  ) {
+    // ESP32: the shim's addI2CDevice puts the device on an in-browser
+    // engine's synchronous bus (attachSyncI2cDevice). On the QEMU bridge the
+    // call is a no-op, but a chip on that bridge never reaches this path:
+    // CustomChipPart hands it to the worker (see hostsChipsInWorker).
     return {
       addDevice: (device) => simulator.addI2CDevice(device, bus),
       removeDevice: (address) => simulator.removeI2CDevice?.(address, bus),

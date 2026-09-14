@@ -21,6 +21,15 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+# Upper bound on one clang run. A chip is one C file against one header;
+# a real one compiles in well under a second.
+COMPILE_TIMEOUT_S = 60
+
+# Upper bound on the source the route accepts, in bytes. Every example chip
+# is under 40 KB; this leaves room for a big lookup table without letting a
+# client hand clang megabytes to chew on.
+MAX_SOURCE_BYTES = 512 * 1024
+
 
 def _resolve_wasi_sdk() -> Path | None:
     """Find a wasi-sdk installation. Honours WASI_SDK env var first."""
@@ -118,9 +127,25 @@ class ChipCompileService:
             ]
 
             def _run() -> subprocess.CompletedProcess:
-                return subprocess.run(cmd, capture_output=True, text=True, cwd=str(tmp))
+                return subprocess.run(
+                    cmd, capture_output=True, text=True, cwd=str(tmp),
+                    timeout=COMPILE_TIMEOUT_S,
+                )
 
-            result = await asyncio.to_thread(_run)
+            try:
+                result = await asyncio.to_thread(_run)
+            except subprocess.TimeoutExpired:
+                # The route is open to any client, so a source that keeps
+                # clang busy (template-free C can still do it with enough
+                # nesting) must not hold a worker thread forever.
+                return {
+                    "success": False,
+                    "wasm_base64": None,
+                    "stdout": "",
+                    "stderr": "",
+                    "error": f"clang did not finish within {COMPILE_TIMEOUT_S} s",
+                    "byte_size": 0,
+                }
 
             if result.returncode != 0 or not wasm_path.is_file():
                 return {

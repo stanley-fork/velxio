@@ -85,6 +85,7 @@ See [Supported Boards](../README.md#supported-boards) for the full table with CP
 - [Examples Walkthrough](./wiki/custom-chips-examples.md) — Gallery chips explained
 - [Build & Test](./wiki/custom-chips-build-and-test.md) — Toolchain, sandbox
 - [ESP32 Backend Runtime](./wiki/custom-chips-esp32-backend-runtime.md) — How chips load under QEMU
+- [Chip-to-chip nets on ESP32](./wiki/custom-chips-chip-nets.md) — Nets between chips, the cross-board bridge, UART binding
 
 ### Electrical Simulation Deep-Dive
 
