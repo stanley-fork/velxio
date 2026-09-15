@@ -180,6 +180,20 @@ const CONCEPTS: Concept[] = [
     words: ['range', 'proximity', 'distancia', 'distancia', 'abstand', 'entfernung', 'distanza'],
   },
   {
+    // "sensor de proximidad" found nothing: "proximidad" is three edits from
+    // "proximity", past the typo budget, and no concept listed it.
+    en: ['proximity', 'distance'],
+    words: [
+      'proximidad',
+      'cercania',
+      'proximidade',
+      'proximite',
+      'naherung',
+      'annaherung',
+      'prossimita',
+    ],
+  },
+  {
     en: ['ultrasonic'],
     words: [
       'ultrasound',

@@ -150,10 +150,13 @@ describe('rankBySearch', () => {
     expect(ids('pot')).toEqual(['potentiometer']);
     expect(ids('distancia')).toEqual(['hc-sr04']);
     expect(ids('ultraschall')).toEqual(['hc-sr04']);
+    expect(ids('proximidad')).toEqual(['hc-sr04']);
+    expect(ids('Näherung')).toEqual(['hc-sr04']);
   });
 
   it('never fails a query on a little word', () => {
     expect(ids('sensor de temperatura')).toEqual(['dht22']);
+    expect(ids('sensor de proximidad')).toEqual(['hc-sr04']);
     expect(ids('the pushbutton')).toEqual(['pushbutton']);
   });
 

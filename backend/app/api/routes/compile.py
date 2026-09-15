@@ -11,7 +11,7 @@ from typing import Any
 
 from fastapi.responses import JSONResponse
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from app.core.hooks import (
     compile_admission,
@@ -553,15 +553,43 @@ def _purge_expired_jobs() -> None:
                 JOB_BY_KEY.pop(key, None)
 
 
+def _checked_file_name(value: str) -> str:
+    """Refuse a client file name that could point outside a build dir.
+
+    Folder prefixes ('src/helper.cpp') are fine; each lane lays them out its
+    own way. A NUL, an absolute path or a '..' component is refused here, once,
+    instead of trusting every compiler lane to re-check it: the ESP-IDF
+    Arduino-mode writer and the SPIFFS writer did not (2026-09-15), and the
+    backend runs as root next to build dirs every user shares.
+    """
+    if '\x00' in value:
+        raise ValueError('file names cannot contain a NUL byte')
+    if value.startswith(('/', '\\')) or re.match(r'^[A-Za-z]:', value):
+        raise ValueError(f'absolute file names are not allowed: {value!r}')
+    if '..' in value.replace('\\', '/').split('/'):
+        raise ValueError(f"'..' is not allowed in file names: {value!r}")
+    return value
+
+
 class SketchFile(BaseModel):
     name: str
     content: str
+
+    @field_validator('name')
+    @classmethod
+    def _name_stays_inside(cls, value: str) -> str:
+        return _checked_file_name(value)
 
 
 class SpiffsFileBody(BaseModel):
     """One file destined for the SPIFFS partition image, base64-encoded."""
     name: str
     content_b64: str
+
+    @field_validator('name')
+    @classmethod
+    def _name_stays_inside(cls, value: str) -> str:
+        return _checked_file_name(value)
 
 
 class CompileRequest(BaseModel):
@@ -1138,6 +1166,10 @@ async def _compile_job(
                 "configure_ms": compiler_timing.get("configure_ms"),
                 "ninja_ms": compiler_timing.get("ninja_ms"),
                 "replica": compiler_timing.get("replica"),
+                # target/variant-hash of the build dir, so a failure can be
+                # traced to the shared dir it came from.
+                "variant": compiler_timing.get("variant"),
+                "app_main_heal": compiler_timing.get("app_main_heal"),
                 "lane": lane_name,
                 "priority": priority,
                 "cpu_nice": cpu_nice,
