@@ -229,10 +229,14 @@ describe('dht22 — ESP32 shim detection', () => {
     const el = makeElement({ temperature: 28, humidity: 65 });
     logic().attachEvents!(el, shim as any, pinMap({ SDA: 4 }), 'dht22-1');
 
-    // Should have called registerSensor → sendSensorAttach
+    // Should have called registerSensor → sendSensorAttach. `line_request`
+    // and `component_id` ride along so the worker can refuse this exact part
+    // when it has no model for its type (simulation/line/requestLine).
     expect(shim.bridge.sendSensorAttach).toHaveBeenCalledWith('dht22', 4, {
       temperature: 28,
       humidity: 65,
+      line_request: true,
+      component_id: 'dht22-1',
     });
 
     // Should NOT register onPinChange (local protocol) — ESP32 backend handles it

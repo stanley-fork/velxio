@@ -23,7 +23,9 @@ import type { LineHostPort } from './LineHost';
 import './models';
 import {
   createLineModel,
+  framesOf,
   type LineClock,
+  type LineFrames,
   type LineModel,
   type LineSensorRecord,
 } from './lineModels';
@@ -65,10 +67,7 @@ export class LineSensorHub {
     if (!model) return false;
     this.detach(rec.pin);
     const unsubscribe = model.listens.map((pin) =>
-      this.port.onPad(pin, (e) => {
-        const frame = model.onPad(e, this.clock);
-        if (frame) this.timeline.emit(frame, this.clock.now());
-      }),
+      this.port.onPad(pin, (e) => this.emit(model.onPad(e, this.clock))),
     );
     this.attached.set(rec.pin, { rec, model, unsubscribe });
     this.restPins(model);
@@ -80,8 +79,8 @@ export class LineSensorHub {
    * unprompted may answer the change with a frame — see `LineModel.update`.
    */
   update(pin: number, props: Record<string, unknown>): void {
-    const frame = this.attached.get(pin)?.model.update(props, this.clock);
-    if (frame) this.timeline.emit(frame, this.clock.now());
+    const model = this.attached.get(pin)?.model;
+    if (model) this.emit(model.update(props, this.clock));
   }
 
   detach(pin: number): void {
@@ -130,6 +129,14 @@ export class LineSensorHub {
   /** The attached records, for a host that mirrors them somewhere (a worker). */
   records(): LineSensorRecord[] {
     return [...this.attached.values()].map((a) => a.rec);
+  }
+
+  /** Every frame of one answer goes on the wire at the same instant. */
+  private emit(out: LineFrames | void): void {
+    const frames = framesOf(out);
+    if (!frames.length) return;
+    const now = this.clock.now();
+    for (const frame of frames) this.timeline.emit(frame, now);
   }
 
   private restPins(model: LineModel): void {

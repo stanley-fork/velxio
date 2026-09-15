@@ -72,7 +72,11 @@ function isAvr(sim: AnySimulator): sim is AVRSimulator {
 }
 
 function isEsp32Shim(sim: AnySimulator): sim is Esp32LikeSimulator {
-  const s = sim as Esp32LikeSimulator;
+  const s = sim as Esp32LikeSimulator & { simulatorKind?: string };
+  // The Pi shim has `getBridge()` and, since the line contract's hosted
+  // channel, a `registerSensor` too — but no ESP32 worker behind it, so this
+  // test would send the panel down a backend path whose frames never come.
+  if (s.simulatorKind === 'pi') return false;
   return typeof s.getBridge === 'function' && typeof s.registerSensor === 'function';
 }
 

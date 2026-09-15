@@ -27,6 +27,9 @@
 
 import type { BoardKind } from '../types/board';
 import { generateUUID } from '../utils/uuid';
+import type { LineSupport } from './line/LineHost';
+import { recordPartGap } from './line/requestLine';
+import { sensorRecordOwnsPin as recordOwnsPin } from './sensorModels';
 
 const API_BASE = (): string => {
   // The desktop shell injects the sidecar URL at runtime (random port) via
@@ -180,6 +183,22 @@ export class Stm32Bridge {
         case 'system': {
           const evt = msg.data.event as string;
           if (evt === 'crash') this.onCrash?.(msg.data);
+          // The worker took a line sensor it has no model for. It is the only
+          // side that knows, which is why the declaration below carries no
+          // list; the gap reaches the user through the circuit check.
+          //
+          // Handled here rather than through onSystemEvent because nothing
+          // assigns that callback on an STM32 board — the store wires
+          // onSerialData / onError / onPinChange / onPinPull / onDisconnected
+          // and no more — so a listener-based hook would drop every refusal.
+          if (evt === 'sensor_refused') {
+            recordPartGap({
+              sensorType: String(msg.data.sensor_type ?? ''),
+              pin: Number(msg.data.pin ?? -1),
+              why: String(msg.data.why ?? 'this board does not model it'),
+              componentId: msg.data.component_id ? String(msg.data.component_id) : undefined,
+            });
+          }
           this.onSystemEvent?.(evt, msg.data);
           break;
         }
@@ -262,8 +281,38 @@ export class Stm32Bridge {
     }
   }
 
+  /**
+   * What this board can host under the line contract (simulation/line).
+   *
+   * No list. The models run in the QEMU worker, on the guest's own clock, and
+   * the worker is the only thing that knows which ones it has, so it takes
+   * every line sensor and sends back a `sensor_refused` for the ones it
+   * cannot model (handled in the 'system' case above). Today that is one
+   * model, the membrane keypad; a second one is a worker-side change with
+   * nothing to edit here.
+   */
+  lineSupport(): LineSupport {
+    return { mode: 'hosted' };
+  }
+
+  /**
+   * Pads the worker's own model drives, so the SPICE-threshold connector
+   * leaves them alone.
+   *
+   * Narrower than the ESP32 bridge's, which asks about every registered
+   * record: that worker drives an ePaper panel's BUSY line, and this one does
+   * not — its ePaper branch reads DC, CS and RST only. Claiming BUSY here
+   * would take it off the solved circuit and leave it driven by nobody.
+   */
+  ownsSensorPin(gpioPin: number): boolean {
+    return this._pendingSensors.some(
+      (s) => String(s['sensor_type'] ?? '') === 'matrix-keypad' && recordOwnsPin(s, gpioPin),
+    );
+  }
+
   /** Drive a GPIO input pin from an external source. `gpioPin` is linear. */
   sendPinEvent(gpioPin: number, state: boolean): void {
+    if (this.ownsSensorPin(gpioPin)) return;
     this._send({ type: 'stm32_gpio_in', data: { pin: gpioPin, state: state ? 1 : 0 } });
   }
 

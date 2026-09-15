@@ -20,6 +20,9 @@
  *     }}
  *     { type: 'pi_detach_slave', data: { bus_kind, bus_num, address?|cs? } }
  *     { type: 'pi_bus_reply',  data: { rid: number, line: string | null } }
+ *     { type: 'pi_sensor_attach', data: { sensor_type, pin, ...record } }
+ *     { type: 'pi_sensor_update', data: { pin, ...changed } }
+ *     { type: 'pi_sensor_detach', data: { pin } }
  *
  *   Backend → Frontend
  *     { type: 'serial_output', data: { data: string } }
@@ -27,6 +30,9 @@
  *     { type: 'gpio_setup',    data: { pin: number, direction: 'in'|'out', pull: 'pud_up'|'pud_down'|'pud_off' } }
  *     { type: 'pi_bus_request', data: { rid: number, line: string } }
  *     { type: 'system',        data: { event: string, ... } }
+ *         event 'sensor_refused': { sensor_type, pin, component_id, why } —
+ *         a line sensor this guest cannot model (simulation/line).
+ *     { type: 'system',        data: { event: 'bus_relay' } }
  *     { type: 'error',         data: { message: string } }
  *
  * `pi_bus_request` / `pi_bus_reply` carry one bus operation each (an I2C
@@ -418,6 +424,28 @@ export class RaspberryPi3Bridge {
    * boards). The guest polls them via SENS protocol requests. */
   setSensorState(values: Record<string, number>): void {
     this._send({ type: 'pi_sensor_state', data: { values } });
+  }
+
+  /**
+   * A line-owning sensor whose MODEL runs on the far side of this socket
+   * (simulation/line, `mode: 'hosted'`).
+   *
+   * The browser says what is wired and what the canvas is doing to it; the
+   * host answers the guest's reads, and refuses what it has no model for with
+   * a `system` `sensor_refused` event. It has to be that way round on a Linux
+   * guest: a read is answered from the backend's own pin table, so a level
+   * computed in the browser would arrive after the read it belongs to.
+   */
+  sendSensorAttach(sensorType: string, pin: number, properties: Record<string, unknown>): void {
+    this._send({ type: 'pi_sensor_attach', data: { sensor_type: sensorType, pin, ...properties } });
+  }
+
+  sendSensorUpdate(pin: number, properties: Record<string, unknown>): void {
+    this._send({ type: 'pi_sensor_update', data: { pin, ...properties } });
+  }
+
+  sendSensorDetach(pin: number): void {
+    this._send({ type: 'pi_sensor_detach', data: { pin } });
   }
 
   /**

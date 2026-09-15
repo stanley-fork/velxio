@@ -96,7 +96,8 @@ export function releaseLineGap(componentId: string): void {
 }
 
 /**
- * Record a refusal for a part that does not go through requestLine.
+ * Record a refusal for a part that does not go through requestLine, or one a
+ * HOST sent back after taking the sensor.
  *
  * The line contract was built for sensors that OWN a wire and ask the board to
  * host their timing. An addressable-LED part consumes data instead of asking
@@ -123,9 +124,9 @@ function refuse(rec: LineSensorRecord, why: string, opts?: LineRequestOptions): 
  * Ask `sim` to host the sensor described by `rec`.
  *
  * Order: a `local` declaration wins (the model runs in the browser, on the
- * board's own clock); a `hosted` declaration that lists this `sensor_type`
- * goes through the legacy sensor channel; anything else is refused with the
- * board's own reason.
+ * board's own clock); a `hosted` declaration goes through the legacy sensor
+ * channel, refused here only when the host enumerated its models and this is
+ * not one of them; anything else is refused with the board's own reason.
  */
 export function requestLine(
   sim: object | null | undefined,
@@ -148,12 +149,15 @@ export function requestLine(
     return {
       mode: 'local',
       update: (props) => hub.update(rec.pin, props),
-      release: () => hub.detach(rec.pin),
+      release: () => {
+        hub.detach(rec.pin);
+        gaps.delete(gapKey(rec, opts));
+      },
     };
   }
 
   if (support.mode === 'hosted') {
-    if (!support.models.includes(rec.sensor_type)) {
+    if (support.models && !support.models.includes(rec.sensor_type)) {
       return refuse(
         rec,
         `this board's emulator models ${support.models.length ? support.models.join(', ') : 'no line sensors'}, not '${rec.sensor_type}'`,
@@ -165,13 +169,25 @@ export function requestLine(
       return refuse(rec, 'the board declares hosted line support but has no sensor channel', opts);
     }
     const { sensor_type, pin, ...props } = rec;
-    const taken = chan.registerSensor(sensor_type, pin, props);
+    // Two things a host that answers for itself needs. `line_request` because
+    // the same channel also carries I2C parts and display panels, which it
+    // must keep taking silently; `component_id` so the refusal it sends back
+    // lands on the part that asked, under the same key a refusal made here
+    // would have used.
+    const hosted: Record<string, unknown> = { ...props, line_request: true };
+    if (opts?.componentId) hosted.component_id = opts.componentId;
+    const taken = chan.registerSensor(sensor_type, pin, hosted);
     if (!taken) return refuse(rec, 'the host declined the sensor', opts);
     gaps.delete(gapKey(rec, opts));
     return {
       mode: 'hosted',
-      update: (p) => chan.updateSensor?.(pin, { ...props, ...p }),
-      release: () => chan.unregisterSensor?.(pin),
+      update: (p) => chan.updateSensor?.(pin, { ...hosted, ...p }),
+      release: () => {
+        chan.unregisterSensor?.(pin);
+        // A host may have refused this sensor after taking it; the part is
+        // gone now either way.
+        gaps.delete(gapKey(rec, opts));
+      },
     };
   }
 

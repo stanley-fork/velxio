@@ -35,6 +35,20 @@ export interface LineClock {
   us(microseconds: number): number;
 }
 
+/**
+ * What a model puts on the wire in answer to one event: nothing, one frame, or
+ * one frame per line. A single-wire sensor answers on its own line; a device
+ * that joins several lines (a keypad's held key shorts a row to a column)
+ * changes more than one of them in the same instant.
+ */
+export type LineFrames = HostEdgeFrame | readonly HostEdgeFrame[] | null;
+
+/** The frames of a {@link LineFrames}, as a list. */
+export function framesOf(out: LineFrames | void): readonly HostEdgeFrame[] {
+  if (!out) return [];
+  return 'pin' in out ? [out] : out;
+}
+
 /** A pad's resting state when nobody is talking on it. */
 export interface PadRest {
   pin: number;
@@ -58,11 +72,12 @@ export interface LineModel {
   /** Resting state of each driven pin, applied at attach and reset. */
   rest(): PadRest[];
   /**
-   * One guest pad event on a pin from `listens`. Return the frame to put on
-   * the wire, or null. Host-originated edges never arrive here: a simulator
-   * reports the GUEST's drive state, and an injected input changes none of it.
+   * One guest pad event on a pin from `listens`. Return the frame (or frames,
+   * one per line) to put on the wire, or null. Host-originated edges never
+   * arrive here: a simulator reports the GUEST's drive state, and an injected
+   * input changes none of it.
    */
-  onPad(e: PadEvent, clock: LineClock): HostEdgeFrame | null;
+  onPad(e: PadEvent, clock: LineClock): LineFrames;
   /**
    * New values from the canvas (a slider moved, a button was pressed).
    * Unknown keys are ignored.
@@ -75,7 +90,7 @@ export interface LineModel {
    * current cycle, with the same timing guarantees as an answer. `clock` is
    * there for that: a model that only stores values ignores it.
    */
-  update(props: Record<string, unknown>, clock: LineClock): HostEdgeFrame | null | void;
+  update(props: Record<string, unknown>, clock: LineClock): LineFrames | void;
   /** Forget protocol state: the board rebooted. */
   reset(): void;
 }

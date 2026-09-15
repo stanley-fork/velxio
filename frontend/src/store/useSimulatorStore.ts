@@ -992,15 +992,19 @@ class Stm32BridgeShim {
     return true;
   }
 
-  /** The STM32 worker reuses the ESP32 worker's device models but leaves out
-   *  the DHT22 / HC-SR04 sync handlers (stm32_worker.py header), so a
-   *  line-owning sensor on an STM32 has nothing to answer it. Said here, so
-   *  the part hears it instead of waiting on a silent pad. */
+  /** The line contract's declaration: whatever the bridge behind this shim
+   *  can host. The STM32 worker takes every line sensor and refuses, one by
+   *  one and with a reason, the ones it has no model for — so the answer is
+   *  the bridge's rather than a copy of its capabilities kept here. */
   lineSupport(): LineSupport {
-    return {
-      mode: 'none',
-      why: "the STM32 emulator's worker does not model single-wire sensors (no DHT22 / HC-SR04 handlers)",
-    };
+    return this.bridge.lineSupport();
+  }
+
+  /** Pads a worker-side model drives itself. The generic seam
+   *  connectDigitalInputsToMcu asks before thresholding a pin into the guest
+   *  — see simulation/partPinOwnership for the same rule on the part side. */
+  ownsPin(pin: number): boolean {
+    return this.bridge.ownsSensorPin(pin);
   }
 
   // ── Generic sensor registration (delegated to the backend QEMU worker) ──
@@ -1881,6 +1885,12 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
           set((s) => ({
             boards: s.boards.map((b) => (b.id === id ? { ...b, busRelay: true } : b)),
           }));
+        };
+        // The host took a line sensor it has no model for and said so. The
+        // refusal lands on the component that asked and the circuit check
+        // prints it at Run, exactly like one the browser made itself.
+        bridge.onSystemEvent = (event, data) => {
+          if (event === 'sensor_refused') shim.noteSensorRefused(data);
         };
         const disconnected = bridge.onDisconnected;
         bridge.onDisconnected = () => {

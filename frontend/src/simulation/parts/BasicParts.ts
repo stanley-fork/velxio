@@ -2,6 +2,7 @@ import { PartSimulationRegistry } from './PartSimulationRegistry';
 import { useElectricalStore } from '../../store/useElectricalStore';
 import { useSimulatorStore } from '../../store/useSimulatorStore';
 import { emitPropertyChange } from './partUtils';
+import { releaseLineGap, requestLine } from '../line/requestLine';
 
 /**
  * Boards whose digital inputs are driven from the SPICE solve
@@ -638,68 +639,61 @@ PartSimulationRegistry.register('biaxial-stepper', {
 // ─── Membrane Keypad ─────────────────────────────────────────────────────────
 
 /**
- * 4×4 membrane keypad — simulates the row/column matrix scanning.
- * When the Arduino drives a ROW pin LOW and a key in that row is pressed,
- * the corresponding COL pin is pulled LOW (shorted through the membrane).
+ * 4×4 membrane keypad — a line-owning part. The matrix itself (which wires a
+ * held key shorts together, and what each wire then reads) is the MODEL in
+ * simulation/line/models/matrix-keypad.ts, hosted by whichever board the
+ * keypad is wired to: in the browser on AVR and RP2040, in the QEMU worker or
+ * the in-browser engine on an ESP32. It runs there, inside the guest's own pad
+ * events, because a scan reads one wire a few instructions after driving
+ * another and nothing outside the emulator can answer that fast.
+ *
+ * The model does not care which side the sketch scans. The Keypad library
+ * drives the COLUMNS and reads the rows; plenty of hand-written sketches do
+ * the reverse. The part used to model only the second, so the library never
+ * saw a key (issue #327).
+ *
+ * This part only says where the wires land and which keys are held.
  */
+const KEYPAD_ROW_PINS = ['R1', 'R2', 'R3', 'R4'];
+const KEYPAD_COL_PINS = ['C1', 'C2', 'C3', 'C4'];
+
 PartSimulationRegistry.register('membrane-keypad', {
-  attachEvents: (element, simulator, getArduinoPinHelper) => {
-    const rowPins: (number | null)[] = [
-      getArduinoPinHelper('R1'),
-      getArduinoPinHelper('R2'),
-      getArduinoPinHelper('R3'),
-      getArduinoPinHelper('R4'),
-    ];
-    const colPins: (number | null)[] = [
-      getArduinoPinHelper('C1'),
-      getArduinoPinHelper('C2'),
-      getArduinoPinHelper('C3'),
-      getArduinoPinHelper('C4'),
-    ];
+  attachEvents: (element, simulator, getArduinoPinHelper, componentId) => {
+    const rows = KEYPAD_ROW_PINS.map((name) => getArduinoPinHelper(name) ?? -1);
+    const cols = KEYPAD_COL_PINS.map((name) => getArduinoPinHelper(name) ?? -1);
+    const anchor = [...rows, ...cols].find((pin) => pin >= 0);
+    if (anchor === undefined) return () => {};
 
-    const pressedKeys = new Set<string>(); // 'row,col'
-    const activeRows = new Set<number>(); // row indices currently driven LOW
-    const cleanups: (() => void)[] = [];
+    const answer = requestLine(
+      simulator,
+      { sensor_type: 'matrix-keypad', pin: anchor, rows, cols, pressed: [] },
+      { componentId },
+    );
 
-    const updateCol = (col: number) => {
-      const cPin = colPins[col];
-      if (cPin === null) return;
-      const colLow = [...activeRows].some((r) => pressedKeys.has(`${r},${col}`));
-      simulator.setPinState(cPin, !colLow);
+    const heldKeysMap = new Map<string, [number, number]>();
+    const publish = () => {
+      if (answer.mode !== 'none') answer.update({ pressed: [...heldKeysMap.values()] });
     };
-
-    for (let r = 0; r < 4; r++) {
-      const rPin = rowPins[r];
-      if (rPin === null) continue;
-      const row = r;
-      const c = simulator.pinManager.onPinChange(rPin, (_: number, state: boolean) => {
-        if (!state) {
-          activeRows.add(row);
-        } else {
-          activeRows.delete(row);
-        }
-        for (let col = 0; col < 4; col++) updateCol(col);
-      });
-      cleanups.push(c);
-    }
-
     const onPress = (e: Event) => {
       const { row, column } = (e as CustomEvent).detail;
-      pressedKeys.add(`${row},${column}`);
-      if (activeRows.has(row)) updateCol(column);
+      heldKeysMap.set(`${row},${column}`, [row, column]);
+      publish();
     };
     const onRelease = (e: Event) => {
       const { row, column } = (e as CustomEvent).detail;
-      pressedKeys.delete(`${row},${column}`);
-      updateCol(column);
+      heldKeysMap.delete(`${row},${column}`);
+      publish();
     };
 
     element.addEventListener('button-press', onPress);
     element.addEventListener('button-release', onRelease);
     return () => {
-      cleanups.forEach((c) => c());
       element.removeEventListener('button-press', onPress);
       element.removeEventListener('button-release', onRelease);
+      if (answer.mode !== 'none') answer.release();
+      // A refusal left a gap recorded; drop it so a rewire cannot keep
+      // reporting a keypad the user has already moved.
+      else releaseLineGap(componentId);
     };
   },
 });

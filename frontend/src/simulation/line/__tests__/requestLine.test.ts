@@ -2,7 +2,7 @@
  * The three honest answers, and that a refusal is recorded and loud.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { clearLineGaps, lineGaps, requestLine } from '../requestLine';
+import { clearLineGaps, lineGaps, recordPartGap, requestLine } from '../requestLine';
 import { LineSensorHub } from '../LineSensorHub';
 import type { LineCapable, LineHostPort } from '../LineHost';
 import { NO_TIMED_EDGES_WHY } from '../LineHost';
@@ -56,14 +56,60 @@ describe('requestLine', () => {
       updateSensor,
       unregisterSensor,
     };
-    const a = requestLine(sim, { sensor_type: 'hc-sr04', pin: 5, echo_pin: 6, distance: 12 });
+    const a = requestLine(
+      sim,
+      { sensor_type: 'hc-sr04', pin: 5, echo_pin: 6, distance: 12 },
+      { componentId: 'hc-1' },
+    );
     expect(a.mode).toBe('hosted');
-    expect(registerSensor).toHaveBeenCalledWith('hc-sr04', 5, { echo_pin: 6, distance: 12 });
+    // `line_request` and `component_id` travel with it so a host that answers
+    // for itself can refuse this exact part later.
+    expect(registerSensor).toHaveBeenCalledWith('hc-sr04', 5, {
+      echo_pin: 6,
+      distance: 12,
+      line_request: true,
+      component_id: 'hc-1',
+    });
     if (a.mode === 'none') throw new Error('unreachable');
     a.update({ distance: 40 });
-    expect(updateSensor).toHaveBeenCalledWith(5, { echo_pin: 6, distance: 40 }); // extra pins kept
+    expect(updateSensor).toHaveBeenCalledWith(
+      5,
+      expect.objectContaining({ echo_pin: 6, distance: 40 }), // extra pins kept
+    );
     a.release();
     expect(unregisterSensor).toHaveBeenCalledWith(5);
+  });
+
+  it('hosted: a host that lists nothing takes every line sensor and answers for itself', () => {
+    // The QEMU workers and the Pi bridge: the models live on the far side of a
+    // socket, so the list would be a mirror kept by hand. They take the sensor
+    // and send a refusal back for what they cannot model.
+    const registerSensor = vi.fn().mockReturnValue(true);
+    const sim = { lineSupport: () => ({ mode: 'hosted' as const }), registerSensor };
+    const a = requestLine(sim, { sensor_type: 'what-is-this', pin: 7 }, { componentId: 'x-1' });
+    expect(a.mode).toBe('hosted');
+    expect(registerSensor).toHaveBeenCalledWith('what-is-this', 7, {
+      line_request: true,
+      component_id: 'x-1',
+    });
+    expect(lineGaps()).toEqual([]);
+  });
+
+  it('hosted: a refusal the host sends back lands on the component that asked', () => {
+    const sim = {
+      lineSupport: () => ({ mode: 'hosted' as const }),
+      registerSensor: vi.fn().mockReturnValue(true),
+      unregisterSensor: vi.fn(),
+    };
+    const a = requestLine(sim, { sensor_type: 'dht22', pin: 4 }, { componentId: 'dht-1' });
+    recordPartGap({ sensorType: 'dht22', pin: 4, why: 'no model here', componentId: 'dht-1' });
+    expect(lineGaps()).toEqual([
+      { sensorType: 'dht22', pin: 4, why: 'no model here', componentId: 'dht-1' },
+    ]);
+    // Removing the part clears it: the gap outlived the request that made it.
+    if (a.mode === 'none') throw new Error('unreachable');
+    a.release();
+    expect(lineGaps()).toEqual([]);
   });
 
   it('hosted: refuses a type the host does not list, naming what it does model', () => {

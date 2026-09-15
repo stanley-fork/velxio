@@ -7,14 +7,28 @@ import {
   createLineModel,
   hasLineModel,
   lineModelTypes,
+  framesOf,
   numberField,
   registerLineModel,
   type LineClock,
+  type LineFrames,
 } from '../lineModels';
+import type { HostEdgeFrame } from '../LineTimeline';
 import { INITIAL_PAD, type PadEvent, type PadState } from '../padEvent';
 import { dht22Payload, dht22Frame, DHT22_RESPONSE_START_US } from '../models/dht22';
 import { hcsr04Frame, clampDistanceCm } from '../models/hc-sr04';
 import '../index';
+
+/**
+ * The one frame a single-line model answers with. A model may answer on
+ * several lines at once (a keypad shorts a row to a column), so the contract's
+ * return type is a list; every model here drives one wire.
+ */
+function frameOf(out: LineFrames | void): HostEdgeFrame | null {
+  const frames = framesOf(out);
+  expect(frames.length).toBeLessThanOrEqual(1);
+  return frames[0] ?? null;
+}
 
 /** A 16 MHz clock the models can be run against in isolation. */
 function clockAt(now: number, hz = 16_000_000): LineClock {
@@ -55,7 +69,7 @@ describe('lineModels registry', () => {
     const m = createLineModel({ sensor_type: 'test-blip', pin: 9 })!;
     expect(m.drives).toEqual([9]);
     const [e] = events(9, ['z']);
-    expect(m.onPad(e, clockAt(100))!.edges[0].atCycle).toBe(101);
+    expect(frameOf(m.onPad(e, clockAt(100)))!.edges[0].atCycle).toBe(101);
   });
 
   it('numberField accepts numbers and numeric strings, else the default', () => {
@@ -93,7 +107,7 @@ describe('dht22 model', () => {
     const [toHigh, toLow, release] = events(4, ['high', 'low', 'z']);
     expect(m.onPad(toHigh, clk)).toBeNull();
     expect(m.onPad(toLow, clk)).toBeNull();
-    const frame = m.onPad(release, clk);
+    const frame = frameOf(m.onPad(release, clk));
     expect(frame).not.toBeNull();
     expect(frame!.pin).toBe(4);
     expect(frame!.edges).toHaveLength(84);
@@ -106,7 +120,9 @@ describe('dht22 model', () => {
   it('ignores the master while its own frame is on the wire, then listens again', () => {
     const m = createLineModel({ sensor_type: 'dht22', pin: 4 })!;
     const [, toLow, release] = events(4, ['high', 'low', 'z']);
-    const first = m.onPad(release, clockAt(0)) ?? (m.onPad(toLow, clockAt(0)), m.onPad(release, clockAt(0)));
+    const first =
+      frameOf(m.onPad(release, clockAt(0))) ??
+      (m.onPad(toLow, clockAt(0)), frameOf(m.onPad(release, clockAt(0))));
     expect(first).not.toBeNull();
     const busy = first!.releaseAtCycle! - 1;
     expect(m.onPad(toLow, clockAt(busy))).toBeNull();
@@ -124,7 +140,7 @@ describe('dht22 model', () => {
     m.reset();
     expect(m.onPad(release, clockAt(0))).toBeNull(); // the low was forgotten
     m.onPad(toLow, clockAt(0));
-    const f = m.onPad(release, clockAt(0))!;
+    const f = frameOf(m.onPad(release, clockAt(0)))!;
     // -10.5 C / 33.3 %: first data byte 0x01, so bit 7 is '0' (26 us high).
     const us = clockAt(0).us;
     expect(f.edges[4].atCycle - f.edges[3].atCycle).toBe(us(26));
@@ -162,7 +178,7 @@ describe('hc-sr04 model', () => {
     const m = createLineModel({ sensor_type: 'hc-sr04', pin: 5, echo_pin: 6, distance: 100 })!;
     const [rise, fall] = events(5, ['high', 'low']);
     expect(m.onPad(fall, clockAt(0))).toBeNull();
-    const f = m.onPad(rise, clockAt(0))!;
+    const f = frameOf(m.onPad(rise, clockAt(0)))!;
     expect(f.pin).toBe(6);
     expect(m.onPad(rise, clockAt(f.edges[1].atCycle - 1))).toBeNull();
     expect(m.onPad(rise, clockAt(f.edges[1].atCycle + 1))).not.toBeNull();
@@ -174,11 +190,11 @@ describe('hc-sr04 model', () => {
     const m = createLineModel({ sensor_type: 'hc-sr04', pin: 5, echo_pin: 6, distance: 999 })!;
     const [rise] = events(5, ['high']);
     const us = clockAt(0).us;
-    let f = m.onPad(rise, clockAt(0))!;
+    let f = frameOf(m.onPad(rise, clockAt(0)))!;
     expect(f.edges[1].atCycle - f.edges[0].atCycle).toBe(us((400 / 17150) * 1e6));
     m.update({ distance: 10 }, clockAt(0));
     m.reset();
-    f = m.onPad(rise, clockAt(0))!;
+    f = frameOf(m.onPad(rise, clockAt(0)))!;
     expect(f.edges[1].atCycle - f.edges[0].atCycle).toBe(us((10 / 17150) * 1e6));
   });
 

@@ -17,8 +17,8 @@
  * sensor stays where it is (that is real per-device behaviour, not a list).
  *
  * NOT in here on purpose: sensors that register through the same channel but
- * only LISTEN — an ePaper panel's DC / CS / RST, a membrane keypad's rows, any
- * I2C device on a virtual 200+addr pin. The host drives those, so they must
+ * only LISTEN — an ePaper panel's DC / CS / RST, any I2C device on a virtual
+ * 200+addr pin. The host drives those, so they must
  * stay drivable.
  *
  * Adding a single-wire sensor: one entry here, plus the model itself (a part
@@ -88,8 +88,9 @@ export const SINGLE_WIRE_SENSOR_MODELS: Readonly<Record<string, SensorModelSpec>
  * single-wire, which is why a plain "is it a single-wire sensor?" test was not
  * enough:
  *
- *  - a matrix keypad's COLUMNS are driven by the model (the QEMU worker even
- *    keeps a `_keypad_cols_owned` set); the firmware scans them as inputs;
+ *  - a matrix keypad drives EVERY wire it is wired to, rows and columns alike:
+ *    the model is the membrane, and whichever side the firmware scans, the
+ *    other side is what the model answers on;
  *  - an ePaper panel drives BUSY to tell the firmware it is refreshing. Its
  *    DC / CS / RST are the opposite case — the host drives those, so they are
  *    deliberately absent.
@@ -106,7 +107,7 @@ const MODEL_OWNED_PIN_FIELDS: Readonly<Record<string, readonly string[]>> = {
       ['pin', ...Object.keys(m.extraPins ?? {})],
     ]),
   ),
-  'matrix-keypad': ['cols'],
+  'matrix-keypad': ['rows', 'cols'],
   'epaper-ssd168x': ['busy_pin'],
 };
 

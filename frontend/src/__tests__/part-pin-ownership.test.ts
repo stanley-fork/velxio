@@ -167,14 +167,14 @@ describe('one declaration of the sensors whose model owns the line', () => {
 });
 
 describe('models that own a pad without being single-wire', () => {
-  it('a matrix keypad owns its columns, not its rows', async () => {
+  it('a matrix keypad owns every wire it is wired to, rows and columns', async () => {
     const { sensorRecordOwnsPin } = await import('../simulation/sensorModels');
-    // The worker drives the columns (it keeps a `_keypad_cols_owned` set) and
-    // the firmware scans them as inputs; the rows are the firmware's outputs.
+    // The model is the membrane: the Keypad library drives the columns and
+    // reads the rows, other sketches do the reverse, and either way the model
+    // answers on the side the firmware reads. No other layer may drive those.
     const kp = { sensor_type: 'matrix-keypad', pin: 13, rows: [13, 12, 14, 27], cols: [26, 25, 33, 32] };
-    expect(sensorRecordOwnsPin(kp, 26)).toBe(true);
-    expect(sensorRecordOwnsPin(kp, 32)).toBe(true);
-    expect(sensorRecordOwnsPin(kp, 12)).toBe(false); // a row: the guest drives it
+    for (const p of [13, 12, 14, 27, 26, 25, 33, 32]) expect(sensorRecordOwnsPin(kp, p)).toBe(true);
+    expect(sensorRecordOwnsPin(kp, 4)).toBe(false); // not a keypad wire
   });
 
   it('an ePaper panel owns BUSY and nothing else', async () => {

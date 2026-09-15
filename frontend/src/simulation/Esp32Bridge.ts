@@ -42,6 +42,7 @@ import { MicroPythonSession, type MpyProgram } from './micropythonSession';
 import { getProBoard } from '../lib/proBoardRegistry';
 import { sensorRecordOwnsPin as recordOwnsPin } from './sensorModels';
 import type { LineSupport } from './line/LineHost';
+import { recordPartGap } from './line/requestLine';
 import { generateUUID } from '../utils/uuid';
 
 /**
@@ -644,6 +645,17 @@ export class Esp32Bridge {
           if (evt === 'crash') {
             this.onCrash?.(msg.data);
           }
+          // The worker took a line sensor it has no model for. It is the only
+          // side that knows, which is why the declaration above carries no
+          // list; the gap reaches the user through the circuit check.
+          if (evt === 'sensor_refused') {
+            recordPartGap({
+              sensorType: String(msg.data.sensor_type ?? ''),
+              pin: Number(msg.data.pin ?? -1),
+              why: String(msg.data.why ?? 'this board does not model it'),
+              componentId: msg.data.component_id ? String(msg.data.component_id) : undefined,
+            });
+          }
           this.onSystemEvent?.(evt, msg.data);
           break;
         }
@@ -752,24 +764,22 @@ export class Esp32Bridge {
    * the pin correctly. Same shape as the in-browser engines' ownsPin guard.
    */
   /**
-   * The line-owning sensors the backend QEMU worker models itself, timed on
-   * the guest's clock inside QEMU (esp32_worker.py `_dht22_*` / hc-sr04 sync
-   * handlers). Mirror of that file, the way esp32-signals.ts mirrors
-   * esp32_signals.py: a new worker-side model is one entry here. An overlay
-   * bridge that runs the models in the browser overrides this with the
-   * registry's own list.
+   * What this board can host under the line contract (simulation/line).
+   *
+   * No list. The models run in the QEMU worker, on the guest's own clock, and
+   * the worker is the only thing that knows which ones it has — so it takes
+   * every line sensor and sends back a `sensor_refused` for the ones it
+   * cannot model (handled above, filed as a gap the circuit check prints).
+   * This used to be a hand-kept mirror of esp32_worker.py, and a mirror is a
+   * thing that goes stale silently.
    */
-  static readonly WORKER_LINE_MODELS: readonly string[] = ['dht22', 'hc-sr04', 'ir-nec'];
-
-  /** What this board can host under the line contract (simulation/line). */
   lineSupport(): LineSupport {
-    return { mode: 'hosted', models: Esp32Bridge.WORKER_LINE_MODELS };
+    return { mode: 'hosted' };
   }
 
   ownsSensorPin(gpioPin: number): boolean {
     // ONLY the single-wire sensors own a pad. The same channel registers plenty
-    // of other things — an ePaper panel's DC/BUSY pins, a membrane keypad's
-    // rows, every I2C device on a virtual 200+addr pin — and those still need
+    // of other things — an ePaper panel's DC/BUSY pins, every I2C device on a virtual 200+addr pin — and those still need
     // the host to drive their real GPIOs. Blocking those was the difference
     // between this guard and the in-browser engines' narrow
     // SingleWireSensorHub.ownsPin, which is the behaviour to match.

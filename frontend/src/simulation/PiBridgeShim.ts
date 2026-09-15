@@ -80,6 +80,26 @@ export interface PiInstantAdapter {
   onUartRx?(bytes: number[]): void;
 }
 
+/**
+ * A browser-side host for the line sensors this board takes.
+ *
+ * The models normally run where the guest does — for a Linux guest that is
+ * the backend, because a `GPIO_IN` is answered from its pin table and a level
+ * computed here would arrive after the read it belongs to. The in-browser
+ * lane has no backend at all, so whoever runs the script there installs one
+ * of these and hosts the model itself, off the same protocol lines.
+ *
+ * The shim knows nothing about any particular sensor: it takes the record,
+ * forwards it to the backend, and hands it here too.
+ */
+export interface PiLineHost {
+  attach(record: Record<string, unknown>): void;
+  update(pin: number, props: Record<string, unknown>): void;
+  detach(pin: number): void;
+  /** Pins a hosted model drives itself, so no other layer seeds them. */
+  ownsPin(pin: number): boolean;
+}
+
 export interface PiBridgeShimOptions {
   boardId: string;
   boardKind: string;
@@ -155,6 +175,24 @@ export class PiBridgeShim {
   onPinChangeWithTime: ((pin: number, state: boolean, timeMs: number) => void) | null = null;
   /** The in-browser engine's hooks, when one is running this board. */
   instantAdapter: PiInstantAdapter | null = null;
+  private _lineHost: PiLineHost | null = null;
+  /**
+   * Where a line model runs in the in-browser lane, when one is installed.
+   *
+   * Installing one replays the records already taken: a part attaches when it
+   * MOUNTS, and the script (with it, the engine that installs the host) starts
+   * later. Without the replay a keypad dropped on the canvas before Run would
+   * be known to the backend and to nobody in the browser.
+   */
+  set lineHost(host: PiLineHost | null) {
+    this._lineHost = host;
+    if (!host) return;
+    for (const rec of this.lineSensors.values()) host.attach(rec);
+  }
+
+  get lineHost(): PiLineHost | null {
+    return this._lineHost;
+  }
 
   private readonly bridge: RaspberryPi3Bridge;
   private readonly boardState: () => PiShimBoardState | undefined;
@@ -164,6 +202,8 @@ export class PiBridgeShim {
   /** `bus:cs` of a chip-select held low by an `XC` transfer, if any. */
   private heldCs: { bus: number; cs: number } | null = null;
   private readonly oneWireMasters = new Map<number, OneWireByteMaster>();
+  /** Line-contract records this board took, keyed by the record's anchor pin. */
+  private readonly lineSensors = new Map<number, Record<string, unknown>>();
   private readonly adcWarned = new Set<number>();
   /** Bus-map sync with a relaying backend (see startBusSync). */
   private busTimer: ReturnType<typeof setInterval> | null = null;
@@ -215,6 +255,16 @@ export class PiBridgeShim {
   startBusSync(): void {
     this.stopBusSync();
     this.publishBusTopology();
+    // The guest is fresh: the backend announces `bus_relay` right after it
+    // spawns QEMU, and a part that mounted before then sent its attach into a
+    // socket that had to drop it. Say them again.
+    for (const rec of this.lineSensors.values()) {
+      (this.bridge as Partial<RaspberryPi3Bridge>).sendSensorAttach?.(
+        String(rec['sensor_type'] ?? ''),
+        Number(rec['pin']),
+        rec,
+      );
+    }
     this.busTimer = setInterval(() => this.busTick(), 250);
   }
 
@@ -331,11 +381,81 @@ export class PiBridgeShim {
 
   // ── Line-owning sensors / addressable pixels: declared refusals ────────
   /** The overlay may register a declaration per kind (a board that serves
-   *  DHT22 / HC-SR04 as hosted values); the default is a refusal with the
-   *  reason, so the part hears it and the circuit check shows it. */
+   *  DHT22 / HC-SR04 as hosted values, or a membrane keypad); the default is
+   *  a refusal with the reason, so the part hears it and the circuit check
+   *  shows it. */
   lineSupport(): LineSupport {
     return getBoardLineSupport(this.boardKind) ?? { mode: 'none', why: LINE_SUPPORT_NONE_WHY };
   }
+
+  /**
+   * The hosted line-sensor channel (simulation/line/requestLine).
+   *
+   * This class used to have no `registerSensor` at all, on purpose, so the
+   * I2C parts would take their `addI2CDevice` branch and no device was fed
+   * twice. That invariant still holds and is worth restating: every one of
+   * those parts calls `addI2CDevice?.()` inside the registerSensor branch
+   * too, and the extras it reaches for (`addI2CTransactionListener` and its
+   * remover) are optional and absent here, so the branch they now take is the
+   * one they took before plus a `registerSensor` that declines. The
+   * `line_request` guard below is what makes declining exact: only a record
+   * the line contract built is ours.
+   *
+   * WHERE THE MODEL RUNS is not this class's business. Under QEMU it runs in
+   * the backend, because a guest read is answered from the backend's own pin
+   * table and a level computed in the browser would arrive after the read it
+   * belongs to; the record is forwarded there. In the in-browser lane there
+   * is no backend at all, and whoever runs the script installs a
+   * {@link PiLineHost} to host the model itself. Both get the record; a board
+   * runs one lane or the other, so the two never drive the same wire.
+   *
+   * A type this board declared that no model here covers reaches the guest by
+   * another route entirely (the UNIHIKER's named values, pushed on their own
+   * timer), so saying yes is what stops the circuit check warning about a
+   * sensor that does work.
+   */
+  registerSensor(type: string, pin: number, props: Record<string, unknown>): boolean {
+    if (props.line_request !== true) return false;
+    const rec: Record<string, unknown> = { ...props, sensor_type: type, pin };
+    this.lineSensors.set(pin, rec);
+    (this.bridge as Partial<RaspberryPi3Bridge>).sendSensorAttach?.(type, pin, props);
+    this._lineHost?.attach(rec);
+    return true;
+  }
+
+  updateSensor(pin: number, props: Record<string, unknown>): void {
+    const rec = this.lineSensors.get(pin);
+    if (!rec) return;
+    Object.assign(rec, props);
+    (this.bridge as Partial<RaspberryPi3Bridge>).sendSensorUpdate?.(pin, props);
+    this._lineHost?.update(pin, props);
+  }
+
+  unregisterSensor(pin: number): void {
+    if (!this.lineSensors.delete(pin)) return;
+    (this.bridge as Partial<RaspberryPi3Bridge>).sendSensorDetach?.(pin);
+    this._lineHost?.detach(pin);
+  }
+
+  /** Pins a hosted line model drives, so no other layer seeds them. */
+  ownsPin(pin: number): boolean {
+    return this._lineHost?.ownsPin(pin) ?? false;
+  }
+
+  /**
+   * A refusal the host sent back after taking the sensor (`sensor_refused`).
+   * Filed against the component that asked, so the circuit check prints it
+   * exactly like a refusal made in the browser.
+   */
+  noteSensorRefused(data: Record<string, unknown>): void {
+    recordPartGap({
+      sensorType: String(data['sensor_type'] ?? ''),
+      pin: Number(data['pin'] ?? -1),
+      why: String(data['why'] ?? 'this board does not model it'),
+      componentId: data['component_id'] ? String(data['component_id']) : undefined,
+    });
+  }
+
   pixelSupport(): { mode: 'none'; why: string } {
     return { mode: 'none', why: PIXEL_SUPPORT_NONE_WHY };
   }
@@ -364,9 +484,11 @@ export class PiBridgeShim {
   }
 
   // ── I2C: the header bus, shared by the parts and both engines ──────────
-  // No `registerSensor` and no `addI2CTransactionListener` on purpose: the
-  // parts then take their `addI2CDevice` branch (the AVR / RP2040 path), so
-  // every device lives on this one I2CBusManager and nobody feeds it twice.
+  // No `addI2CTransactionListener` on purpose: the parts then take their
+  // `addI2CDevice` branch (the AVR / RP2040 path), so every device lives on
+  // this one I2CBusManager and nobody feeds it twice. `registerSensor` above
+  // exists for the line contract only and declines everything else, which
+  // keeps that true — see its comment.
   getI2CBus(_bus: 0 | 1 = 0): I2CBusManager {
     return this.i2cBusInstance;
   }
@@ -648,3 +770,4 @@ export class PiBridgeShim {
     return `SPI_DATA ${bus} ${cs} ${toHex(miso)}`;
   }
 }
+

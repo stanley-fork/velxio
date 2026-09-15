@@ -258,81 +258,81 @@ describe('hc-sr04 — attachEvents (the line contract)', () => {
 
 // ─── membrane-keypad ──────────────────────────────────────────────────────────
 
+// The matrix itself is a line model, tested against the real avr8js and
+// rp2040js engines in simulation/line/__tests__/matrixKeypad.test.ts and
+// against the real Keypad library in membrane-keypad-real-firmware.test.ts.
+// What belongs here is the part: which wires it declares and what it sends.
 describe('membrane-keypad — attachEvents', () => {
-  it('registers onPinChange for each connected row and button-press/release', () => {
+  const ALL_PINS = { R1: 2, R2: 3, R3: 4, R4: 5, C1: 6, C2: 7, C3: 8, C4: 9 };
+
+  function attach(pins: Record<string, number>) {
     const logic = PartSimulationRegistry.get('membrane-keypad');
     const el = makeElement();
-    const sim = makeSimulator();
-    logic!.attachEvents!(
-      el,
-      sim as any,
-      pinMap({ R1: 2, R2: 3, R3: 4, R4: 5, C1: 6, C2: 7, C3: 8, C4: 9 }),
-    );
+    const sim = {
+      ...makeSimulator(),
+      lineSupport: () => ({ mode: 'hosted' as const }),
+      registerSensor: vi.fn().mockReturnValue(true),
+      updateSensor: vi.fn(),
+      unregisterSensor: vi.fn(),
+    };
+    const cleanup = logic!.attachEvents!(el, sim as any, pinMap(pins), 'keypad-1');
+    return { el, sim, cleanup };
+  }
 
-    // 4 row pin change listeners
-    expect(sim.pinManager.onPinChange).toHaveBeenCalledTimes(4);
-    // button-press and button-release listeners
-    expect(el.addEventListener).toHaveBeenCalledWith('button-press', expect.any(Function));
-    expect(el.addEventListener).toHaveBeenCalledWith('button-release', expect.any(Function));
-  });
-
-  it('drives COL LOW when ROW is LOW and matching key is pressed', () => {
-    const logic = PartSimulationRegistry.get('membrane-keypad');
-    const el = makeElement();
-    const sim = makeSimulator();
-    logic!.attachEvents!(
-      el,
-      sim as any,
-      pinMap({ R1: 2, R2: 3, R3: 4, R4: 5, C1: 6, C2: 7, C3: 8, C4: 9 }),
-    );
-
-    // Simulate key '1' press (row=0, col=0) via button-press event
-    const pressHandler = (el.addEventListener as ReturnType<typeof vi.fn>).mock.calls.find(
-      ([ev]: [string]) => ev === 'button-press',
+  const handler = (el: HTMLElement, name: string) =>
+    (el.addEventListener as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([ev]: [string]) => ev === name,
     )![1] as (e: Event) => void;
-    pressHandler(new CustomEvent('button-press', { detail: { key: '1', row: 0, column: 0 } }));
 
-    // Simulate row R1 going LOW (scanned by Arduino)
-    const rowCb = (sim.pinManager.onPinChange as ReturnType<typeof vi.fn>).mock.calls.find(
-      ([pin]: [number]) => pin === 2, // R1
-    )![1] as (_: number, state: boolean) => void;
-    rowCb(2, false); // R1 LOW
-
-    // C1 (pin 6) should be driven LOW
-    expect(sim.setPinState).toHaveBeenCalledWith(6, false);
+  it('asks the board for the matrix, naming every wire in order', () => {
+    const { sim } = attach(ALL_PINS);
+    expect(sim.registerSensor).toHaveBeenCalledWith(
+      'matrix-keypad',
+      2, // the first wired pin is the record's anchor
+      expect.objectContaining({ rows: [2, 3, 4, 5], cols: [6, 7, 8, 9] }),
+    );
   });
 
-  it('releases COL HIGH when ROW returns HIGH', () => {
-    const logic = PartSimulationRegistry.get('membrane-keypad');
-    const el = makeElement();
-    const sim = makeSimulator();
-    logic!.attachEvents!(
-      el,
-      sim as any,
-      pinMap({ R1: 2, R2: 3, R3: 4, R4: 5, C1: 6, C2: 7, C3: 8, C4: 9 }),
+  it('an unwired row or column is declared as such, not skipped out of position', () => {
+    // The model indexes rows and columns by position: dropping R2 would make
+    // every key below it read one row too high.
+    const { sim } = attach({ R1: 2, R3: 4, R4: 5, C1: 6, C2: 7, C3: 8, C4: 9 });
+    expect(sim.registerSensor).toHaveBeenCalledWith(
+      'matrix-keypad',
+      2,
+      expect.objectContaining({ rows: [2, -1, 4, 5], cols: [6, 7, 8, 9] }),
     );
-
-    // Scan R1 low (no keys pressed)
-    const rowCb = (sim.pinManager.onPinChange as ReturnType<typeof vi.fn>).mock.calls.find(
-      ([pin]: [number]) => pin === 2,
-    )![1] as (_: number, state: boolean) => void;
-    rowCb(2, false); // R1 LOW
-    rowCb(2, true); // R1 HIGH
-
-    // All cols must have been set HIGH at some point
-    expect(sim.setPinState).toHaveBeenCalledWith(6, true);
   });
 
-  it('cleans up all listeners on cleanup', () => {
-    const logic = PartSimulationRegistry.get('membrane-keypad');
-    const el = makeElement();
-    const sim = makeSimulator();
-    const cleanup = logic!.attachEvents!(
-      el,
-      sim as any,
-      pinMap({ R1: 2, R2: 3, R3: 4, R4: 5, C1: 6, C2: 7, C3: 8, C4: 9 }),
+  it('sends the held keys, and only those, on press and release', () => {
+    const { el, sim } = attach(ALL_PINS);
+    handler(el, 'button-press')(
+      new CustomEvent('button-press', { detail: { key: '1', row: 0, column: 0 } }),
     );
+    expect(sim.updateSensor).toHaveBeenLastCalledWith(2, expect.objectContaining({ pressed: [[0, 0]] }));
+    handler(el, 'button-press')(
+      new CustomEvent('button-press', { detail: { key: '6', row: 1, column: 2 } }),
+    );
+    expect(sim.updateSensor).toHaveBeenLastCalledWith(
+      2,
+      expect.objectContaining({ pressed: [[0, 0], [1, 2]] }),
+    );
+    handler(el, 'button-release')(
+      new CustomEvent('button-release', { detail: { key: '1', row: 0, column: 0 } }),
+    );
+    expect(sim.updateSensor).toHaveBeenLastCalledWith(2, expect.objectContaining({ pressed: [[1, 2]] }));
+  });
+
+  it('asks for nothing when no wire reaches a board', () => {
+    const { sim, el } = attach({});
+    expect(sim.registerSensor).not.toHaveBeenCalled();
+    expect(el.addEventListener).not.toHaveBeenCalledWith('button-press', expect.any(Function));
+  });
+
+  it('releases the line and its listeners on cleanup', () => {
+    const { el, sim, cleanup } = attach(ALL_PINS);
     cleanup();
+    expect(sim.unregisterSensor).toHaveBeenCalledWith(2);
     expect(el.removeEventListener).toHaveBeenCalledWith('button-press', expect.any(Function));
     expect(el.removeEventListener).toHaveBeenCalledWith('button-release', expect.any(Function));
   });

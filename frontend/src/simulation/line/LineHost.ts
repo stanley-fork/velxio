@@ -41,8 +41,19 @@ export interface LineHostPort extends EdgeSink {
 export type LineSupport =
   /** This simulator implements {@link LineHostPort}; the models run here. */
   | { mode: 'local' }
-  /** The models run elsewhere (a backend worker, an engine's own hub); these `sensor_type`s are served. */
-  | { mode: 'hosted'; models: readonly string[] }
+  /**
+   * The models run elsewhere: a backend worker, an engine's own hub.
+   *
+   * `models` lists what that host serves, and is for a host this side can
+   * enumerate honestly — an in-browser engine shares this registry, so it
+   * answers with `lineModelTypes()`. A host on the far side of a socket does
+   * NOT get a copy of its list here: it takes every line sensor and reports
+   * the ones it has no model for (see `recordPartGap`), so the truth stays in
+   * the file that implements them. A mirror kept by hand is how the ESP32
+   * worker's keypad model spent months invisible to half the boards that
+   * could run it.
+   */
+  | { mode: 'hosted'; models?: readonly string[] }
   /** Cannot host one. `why` is shown to the user. */
   | { mode: 'none'; why: string };
 

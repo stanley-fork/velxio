@@ -11,5 +11,10 @@ export * from './lineModels';
 export * from './LineHost';
 export { LineSensorHub } from './LineSensorHub';
 export * from './requestLine';
+// The membrane keypad's circuit, on its own: a host with no guest clock (a
+// Linux guest reading its pins over a link) cannot run the hub, but it can
+// still solve the matrix. See models/matrix-keypad.
+export { heldKeys, solveKeypad, wireList } from './models/matrix-keypad';
+export type { WirePad, WireTarget } from './models/matrix-keypad';
 
 import './models';
