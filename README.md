@@ -45,7 +45,7 @@ These companies have supported Velxio and provided their hardware so their compo
   <a href="https://pimoroni.com/"><img src="docs/partners/pimoroni.png" alt="Pimoroni" width="150"></a>
 </p>
 
-Their hardware is in the catalog today: the M5Stack Cardputer and Core, the Pimoroni Badger 2350 and Galactic Unicorn, the Seeed Studio XIAO family and Grove modules, the DFRobot UNIHIKER and Gravity sensors, and the whole Espressif ESP32 line up to the ESP32-C6.
+Their hardware is in the catalog today: the M5Stack Cardputer and Core, the Pimoroni Badger 2350 and Galactic Unicorn, the Seeed Studio XIAO family and Grove modules, the DFRobot UNIHIKER and Gravity sensors, and the whole Espressif ESP32 line up to the ESP32-C6. Of these, the M5Stack, Pimoroni and DFRobot boards, the Seeed XIAO Sense, C6 and RP2040, and the ESP32-C6 DevKit are only available online at velxio.dev; the self-hosted image ships the Arduino, Raspberry Pi Pico and ESP32 families (see [Supported Boards](#supported-boards)).
 
 ---
 
@@ -69,6 +69,10 @@ docker run -d \
 
 Then open <http://localhost:3080>. Tail logs any time with
 `docker logs -f velxio`.
+
+> The self-hosted image runs the Arduino, Raspberry Pi Pico and ESP32
+> families. STM32, Raspberry Pi Linux, the ESP32-C6 and the partner boards
+> are only available online at velxio.dev.
 
 The named volumes are what make compile times reasonable on subsequent
 runs — without them, every container restart wipes the ESP-IDF build
@@ -159,11 +163,11 @@ Boards run in one of two places. **Browser boards** (AVR, RP2040) are emulated e
 | **ESP32** | ESP32 DevKit V1, DevKit-C V4, ESP32-CAM, Wemos Lolin32 Lite | Arduino C++, MicroPython, ESP-IDF | Self-hosted (QEMU) and velxio.dev |
 | **ESP32-S3** | ESP32-S3 DevKit, XIAO ESP32-S3, Arduino Nano ESP32 | Arduino C++, MicroPython, ESP-IDF | Self-hosted (QEMU) and velxio.dev |
 | **ESP32-C3** | ESP32-C3 DevKit, XIAO ESP32-C3, ESP32-C3 SuperMini | Arduino C++, MicroPython, ESP-IDF | Self-hosted (QEMU) and velxio.dev |
-| **STM32** | Blue Pill (F103C8 / F103CB), Black Pill (F411CE / F401CE), STM32F4 Discovery, Olimex STM32-H405, Netduino 2 / Plus 2 | Arduino C++ | velxio.dev (paid plan) or Velxio Desktop |
-| **Raspberry Pi (Linux)** | Zero, 1B+, 2B, 3B, 4B, 5 — boot a real Linux and run Python in a full terminal | Python | velxio.dev (paid plan) or Velxio Desktop |
-| **Branded boards** | M5Stack Cardputer ADV and Core, Pimoroni Badger 2350, Galactic Unicorn and Pico Plus 2 W, Seeed XIAO ESP32S3 Sense, XIAO ESP32C6 and XIAO RP2040, Espressif ESP32-C6 DevKit, DFRobot UNIHIKER M10 | Arduino C++, MicroPython, ESP-IDF | velxio.dev only (free plan; UNIHIKER needs a paid plan) |
+| **STM32** | Blue Pill (F103C8 / F103CB), Black Pill (F411CE / F401CE), STM32F4 Discovery, Olimex STM32-H405, Netduino 2 / Plus 2 | Arduino C++ | Online only: velxio.dev (paid plan) or Velxio Desktop, not in the self-hosted image |
+| **Raspberry Pi (Linux)** | Zero, 1B+, 2B, 3B, 4B, 5 — boot a real Linux and run Python in a full terminal | Python | Online only: velxio.dev (paid plan) or Velxio Desktop, not in the self-hosted image |
+| **Branded boards** | M5Stack Cardputer ADV and Core, Pimoroni Badger 2350, Galactic Unicorn and Pico Plus 2 W, Seeed XIAO ESP32S3 Sense, XIAO ESP32C6 and XIAO RP2040, Espressif ESP32-C6 DevKit, DFRobot UNIHIKER M10 | Arduino C++, MicroPython, ESP-IDF | Online only: velxio.dev (free plan; UNIHIKER needs a paid plan), not in the self-hosted image |
 
-The self-hosted image runs the first five families out of the box. STM32 and Raspberry Pi Linux are hosted features (their emulators need licensed binaries and multi-GB boot images). The branded boards boot their factory firmware (the M5 launcher, BadgeOS) and live in the hosted catalog only; the OSS picker shows them as links to the online editor. The full list with pinouts, languages and quirks is in the [boards reference](https://velxio.dev/docs/boards/overview/).
+The self-hosted image runs the first five families out of the box. Everything else is only available online at velxio.dev: STM32 and Raspberry Pi Linux need licensed emulator binaries and multi-GB boot images (they also run in Velxio Desktop with a paid plan), and the branded boards boot their factory firmware (the M5 launcher, BadgeOS) from the hosted catalog. The OSS picker shows these boards as links to the online editor. The full list with pinouts, languages and quirks is in the [boards reference](https://velxio.dev/docs/boards/overview/).
 
 ---
 
@@ -234,8 +238,10 @@ automatically.
 > Docker image. Manual installs get the browser-side boards out of the
 > box — **for ESP32 you'll want Docker** (or follow
 > [docs/ESP32_EMULATION.md](docs/ESP32_EMULATION.md) to wire up the QEMU
-> binaries by hand). STM32 and Raspberry Pi Linux emulation are hosted
-> features — use them on velxio.dev or in Velxio Desktop.
+> binaries by hand). STM32, Raspberry Pi Linux, the ESP32-C6 and the
+> partner boards are only available online at velxio.dev (STM32 and Pi
+> also in Velxio Desktop with a paid plan); the self-hosted image does
+> not ship them.
 
 ---
 
