@@ -377,14 +377,17 @@ PartSimulationRegistry.register('servo', {
         (avrSimulator as any).getCurrentCycles() >= 0;
 
       if (pinManager && !hasCpuCycles) {
-        // ESP32 Servo.h uses 50Hz PWM with pulse 544-2400µs
-        // dutyCycle here is 0.0-1.0 (fraction of PWM period = 20ms)
-        // 544µs = 2.72%, 2400µs = 12.0%
-        const MIN_DC = MIN_PULSE_US / 20000; // 0.0272
-        const MAX_DC = MAX_PULSE_US / 20000; // 0.12
-        const unsubscribe = pinManager.onPwmChange(pinSIG, (_pin, dutyCycle) => {
-          if (dutyCycle < 0.01 || dutyCycle > 0.2) return; // ignore out-of-range
-          const angle = Math.round(((dutyCycle - MIN_DC) / (MAX_DC - MIN_DC)) * 180);
+        // A servo reads the PULSE WIDTH, not the duty cycle: the same 1.5 ms is
+        // 7.5 % at 50 Hz and 49.5 % at 330 Hz. The engine reports the frequency
+        // alongside the duty when it knows it (ESP32Servo runs servos at 50, 200
+        // and 330 Hz); without one, assume the 50 Hz every Servo library defaults to.
+        const DEFAULT_SERVO_HZ = 50;
+        const unsubscribe = pinManager.onPwmChange(pinSIG, (pin, dutyCycle) => {
+          const freqHz = pinManager.getPwmFreq(pin) || DEFAULT_SERVO_HZ;
+          const pulseUs = (dutyCycle * 1e6) / freqHz;
+          // Outside what any RC servo accepts: a disabled output or plain PWM.
+          if (pulseUs < 200 || pulseUs > 4000) return;
+          const angle = Math.round(((pulseUs - MIN_PULSE_US) / (MAX_PULSE_US - MIN_PULSE_US)) * 180);
           el.angle = Math.max(0, Math.min(180, angle));
         });
         return () => {

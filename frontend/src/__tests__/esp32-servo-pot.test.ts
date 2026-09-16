@@ -133,6 +133,8 @@ function makeEsp32Shim() {
         }),
       updatePwm: vi.fn(),
       triggerPinChange: vi.fn(),
+      // The real PinManager's side table: 0 until an engine reports a frequency.
+      getPwmFreq: vi.fn().mockReturnValue(0),
     },
     setPinState: vi.fn(),
     isRunning: vi.fn().mockReturnValue(true),
@@ -732,3 +734,48 @@ describe('LEDC polling — data format', () => {
   });
 });
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Servo pulse width follows the PWM frequency the engine reports
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('ESP32 servo: pulse width = duty / frequency', () => {
+  const logic = () => PartSimulationRegistry.get('servo')!;
+
+  function attachAt(freqHz: number) {
+    const shim = makeEsp32Shim();
+    (shim.pinManager.getPwmFreq as ReturnType<typeof vi.fn>).mockReturnValue(freqHz);
+    const el = makeElement() as any;
+    logic().attachEvents!(el, shim as any, pinMap({ PWM: 14 }), `servo-${freqHz}`);
+    return { el, cb: shim._getPwmCallback()! };
+  }
+
+  it('reads a 1500 us pulse at 330 Hz (49.5 % duty) as mid travel', () => {
+    // ESP32Servo's Multiple-Servo example runs servo3 at 330 Hz.
+    const { el, cb } = attachAt(330);
+    cb(14, 1500e-6 * 330);
+    expect(el.angle).toBe(Math.round(((1500 - 544) / (2400 - 544)) * 180));
+  });
+
+  it('reads a 2400 us pulse at 200 Hz as full travel', () => {
+    const { el, cb } = attachAt(200);
+    cb(14, 2400e-6 * 200);
+    expect(el.angle).toBe(180);
+  });
+
+  it('assumes 50 Hz when the engine never reported a frequency', () => {
+    const { el, cb } = attachAt(0);
+    cb(14, 1500 / 20000);
+    expect(el.angle).toBe(Math.round(((1500 - 544) / (2400 - 544)) * 180));
+  });
+
+  it('ignores pulses no RC servo accepts', () => {
+    const { el, cb } = attachAt(1000);
+    cb(14, 0.5); // 500 us at 1 kHz: a valid pulse, sets the angle
+    const settled = el.angle;
+    cb(14, 0.1); // 100 us: below any servo's range
+    expect(el.angle).toBe(settled);
+    cb(14, 0.0); // output off
+    expect(el.angle).toBe(settled);
+  });
+});

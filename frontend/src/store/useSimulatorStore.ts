@@ -834,20 +834,31 @@ function makeLedcDutyHandler(boardId: string) {
     const boardPm = pinManagerMap.get(boardId);
     const router = signalRouterMap.get(boardId);
     if (!boardPm || !router) return;
-    const dutyCycle = duty.duty_pct / 100;
     const signalId = ledcSignalForChannel(duty.channel);
-    const pins = router.pinsForSignal(signalId);
     // Multi-pin routing: one LEDC channel CAN legally drive multiple
     // pins via the GPIO Matrix (rare but documented in TRM). Iterate
-    // all of them — each gets its own updatePwm call.
-    for (const pin of pins) {
-      // The carrier frequency rides alongside, when the engine knows it: a
-      // speaker listener reads it back with getPwmFreq to play the sketch's
-      // actual note rather than a canned one.
-      if (duty.freq_hz && duty.freq_hz > 0) boardPm.setPwmFreq(pin, duty.freq_hz);
-      boardPm.updatePwm(pin, dutyCycle);
+    // all of them — each gets its own update.
+    for (const pin of router.pinsForSignal(signalId)) {
+      applyPinPwm(boardPm, pin, duty.duty_pct, duty.freq_hz);
     }
   };
+}
+
+/** PWM an engine already resolved to a pin (Esp32Bridge.onPinPwm). */
+function makePinPwmHandler(boardId: string) {
+  return (pwm: { gpio: number; duty_pct: number; freq_hz?: number }) => {
+    const boardPm = pinManagerMap.get(boardId);
+    if (boardPm) applyPinPwm(boardPm, pwm.gpio, pwm.duty_pct, pwm.freq_hz);
+  };
+}
+
+/** The one place a PWM observation reaches a pin, whichever path it came by. */
+function applyPinPwm(pm: PinManager, pin: number, dutyPct: number, freqHz?: number): void {
+  // The frequency rides alongside, when the engine knows it: a speaker reads it
+  // back with getPwmFreq to play the sketch's actual note, and a servo to turn
+  // the duty into a real pulse width.
+  if (freqHz && freqHz > 0) pm.setPwmFreq(pin, freqHz);
+  pm.updatePwm(pin, dutyPct / 100);
 }
 
 /**
@@ -1666,6 +1677,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
     };
     signalRouterMap.set(id, new SignalRouter());
     bridge.onLedcDuty = makeLedcDutyHandler(id);
+    bridge.onPinPwm = makePinPwmHandler(id);
     bridge.onGpioRouting = makeGpioRoutingHandler(id);
     bridge.onGpioRoutingClear = makeGpioRoutingClearHandler(id);
     bridge.onPinPull = makePinPullHandler(id);
@@ -3144,6 +3156,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         };
         signalRouterMap.set(boardId, new SignalRouter());
         bridge.onLedcDuty = makeLedcDutyHandler(boardId);
+        bridge.onPinPwm = makePinPwmHandler(boardId);
         bridge.onGpioRouting = makeGpioRoutingHandler(boardId);
         bridge.onGpioRoutingClear = makeGpioRoutingClearHandler(boardId);
         bridge.onPinPull = makePinPullHandler(boardId);
@@ -3272,6 +3285,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         };
         signalRouterMap.set(boardId, new SignalRouter());
         bridge.onLedcDuty = makeLedcDutyHandler(boardId);
+        bridge.onPinPwm = makePinPwmHandler(boardId);
         bridge.onGpioRouting = makeGpioRoutingHandler(boardId);
         bridge.onGpioRoutingClear = makeGpioRoutingClearHandler(boardId);
         bridge.onPinPull = makePinPullHandler(boardId);

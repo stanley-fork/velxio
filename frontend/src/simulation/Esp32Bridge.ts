@@ -150,6 +150,18 @@ export interface LedcDuty {
    *  spent months stuck on 660 Hz. */
   freq_hz?: number;
 }
+/** PWM observed on a PIN, already resolved through the GPIO matrix by the
+ *  engine. Engine- and peripheral-agnostic: an engine that knows which pad
+ *  carries a PWM signal (LEDC, MCPWM, anything else that makes one) reports the
+ *  pin directly, so the frontend needs no mirror of the matrix for it. */
+export interface PinPwm {
+  gpio: number;
+  duty_pct: number;
+  /** Repetition rate in Hz, when the engine knows it. A servo reads its pulse
+   *  width from duty and frequency together: ESP32Servo drives servos at 50,
+   *  200 or 330 Hz, and a fixed 20 ms period misreads every one but the first. */
+  freq_hz?: number;
+}
 /** GPIO Matrix routing event — `gpio_out_sel[gpio]` was set to
  *  `signal_id`.  Maintained by the backend SignalRouter; emitted on
  *  every observed change so the frontend mirror stays in lock-step. */
@@ -238,6 +250,9 @@ export class Esp32Bridge {
   /** Pin is no longer routed to any peripheral (firmware reset the
    *  matrix entry). */
   onGpioRoutingClear: ((gpio: number) => void) | null = null;
+  /** PWM on a pin, resolved by the engine (see PinPwm). Wired by the store to
+   *  `makePinPwmHandler`. */
+  onPinPwm: ((pwm: PinPwm) => void) | null = null;
   /**
    * A decoded WS2812 frame from the engine's RMT peripheral.
    *
