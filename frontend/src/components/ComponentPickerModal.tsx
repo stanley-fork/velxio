@@ -36,6 +36,18 @@ import { isProBoardKind } from '../lib/proBoardGate';
 import { matchesSearch } from '../utils/searchMatch';
 import { boardSearchKeywords } from '../data/componentSearchKeywords';
 import {
+  SUBCATEGORIES,
+  categoryKey,
+  categoryRank,
+  normalizeCategory,
+  subcategoryDefsInDisplayOrder,
+  subcategoryKey,
+  subcategoryLabel,
+  subcategoryOf,
+  subcategoryRank,
+} from '../data/componentTaxonomy';
+import { ComponentTree, type TreeNode } from './ComponentTree';
+import {
   getProBoard,
   listProBoards,
   subscribeProBoards,
@@ -115,7 +127,7 @@ const BOARD_DESCRIPTIONS: Record<BoardKind, string> = {
  * NOT deleted from components-metadata.json, because saved projects that
  * already contain one still need the element to render.
  */
-const UNSIMULATED_BOARD_SHELLS = new Set(['nano-rp2040-connect']);
+const UNSIMULATED_BOARD_SHELLS = new Set(['nano-rp2040-connect', 'esp32-devkit-v1']);
 
 /**
  * Parts created only by canvas gestures, never placed from the picker. The
@@ -126,33 +138,89 @@ const UNSIMULATED_BOARD_SHELLS = new Set(['nano-rp2040-connect']);
  */
 const GESTURE_ONLY_COMPONENTS = new Set(['junction']);
 
-/**
- * Maker-first category order for the picker grid and the category filter.
- * Velxio's audience is hobbyist-heavy: everyday digital parts (sensors,
- * LEDs/outputs, displays, buttons) lead, while diodes/resistors/capacitors
- * ('passive'), transistors/op-amps/instruments ('analog') and logic gates
- * sink to the end of the list.
- */
-const CATEGORY_ORDER: string[] = [
-  'sensors',
-  'output',
-  'displays',
-  'input',
-  'motors',
-  'communication',
-  'electromech',
-  'boards',
-  'other',
-  'passive',
-  'analog',
-  'logic',
-];
+// ── Recently used ───────────────────────────────────────────────────────────
+// In an editor the same handful of parts get placed over and over, so the
+// shortest path to a part is usually "the one I used last time", not any
+// taxonomy. Stored per browser; a private window or blocked site data simply
+// yields an empty list, which is why every access is guarded.
+const RECENTS_KEY = 'velxio-picker-recents';
+const RECENTS_MAX = 12;
 
-function categoryRank(category: string): number {
-  const i = CATEGORY_ORDER.indexOf(category);
-  // Unknown/future categories land before the passive tail, not after it.
-  return i === -1 ? CATEGORY_ORDER.indexOf('other') : i;
+function loadRecents(): string[] {
+  try {
+    const raw = localStorage.getItem(RECENTS_KEY);
+    const list: unknown = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(list)) return [];
+    return list.filter((x): x is string => typeof x === 'string').slice(0, RECENTS_MAX);
+  } catch {
+    return [];
+  }
 }
+
+function pushRecent(id: string): string[] {
+  const next = [id, ...loadRecents().filter((x) => x !== id)].slice(0, RECENTS_MAX);
+  try {
+    localStorage.setItem(RECENTS_KEY, JSON.stringify(next));
+  } catch {
+    /* storage unavailable - the list just doesn't persist */
+  }
+  return next;
+}
+
+// ── Deferred thumbnails ─────────────────────────────────────────────────────
+/**
+ * True once the card has come within `IN_VIEW_MARGIN` of the viewport, and
+ * true forever after.
+ *
+ * Every card preview is a REAL custom element built with
+ * `document.createElement(tagName)` — upgrading 400+ of them on open cost
+ * most of a second before the modal painted. Building each one only when its
+ * card approaches the viewport moves that work off the open path; keeping it
+ * once built means scrolling back up never rebuilds (and never re-flashes) a
+ * preview.
+ */
+const IN_VIEW_MARGIN = '600px';
+
+function useNearViewport(ref: React.RefObject<HTMLElement | null>): boolean {
+  const [near, setNear] = useState(false);
+  useEffect(() => {
+    if (near) return;
+    const el = ref.current;
+    if (!el) return;
+    // No IntersectionObserver (jsdom in the unit tests, very old browsers):
+    // fall back to building every preview eagerly, i.e. the old behaviour.
+    if (typeof IntersectionObserver === 'undefined') {
+      setNear(true);
+      return;
+    }
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setNear(true);
+          io.disconnect();
+        }
+      },
+      { rootMargin: IN_VIEW_MARGIN },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [ref, near]);
+  return near;
+}
+
+/** Selection keys for the rail entries that are not a category. */
+const KEY_ALL = 'all';
+const KEY_BOARDS = 'boards';
+const KEY_RECENT = 'recent';
+
+/** Does a part belong to the branch the rail currently has selected? */
+function inSelection(component: ComponentMetadata, selectedKey: string): boolean {
+  if (!selectedKey.startsWith('cat:')) return true;
+  const [cat, sub] = selectedKey.slice(4).split('/');
+  if (normalizeCategory(component.category) !== cat) return false;
+  return !sub || subcategoryOf(component) === sub;
+}
+
 
 const ALL_BOARDS: BoardKind[] = [
   'arduino-uno',
@@ -195,9 +263,12 @@ export const ComponentPickerModal: React.FC<ComponentPickerModalProps> = ({
 }) => {
   const { t } = useTranslation();
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<ComponentCategory | 'all' | 'boards'>(
-    'all',
-  );
+  // Which branch of the left rail is active. 'all' / 'boards' / 'recent', or
+  // 'cat:<category>' / 'cat:<category>/<subgroup>'.
+  const [selectedKey, setSelectedKey] = useState<string>(KEY_ALL);
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(() => new Set<string>());
+  const [recentIds, setRecentIds] = useState<string[]>(loadRecents);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const [registry] = useState(() => ComponentRegistry.getInstance());
   // Late-overlay registrations must re-render an already-mounted picker:
   // the @pro import is dynamic, so boards/components can register AFTER the
@@ -272,15 +343,13 @@ export const ComponentPickerModal: React.FC<ComponentPickerModalProps> = ({
     loadRegistry();
   }, [registry]);
 
-  // Filter components based on search and category
-  const filteredComponents = useMemo(() => {
+  // Every part the current SEARCH admits, before the rail narrows it. The
+  // tree counts are computed from this, so they track the query: type "temp"
+  // and each branch reports how many of its parts survive.
+  const baseComponents = useMemo(() => {
     if (isLoading) return [];
 
     let components = searchQuery ? registry.search(searchQuery) : registry.getAllComponents();
-
-    if (selectedCategory !== 'all') {
-      components = components.filter((c) => c.category === selectedCategory);
-    }
 
     // Registry entries that ARE boards (the injected Raspberry Pi family)
     // must never render as component cards: the boards row above already
@@ -311,7 +380,13 @@ export const ComponentPickerModal: React.FC<ComponentPickerModalProps> = ({
 
     return components;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchQuery, selectedCategory, registry, isLoading, registryVersion, proBoardsVersion]);
+  }, [searchQuery, registry, isLoading, registryVersion, proBoardsVersion]);
+
+  /** The parts actually on screen: the search set narrowed by the rail. */
+  const filteredComponents = useMemo(
+    () => baseComponents.filter((c) => inSelection(c, selectedKey)),
+    [baseComponents, selectedKey],
+  );
 
 
   // Boards list: static OSS kinds + overlay-registered boards (proBoardRegistry).
@@ -325,23 +400,308 @@ export const ComponentPickerModal: React.FC<ComponentPickerModalProps> = ({
   // (the hosted overlay merges it in) — same contract as VISIBLE_BOARD_ADS.
   const visibleComponentAds = useMemo(() => {
     if (isLoading) return [];
+    // An ad has no metadata object, so it is matched on its own category
+    // against whichever branch the rail has selected.
+    const selectedCat = selectedKey.startsWith('cat:')
+      ? selectedKey.slice(4).split('/')[0]
+      : null;
     return ONLINE_ONLY_COMPONENT_ADS.filter(
       (ad) =>
         !registry.getById(ad.id) &&
         !isOnlineOnlyAdSuppressed(ad.id) &&
-        (selectedCategory === 'all' || ad.category === selectedCategory) &&
+        (selectedKey === KEY_ALL || (!!selectedCat && normalizeCategory(ad.category) === selectedCat)) &&
         matchesSearch(searchQuery, [ad.label]),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [registry, isLoading, searchQuery, selectedCategory, registryVersion, proBoardsVersion]);
+  }, [registry, isLoading, searchQuery, selectedKey, registryVersion, proBoardsVersion]);
 
-  // Get available categories — same maker-first order as the grid.
-  const categories = useMemo(() => {
+  /** Parts placed recently, in recency order, honouring the active search. */
+  const recentComponents = useMemo(() => {
     if (isLoading) return [];
-    return [...registry.getCategories()].sort(
-      (a, b) => categoryRank(a) - categoryRank(b),
-    );
-  }, [registry, isLoading]);
+    const admitted = new Set(baseComponents.map((c) => c.id));
+    const out: ComponentMetadata[] = [];
+    for (const id of recentIds) {
+      const hit = registry.getById(id);
+      if (hit && admitted.has(hit.id)) out.push(hit);
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recentIds, baseComponents, registry, isLoading, registryVersion]);
+
+  /** Boards the current search admits (the rail's Boards branch). */
+  const matchingBoards = useMemo(
+    () =>
+      allBoards.filter((k) =>
+        matchesSearch(searchQuery, [BOARD_KIND_LABELS[k], k, boardSearchKeywords(k)]),
+      ),
+    [allBoards, searchQuery],
+  );
+
+  const matchingBoardAds = useMemo(
+    () => visibleBoardAds().filter((ad) => matchesSearch(searchQuery, [ad.label])),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [searchQuery, proBoardsVersion],
+  );
+
+  /**
+   * The rail's nodes, counted from the search set.
+   *
+   * Counts come from `baseComponents` rather than from the registry totals so
+   * they answer the question the user is actually asking while typing: how
+   * many matches are in this branch. Zero-count branches are dropped by the
+   * tree itself, which is what keeps the rail short during a search.
+   *
+   * Built from the components PRESENT, never from a fixed list of categories:
+   * the old dropdown was memoised on load alone, so every category that only
+   * a runtime overlay introduced (Communication, and 20-odd Grove parts with
+   * it) never appeared and could not be filtered to at all.
+   */
+  const treeNodes = useMemo<TreeNode[]>(() => {
+    if (isLoading) return [];
+
+    const counts = new Map<string, Map<string, number>>();
+    for (const c of baseComponents) {
+      const cat = normalizeCategory(c.category);
+      const sub = subcategoryOf(c);
+      let subCounts = counts.get(cat);
+      if (!subCounts) {
+        subCounts = new Map();
+        counts.set(cat, subCounts);
+      }
+      subCounts.set(sub, (subCounts.get(sub) ?? 0) + 1);
+    }
+
+    const categoryNodes: TreeNode[] = [];
+    // Categories the taxonomy does not rank go after the ones it does, in
+    // whatever order the registry reports them, rather than disappearing.
+    const seen = [...counts.keys()].sort((a, b) => categoryRank(a) - categoryRank(b));
+    for (const cat of seen) {
+      const subCounts = counts.get(cat)!;
+      let total = 0;
+      for (const n of subCounts.values()) total += n;
+      const defs = SUBCATEGORIES[cat as ComponentCategory]
+        ? subcategoryDefsInDisplayOrder(cat as ComponentCategory)
+        : null;
+      const children = defs
+        ? defs
+            .filter((d) => (subCounts.get(d.id) ?? 0) > 0)
+            .map((d) => ({
+              key: subcategoryKey(cat as ComponentCategory, d.id),
+              label: d.label,
+              count: subCounts.get(d.id)!,
+            }))
+        : [];
+      categoryNodes.push({
+        key: categoryKey(cat as ComponentCategory),
+        label: ComponentRegistry.getCategoryDisplayName(cat as ComponentCategory),
+        count: total,
+        // A lone subgroup is not a subdivision - don't give it a twisty that
+        // opens onto a copy of its parent.
+        children: children.length > 1 ? children : undefined,
+      });
+    }
+
+    const head: TreeNode[] = [
+      { key: KEY_ALL, label: t('editor.componentPicker.allComponents'), count: baseComponents.length },
+    ];
+    if (recentComponents.length > 0) {
+      head.push({
+        key: KEY_RECENT,
+        label: t('editor.componentPicker.recentlyUsed', 'Recently used'),
+        count: recentComponents.length,
+      });
+    }
+    if (onSelectBoard) {
+      head.push({
+        key: KEY_BOARDS,
+        label: t('editor.componentPicker.boards'),
+        count: matchingBoards.length + matchingBoardAds.length,
+      });
+    }
+    return [...head, ...categoryNodes];
+  }, [
+    baseComponents,
+    isLoading,
+    recentComponents,
+    matchingBoards,
+    matchingBoardAds,
+    onSelectBoard,
+    t,
+  ]);
+
+  // A branch can vanish under the user: narrowing the search until the
+  // selected subgroup has no matches would otherwise leave the grid empty
+  // with no hint as to why. Fall back to the whole catalogue instead.
+  useEffect(() => {
+    if (selectedKey === KEY_ALL || isLoading) return;
+    const alive = (nodes: TreeNode[]): boolean =>
+      nodes.some((n) => (n.key === selectedKey && n.count > 0) || alive(n.children ?? []));
+    if (!alive(treeNodes)) setSelectedKey(KEY_ALL);
+  }, [treeNodes, selectedKey, isLoading]);
+
+  /** Auto-open the branch that holds the selection. */
+  useEffect(() => {
+    if (!selectedKey.startsWith('cat:')) return;
+    const [cat, sub] = selectedKey.slice(4).split('/');
+    if (!sub) return;
+    setExpandedKeys((prev) => {
+      const parent = categoryKey(cat as ComponentCategory);
+      if (prev.has(parent)) return prev;
+      const next = new Set(prev);
+      next.add(parent);
+      return next;
+    });
+  }, [selectedKey]);
+
+  /**
+   * One block of the results area: a header plus its grid. Chunking the grid
+   * is what turns 60-odd rows of undifferentiated cards into something you
+   * can skim - the old grid was already sorted by category but printed no
+   * headers, so the grouping was invisible.
+   */
+  type GridSection =
+    | { kind: 'boards'; key: string; label: string; boards: BoardKind[]; ads: OnlineOnlyBoardAd[] }
+    | { kind: 'parts'; key: string; label: string; items: ComponentMetadata[] };
+
+  const sections = useMemo<GridSection[]>(() => {
+    if (isLoading) return [];
+    const out: GridSection[] = [];
+
+    const wantsBoards = !!onSelectBoard && (selectedKey === KEY_ALL || selectedKey === KEY_BOARDS);
+    if (wantsBoards && (matchingBoards.length > 0 || matchingBoardAds.length > 0)) {
+      out.push({
+        kind: 'boards',
+        key: KEY_BOARDS,
+        label: t('editor.componentPicker.boards'),
+        boards: matchingBoards,
+        ads: matchingBoardAds,
+      });
+    }
+    if (selectedKey === KEY_BOARDS) return out;
+
+    if ((selectedKey === KEY_ALL || selectedKey === KEY_RECENT) && recentComponents.length > 0) {
+      out.push({
+        kind: 'parts',
+        key: KEY_RECENT,
+        label: t('editor.componentPicker.recentlyUsed', 'Recently used'),
+        items: recentComponents,
+      });
+    }
+    if (selectedKey === KEY_RECENT) return out;
+
+    // While a query is typed the registry already returns best-match first.
+    // Regrouping that by category would bury "LED" under every sensor whose
+    // description mentions one, so ranked order wins and the rail carries the
+    // structure instead.
+    if (searchQuery.trim()) {
+      if (filteredComponents.length > 0) {
+        out.push({
+          kind: 'parts',
+          key: 'results',
+          label: t('editor.componentPicker.searchResults', 'Search results'),
+          items: filteredComponents,
+        });
+      }
+      return out;
+    }
+
+    const groups = new Map<string, ComponentMetadata[]>();
+    for (const c of filteredComponents) {
+      const key = subcategoryKey(normalizeCategory(c.category), subcategoryOf(c));
+      const bucket = groups.get(key);
+      if (bucket) bucket.push(c);
+      else groups.set(key, [c]);
+    }
+    const ordered = [...groups.entries()].sort((a, b) => {
+      const [catA, subA] = a[0].slice(4).split('/');
+      const [catB, subB] = b[0].slice(4).split('/');
+      const byCategory = categoryRank(catA) - categoryRank(catB);
+      if (byCategory !== 0) return byCategory;
+      return (
+        subcategoryRank(catA as ComponentCategory, subA ?? '') -
+        subcategoryRank(catB as ComponentCategory, subB ?? '')
+      );
+    });
+    for (const [key, items] of ordered) {
+      const [cat, sub] = key.slice(4).split('/');
+      const categoryLabel = ComponentRegistry.getCategoryDisplayName(cat as ComponentCategory);
+      out.push({
+        kind: 'parts',
+        key,
+        label: sub
+          ? `${categoryLabel} / ${subcategoryLabel(cat as ComponentCategory, sub)}`
+          : categoryLabel,
+        items,
+      });
+    }
+    return out;
+  }, [
+    isLoading,
+    onSelectBoard,
+    selectedKey,
+    searchQuery,
+    filteredComponents,
+    recentComponents,
+    matchingBoards,
+    matchingBoardAds,
+    t,
+  ]);
+
+  /** How many items the footer should report for the active branch. */
+  const shownCount =
+    selectedKey === KEY_BOARDS
+      ? matchingBoards.length + matchingBoardAds.length
+      : selectedKey === KEY_RECENT
+        ? recentComponents.length
+        : filteredComponents.length;
+
+  /** Label of the selected branch, for the removable filter chip. */
+  const activeBranchLabel = useMemo(() => {
+    if (selectedKey === KEY_ALL) return null;
+    const find = (nodes: TreeNode[]): TreeNode | null => {
+      for (const n of nodes) {
+        if (n.key === selectedKey) return n;
+        const hit = find(n.children ?? []);
+        if (hit) return hit;
+      }
+      return null;
+    };
+    return find(treeNodes)?.label ?? null;
+  }, [treeNodes, selectedKey]);
+
+  const selectBranch = (key: string) => {
+    setSelectedKey(key);
+    clearHover();
+    scrollRef.current?.scrollTo({ top: 0 });
+  };
+
+  const toggleBranch = (key: string) => {
+    setExpandedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  /**
+   * Place a part, and remember it. Pro overlays can intercept the click on a
+   * pro_only component by setting window.__velxio_pro_gate__; returning true
+   * means "handled - do not pass through", and nothing is recorded because
+   * nothing was placed.
+   */
+  const handleSelectComponent = (component: ComponentMetadata) => {
+    if (component.pro_only) {
+      const gate = (
+        window as unknown as {
+          __velxio_pro_gate__?: (c: ComponentMetadata) => boolean;
+        }
+      ).__velxio_pro_gate__;
+      if (gate && gate(component)) return;
+    }
+    setRecentIds(pushRecent(component.id));
+    onSelectComponent(component);
+  };
 
   // Handle ESC key to close modal
   useEffect(() => {
@@ -405,143 +765,141 @@ export const ComponentPickerModal: React.FC<ComponentPickerModalProps> = ({
             )}
           </div>
 
-          <select
-            className="category-select"
-            value={selectedCategory}
-            onChange={(e) => {
-              setSelectedCategory(e.target.value as ComponentCategory | 'all' | 'boards');
-              clearHover();
-            }}
-            aria-label="Filter by category"
-          >
-            <option value="all">{t('editor.componentPicker.allComponents')}</option>
-            {categories
-              .filter((c) => c !== 'boards')
-              .map((category) => (
-                <option key={category} value={category}>
-                  {ComponentRegistry.getCategoryDisplayName(category)}
-                </option>
-              ))}
-            {onSelectBoard && (
-              <option value="boards">{t('editor.componentPicker.boards')}</option>
-            )}
-          </select>
-
           <button className="close-btn" onClick={onClose} aria-label={t('editor.componentPicker.close')}>
             X
           </button>
         </div>
 
-        {/* Boards Panel */}
-        {selectedCategory === 'boards' ? (
-          <div className="components-grid" onScroll={clearHover}>
-            {allBoards.map((kind) => (
-              <BoardCard
-                key={kind}
-                kind={kind}
-                onSelect={() => {
-                  onSelectBoard?.(kind);
-                  onClose();
-                }}
-                hoverApi={hoverApi}
-              />
-            ))}
-            {visibleBoardAds().map((ad) => (
-              <OnlineOnlyBoardCard key={ad.id} ad={ad} />
-            ))}
-          </div>
-        ) : (
-          <>
-            {/* Single scrollable area wrapping both the boards row (only in
-                "All Components" view) and the components grid, so the modal
-                shows ONE scrollbar instead of two stacked ones. */}
-            <div className="components-scroll" onScroll={clearHover}>
-              {selectedCategory === 'all' && onSelectBoard && (
-                <div
-                  className="components-grid components-grid--inline"
-                  style={{ borderBottom: '1px solid var(--wb-6)', paddingBottom: 8, marginBottom: 4 }}
-                >
-                  {allBoards
-                    .filter((k) =>
-                      matchesSearch(searchQuery, [BOARD_KIND_LABELS[k], k, boardSearchKeywords(k)]),
-                    )
-                    .map((kind) => (
-                      <BoardCard
-                        key={kind}
-                        kind={kind}
-                        onSelect={() => {
-                          onSelectBoard(kind);
-                          onClose();
-                        }}
-                        hoverApi={hoverApi}
-                      />
-                    ))}
-                  {visibleBoardAds()
-                    .filter((ad) => matchesSearch(searchQuery, [ad.label]))
-                    .map((ad) => (
-                      <OnlineOnlyBoardCard key={ad.id} ad={ad} />
-                    ))}
-                </div>
-              )}
+        <div className="picker-body">
+          <ComponentTree
+            nodes={treeNodes}
+            selected={selectedKey}
+            onSelect={selectBranch}
+            expanded={expandedKeys}
+            onToggle={toggleBranch}
+            label={t('editor.componentPicker.categoriesTree', 'Component categories')}
+          />
 
-              <div className="components-grid components-grid--inline">
-                {isLoading ? (
-                  <div className="loading-state">
-                    <div className="spinner"></div>
-                    <p>{t('editor.componentPicker.loading')}</p>
-                  </div>
-                ) : filteredComponents.length === 0 && visibleComponentAds.length === 0 ? (
-                  <div className="no-results">
-                    <p>{t('editor.componentPicker.noResults')}</p>
-                    {searchQuery && (
-                      <button
-                        className="clear-filters-btn"
-                        onClick={() => {
-                          setSearchQuery('');
-                          setSelectedCategory('all');
-                        }}
-                      >
-                        {t('editor.componentPicker.clearFilters')}
-                      </button>
-                    )}
-                  </div>
-                ) : (
-                  filteredComponents.map((component) => (
-                    <ComponentCard
-                      key={component.id}
-                      component={component}
-                      hoverApi={hoverApi}
-                      onSelect={() => {
-                        // Pro overlays can intercept clicks on pro_only
-                        // components by setting window.__velxio_pro_gate__.
-                        // Returning true means "handled — do not pass through".
-                        if (component.pro_only) {
-                          const gate = (window as unknown as {
-                            __velxio_pro_gate__?: (c: typeof component) => boolean;
-                          }).__velxio_pro_gate__;
-                          if (gate && gate(component)) return;
-                        }
-                        onSelectComponent(component);
-                      }}
-                    />
-                  ))
+          <div className="picker-results">
+            {(activeBranchLabel || searchQuery) && (
+              <div className="picker-chips">
+                {searchQuery && (
+                  <button
+                    type="button"
+                    className="picker-chip"
+                    onClick={() => {
+                      setSearchQuery('');
+                      clearHover();
+                    }}
+                  >
+                    <span className="picker-chip-text">
+                      {t('editor.componentPicker.searchChip', 'Search')}: {searchQuery}
+                    </span>
+                    <span className="picker-chip-x" aria-hidden="true">
+                      X
+                    </span>
+                  </button>
                 )}
-                {!isLoading &&
-                  visibleComponentAds.map((ad) => (
-                    <OnlineOnlyComponentCard key={ad.id} ad={ad} />
-                  ))}
+                {activeBranchLabel && (
+                  <button
+                    type="button"
+                    className="picker-chip"
+                    onClick={() => selectBranch(KEY_ALL)}
+                  >
+                    <span className="picker-chip-text">{activeBranchLabel}</span>
+                    <span className="picker-chip-x" aria-hidden="true">
+                      X
+                    </span>
+                  </button>
+                )}
               </div>
-            </div>
+            )}
 
-            {/* Footer Info */}
-            <div className="modal-footer">
-              <span className="component-count">
-                {filteredComponents.length} component{filteredComponents.length !== 1 ? 's' : ''}{' '}
-                available
-              </span>
+            <div className="components-scroll" ref={scrollRef} onScroll={clearHover}>
+              {isLoading ? (
+                <div className="loading-state">
+                  <div className="spinner"></div>
+                  <p>{t('editor.componentPicker.loading')}</p>
+                </div>
+              ) : sections.length === 0 && visibleComponentAds.length === 0 ? (
+                <div className="no-results">
+                  <p>{t('editor.componentPicker.noResults')}</p>
+                  <button
+                    className="clear-filters-btn"
+                    onClick={() => {
+                      setSearchQuery('');
+                      selectBranch(KEY_ALL);
+                    }}
+                  >
+                    {t('editor.componentPicker.clearFilters')}
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {sections.map((section) => (
+                    <section key={section.key} className="picker-section">
+                      <h3 className="picker-section-header">
+                        <span className="picker-section-title">{section.label}</span>
+                        <span className="picker-section-count">
+                          {section.kind === 'boards'
+                            ? section.boards.length + section.ads.length
+                            : section.items.length}
+                        </span>
+                      </h3>
+                      <div className="components-grid components-grid--inline">
+                        {section.kind === 'boards' ? (
+                          <>
+                            {section.boards.map((kind) => (
+                              <BoardCard
+                                key={kind}
+                                kind={kind}
+                                onSelect={() => {
+                                  onSelectBoard?.(kind);
+                                  onClose();
+                                }}
+                                hoverApi={hoverApi}
+                              />
+                            ))}
+                            {section.ads.map((ad) => (
+                              <OnlineOnlyBoardCard key={ad.id} ad={ad} />
+                            ))}
+                          </>
+                        ) : (
+                          // Keyed by section as well as id: a part shown under
+                          // "Recently used" also appears in its own category
+                          // section, and two React children cannot share a key.
+                          section.items.map((component) => (
+                            <ComponentCard
+                              key={`${section.key}:${component.id}`}
+                              component={component}
+                              hoverApi={hoverApi}
+                              onSelect={() => handleSelectComponent(component)}
+                            />
+                          ))
+                        )}
+                      </div>
+                    </section>
+                  ))}
+
+                  {visibleComponentAds.length > 0 && (
+                    <div className="components-grid components-grid--inline">
+                      {visibleComponentAds.map((ad) => (
+                        <OnlineOnlyComponentCard key={ad.id} ad={ad} />
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
-          </>
-        )}
+          </div>
+        </div>
+
+        {/* Footer Info */}
+        <div className="modal-footer">
+          <span className="component-count">
+            {shownCount} {shownCount === 1 ? 'item' : 'items'}
+          </span>
+        </div>
       </div>
 
       {/* Floating datasheet popover (portals to <body>). Keyed on the anchor
@@ -672,6 +1030,8 @@ const CustomBadge: React.FC = () => (
 
 const ComponentCard: React.FC<ComponentCardProps> = ({ component, onSelect, hoverApi }) => {
   const thumbnailRef = React.useRef<HTMLDivElement>(null);
+  const cardRef = React.useRef<HTMLButtonElement>(null);
+  const nearViewport = useNearViewport(cardRef);
   const hover = useCardHover(
     () => ({
       id: component.id,
@@ -708,6 +1068,7 @@ const ComponentCard: React.FC<ComponentCardProps> = ({ component, onSelect, hove
     if (!thumbnailRef.current) return;
     if (usePresetSvg) return; // SVG is rendered via dangerouslySetInnerHTML below
     if (boardArt) return; // static illustration rendered below
+    if (!nearViewport) return; // off-screen: don't pay for a custom element yet
 
     // Create the actual wokwi element
     const element = document.createElement(component.tagName);
@@ -758,10 +1119,16 @@ const ComponentCard: React.FC<ComponentCardProps> = ({ component, onSelect, hove
         thumbnailRef.current.innerHTML = '';
       }
     };
-  }, [component.tagName, component.defaultValues, usePresetSvg, boardArt]);
+  }, [component.tagName, component.defaultValues, usePresetSvg, boardArt, nearViewport]);
 
   return (
-    <button className="component-card" onClick={onSelect} style={{ position: 'relative' }} {...hover}>
+    <button
+      className="component-card"
+      ref={cardRef}
+      onClick={onSelect}
+      style={{ position: 'relative' }}
+      {...hover}
+    >
       {component.custom ? <CustomBadge /> : isProBoardKind(component.id) && <ProBadge />}
       <div className="card-thumbnail">
         {boardArt ? (
@@ -827,6 +1194,8 @@ interface BoardCardProps {
 
 const BoardCard: React.FC<BoardCardProps> = ({ kind, onSelect, hoverApi }) => {
   const thumbnailRef = React.useRef<HTMLDivElement>(null);
+  const cardRef = React.useRef<HTMLButtonElement>(null);
+  const nearViewport = useNearViewport(cardRef);
   const hover = useCardHover(
     () => ({
       id: kind,
@@ -843,6 +1212,7 @@ const BoardCard: React.FC<BoardCardProps> = ({ kind, onSelect, hoverApi }) => {
 
   React.useEffect(() => {
     if (!thumbnailRef.current) return;
+    if (!nearViewport) return; // off-screen: don't pay for a custom element yet
     // Static-image boards handled below via reactThumbnail: the whole Pi
     // Linux family uses board illustrations (a live custom element at
     // natural size + CSS scale keeps its unscaled layout box, so the
@@ -876,7 +1246,7 @@ const BoardCard: React.FC<BoardCardProps> = ({ kind, onSelect, hoverApi }) => {
     return () => {
       if (thumbnailRef.current) thumbnailRef.current.innerHTML = '';
     };
-  }, [kind]);
+  }, [kind, nearViewport]);
 
   // Every Pi shows its own board. The cards used to share the Pi 3's picture,
   // which made the picker claim a Zero looks like a Pi 3.
@@ -914,6 +1284,7 @@ const BoardCard: React.FC<BoardCardProps> = ({ kind, onSelect, hoverApi }) => {
   return (
     <button
       className="component-card"
+      ref={cardRef}
       onClick={onSelect}
       style={{ position: 'relative' }}
       {...hover}

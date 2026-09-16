@@ -197,7 +197,11 @@
       "boards": "Boards",
       "loading": "Loading components...",
       "noResults": "No components found",
-      "clearFilters": "Clear filters"
+      "clearFilters": "Clear filters",
+      "categoriesTree": "Component categories",
+      "recentlyUsed": "Recently used",
+      "searchResults": "Search results",
+      "searchChip": "Search"
     },
     "libraryManager": {
       "title": "LIBRARY MANAGER",
