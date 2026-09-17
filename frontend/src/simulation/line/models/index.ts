@@ -9,3 +9,4 @@ import './hc-sr04';
 import './ir-nec';
 import './ir-tx';
 import './matrix-keypad';
+import './quadrature-encoder';

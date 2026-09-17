@@ -62,6 +62,7 @@ import { isBreadboard } from '../utils/breadboardNets';
 import { isBoardSeated } from '../utils/socketSnap';
 import { computeSeating } from '../utils/breadboardSnap';
 import { createSerialBatcher } from './serialBatcher';
+import { emitSerialTap } from './serialTap';
 import {
   reensureSerialHooks as icReensureSerialHooks,
   bindBoard as icBindBoard,
@@ -1536,6 +1537,7 @@ const INITIAL_BOARD: BoardInstance = {
 // useSyncExternalStore reconciliation (→ "Maximum update depth exceeded").
 // The batcher coalesces chunks per animation frame (≤60 Hz), grouped by board.
 const { append: appendSerial } = createSerialBatcher((perBoard) => {
+  for (const [id, raw] of perBoard) emitSerialTap(id, raw);
   useSimulatorStore.setState((s) => {
     let globalOut = s.serialOutput;
     const boards = s.boards.map((b) => {

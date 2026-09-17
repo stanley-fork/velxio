@@ -117,6 +117,37 @@ export function boardKindToWokwiPartId(kind: string): string {
 }
 
 /**
+ * Board part types registered at runtime, consulted only after everything
+ * this file knows for itself.
+ *
+ * The four boards above are the ones a wokwi-element draws, and the
+ * `board-velxio-<kind>` spelling covers every board a Velxio export names.
+ * What neither covers is a diagram written by Wokwi for a board Velxio also
+ * simulates under a different name — `board-esp32-s3-devkitc-1` is their
+ * spelling of our `esp32-s3`. That correspondence is a moving list about
+ * boards this build may not even have, so it is not data this file should
+ * own; the consumer that has the list registers it.
+ *
+ * Empty (nothing registered) is the OSS default and imports behave exactly
+ * as they did: those types resolve to null and the part is not a board.
+ */
+const registeredBoardKinds = new Map<string, string>();
+
+/**
+ * Teach the importer that a Wokwi board part type denotes a Velxio board
+ * kind. Rows are additive and last-write-wins; a row can never shadow one of
+ * the native types above, so registering cannot change how an existing
+ * Velxio/Wokwi file imports. The export side is untouched: a board still
+ * writes its native type or `board-velxio-<kind>`, never a registered one.
+ */
+export function registerWokwiBoardMappings(rows: Array<{ type: string; kind: string }>): void {
+  for (const row of rows) {
+    if (!row || !row.type || !row.kind) continue;
+    registeredBoardKinds.set(row.type, row.kind);
+  }
+}
+
+/**
  * The Velxio board kind a Wokwi part type denotes, or null when the part is
  * not a board. Null is the point: the old code answered 'arduino-uno' for
  * everything it did not recognise, so importing an ESP32 project produced an
@@ -129,7 +160,7 @@ export function wokwiTypeToBoardKind(type: string): string | null {
   for (const [kind, entry] of Object.entries(WOKWI_NATIVE_BOARDS)) {
     if (entry.type === type) return kind;
   }
-  return null;
+  return registeredBoardKinds.get(type) ?? null;
 }
 
 // ── Pin name aliases ─────────────────────────────────────────────────────────

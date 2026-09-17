@@ -398,6 +398,13 @@ export const ONLINE_ONLY_COMPONENT_ADS: OnlineOnlyComponentAd[] = [
     thumbnailSvg: "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 60 60'><rect x='16' y='10' width='28' height='16' rx='4' fill='#9aa4ac' stroke='#6b757c' stroke-width='1'/><rect x='20' y='26' width='20' height='4' rx='1.5' fill='#78828a'/><rect x='28' y='30' width='4' height='6' rx='1.5' fill='#7f8a92'/><g transform='translate(30 42)'><path d='M0 0 C6 -5 13 -6 18 -2 C14 4 7 6 0 3 Z' fill='#cdd6dd' stroke='#8d979f' stroke-width='0.8'/><path d='M0 0 C6 -5 13 -6 18 -2 C14 4 7 6 0 3 Z' fill='#cdd6dd' stroke='#8d979f' stroke-width='0.8' transform='rotate(120)'/><path d='M0 0 C6 -5 13 -6 18 -2 C14 4 7 6 0 3 Z' fill='#cdd6dd' stroke='#8d979f' stroke-width='0.8' transform='rotate(240)'/></g><circle cx='30' cy='42' r='4' fill='#5d666c'/></svg>",
   },
   {
+    id: 'pro-gear-motor-encoder',
+    label: 'Gear Motor with Encoder',
+    description: 'A gear motor whose Hall encoder really counts: A and B land on the board clock, so a PID can hold a speed - available in the online editor',
+    category: 'motors',
+    thumbnailSvg: "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 60 60'><rect x='10' y='8' width='40' height='7' rx='1.5' fill='#1d6b3a'/><rect x='15' y='15' width='30' height='10' rx='2' fill='#9aa4ac' stroke='#6b757c' stroke-width='1'/><rect x='12' y='25' width='36' height='8' rx='1.5' fill='#c9a23a' stroke='#8a6d20' stroke-width='1'/><circle cx='30' cy='44' r='10' fill='#2b3135' stroke='#15191c' stroke-width='1.5'/><rect x='29' y='35' width='2' height='18' fill='#6d7780'/><rect x='21' y='43' width='18' height='2' fill='#6d7780'/><circle cx='30' cy='37.5' r='1.6' fill='#e6c229'/></svg>",
+  },
+  {
     id: 'pro-heater',
     label: 'Heater Block',
     description: 'A heater with real thermal mass: it warms what is around it and cools to ambient when you cut the power - available in the online editor',
