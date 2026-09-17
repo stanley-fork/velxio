@@ -7,6 +7,8 @@ import { bootromB1 } from './rp2040-bootrom';
 import { loadUF2, loadUserFiles, getFirmware } from './MicroPythonLoader';
 import { type PioPeripheral, createPioPeripheral } from './PioPeripheral';
 import { requestElectricalResolve } from './spice/electricalResolveHook';
+import { RP2040_CLOCKS_KEY, USB_CDC_LINK, watchRpPeriClock, watchRpUartLine } from './rpUartLine';
+import type { SerialLink } from '../store/serialWire';
 import type { LineCapable, LineHostPort, LineSupport } from './line/LineHost';
 import { LineSensorHub } from './line/LineSensorHub';
 
@@ -276,6 +278,11 @@ export class RP2040Simulator implements LineCapable {
   /** Serial output callback — fires for each byte the Pico sends on UART0 (or USBCDC in MicroPython mode) */
   public onSerialData: ((char: string) => void) | null = null;
 
+  /** The line the console is clocking: UART0's PL011 settings on a compiled sketch
+   *  (rate AND frame format), or the USB-CDC "no wire" link in MicroPython mode.
+   *  Same contract as AVRSimulator.onBaudRateChange, so the store wires it blind. */
+  public onBaudRateChange: ((baudRate: number, link: SerialLink) => void) | null = null;
+
   /**
    * Generic SPI bus adapter — same shape as AVRSimulator.spi so SPI parts
    * (ILI9341, SD cards, custom chips) can hook the bus uniformly across
@@ -286,10 +293,14 @@ export class RP2040Simulator implements LineCapable {
    * once a part actually accesses .spi (avoiding clobbering the default
    * loopback handler if no SPI part is on the canvas).
    */
-  private _spiAdapter: { onByte: ((mosi: number) => void) | null;
-                         completeTransfer: (miso: number) => void } | null = null;
-  public get spi(): { onByte: ((mosi: number) => void) | null;
-                      completeTransfer: (miso: number) => void } {
+  private _spiAdapter: {
+    onByte: ((mosi: number) => void) | null;
+    completeTransfer: (miso: number) => void;
+  } | null = null;
+  public get spi(): {
+    onByte: ((mosi: number) => void) | null;
+    completeTransfer: (miso: number) => void;
+  } {
     if (!this._spiAdapter) {
       const adapter = {
         onByte: null as ((mosi: number) => void) | null,
@@ -335,10 +346,7 @@ export class RP2040Simulator implements LineCapable {
 
   constructor(pinManager: PinManager) {
     this.pinManager = pinManager;
-    this.i2cBuses = [
-      new I2CBusManager(nullI2CMaster()),
-      new I2CBusManager(nullI2CMaster()),
-    ];
+    this.i2cBuses = [new I2CBusManager(nullI2CMaster()), new I2CBusManager(nullI2CMaster())];
   }
 
   /**
@@ -381,8 +389,7 @@ export class RP2040Simulator implements LineCapable {
     // variant; in OSS it isn't registered and firmwareConfig() falls back to
     // 'pico' (a self-hosted Pico W has no WiFi anyway). The pioPeripheral check
     // stays as a belt-and-suspenders for any future factory-backed board.
-    const variant =
-      this.boardKind === 'pi-pico-w' || this.pioPeripheral ? 'pico-w' : 'pico';
+    const variant = this.boardKind === 'pi-pico-w' || this.pioPeripheral ? 'pico-w' : 'pico';
     console.log(`[RP2040] Loading MicroPython firmware (${variant})...`);
 
     // 1. Get MicroPython UF2 firmware (cached in IndexedDB)
@@ -419,6 +426,9 @@ export class RP2040Simulator implements LineCapable {
         }
       }
     };
+    // The REPL is a USB device endpoint: no wire, no baud, the terminal's setting is
+    // discarded here exactly as it is on the real board.
+    this.onBaudRateChange?.(0, USB_CDC_LINK);
 
     // 6. Set PC to flash start
     this.rp2040.core.PC = 0x10000000;
@@ -512,7 +522,11 @@ export class RP2040Simulator implements LineCapable {
     // IOCTL response is never read and wifi_on stalls.
     peripheral.onHostWake((active: boolean) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      try { (this.rp2040 as any)?.gpio?.[24]?.setInputValue(active); } catch { /* noop */ }
+      try {
+        (this.rp2040 as any)?.gpio?.[24]?.setInputValue(active);
+      } catch {
+        /* noop */
+      }
     });
 
     this.installPioPeripheralHooks();
@@ -557,7 +571,11 @@ export class RP2040Simulator implements LineCapable {
     this.pioPeripheral = fresh;
     fresh.onHostWake((active: boolean) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      try { (this.rp2040 as any)?.gpio?.[24]?.setInputValue(active); } catch { /* noop */ }
+      try {
+        (this.rp2040 as any)?.gpio?.[24]?.setInputValue(active);
+      } catch {
+        /* noop */
+      }
     });
   }
 
@@ -565,12 +583,18 @@ export class RP2040Simulator implements LineCapable {
   detachPioPeripheral(): void {
     for (const h of this.pioHookedFifos) h.restore();
     this.pioHookedFifos = [];
-    try { this.pioPeripheral?.detach?.(); } catch { /* noop */ }
+    try {
+      this.pioPeripheral?.detach?.();
+    } catch {
+      /* noop */
+    }
     this.pioPeripheral = null;
   }
 
   /** Read access for tests / debug panels. */
-  getPioPeripheral(): PioPeripheral | null { return this.pioPeripheral; }
+  getPioPeripheral(): PioPeripheral | null {
+    return this.pioPeripheral;
+  }
 
   /**
    * Hook every PIO state machine's txFIFO/rxFIFO so the attached PIO
@@ -608,7 +632,10 @@ export class RP2040Simulator implements LineCapable {
         Object.defineProperty(tx, 'empty', { get: () => head >= q.length, configurable: true });
         Object.defineProperty(tx, 'itemCount', { get: () => q.length - head, configurable: true });
         tx.peek = () => (head < q.length ? q[head] : 0);
-        tx.reset = () => { q.length = 0; head = 0; };
+        tx.reset = () => {
+          q.length = 0;
+          head = 0;
+        };
         tx.push = (value: number) => {
           if (peripheral.inDiscardableWriteData()) {
             if (q.length - head < 4) q.push(value >>> 0); // keep a few so the PIO TXSTALLs
@@ -622,14 +649,20 @@ export class RP2040Simulator implements LineCapable {
         tx.pull = () => {
           if (head >= q.length) return 0;
           const v = q[head++];
-          if (head > 8192 && head * 2 > q.length) { q.splice(0, head); head = 0; } // compact
+          if (head > 8192 && head * 2 > q.length) {
+            q.splice(0, head);
+            head = 0;
+          } // compact
           return v;
         };
         this.pioHookedFifos.push({
           restore: () => {
-            if (origFull) Object.defineProperty(tx, 'full', origFull); else delete tx.full;
-            if (origEmpty) Object.defineProperty(tx, 'empty', origEmpty); else delete tx.empty;
-            if (origItem) Object.defineProperty(tx, 'itemCount', origItem); else delete tx.itemCount;
+            if (origFull) Object.defineProperty(tx, 'full', origFull);
+            else delete tx.full;
+            if (origEmpty) Object.defineProperty(tx, 'empty', origEmpty);
+            else delete tx.empty;
+            if (origItem) Object.defineProperty(tx, 'itemCount', origItem);
+            else delete tx.itemCount;
             tx.push = origPush;
             tx.pull = origPull;
             if (origPeek) tx.peek = origPeek;
@@ -644,10 +677,15 @@ export class RP2040Simulator implements LineCapable {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const origRestart: () => void = (sm as any).restart.bind(sm);
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (sm as any).restart = () => { peripheral.resetFraming(); return origRestart(); };
+          (sm as any).restart = () => {
+            peripheral.resetFraming();
+            return origRestart();
+          };
           this.pioHookedFifos.push({
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            restore: () => { (sm as any).restart = origRestart; },
+            restore: () => {
+              (sm as any).restart = origRestart;
+            },
           });
         }
         // Serve the chip's response when the driver's DMA actually reads the
@@ -673,7 +711,9 @@ export class RP2040Simulator implements LineCapable {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (this.rp2040 as any)?.gpio?.[24]?.setInputValue(peripheral.hostWakeLevel());
-    } catch { /* noop */ }
+    } catch {
+      /* noop */
+    }
   }
 
   private pioRxQueue: number[] = [];
@@ -731,6 +771,18 @@ export class RP2040Simulator implements LineCapable {
     this.rp2040.core.PC = 0x10000000;
 
     // ── Wire UART0 (default Serial port for Arduino-Pico) ────────────
+    // The line it clocks goes to the monitor: Serial.begin(9600) on the Pico is
+    // a real PL011 divisor, and a terminal at 115200 really decodes garbage.
+    const line = watchRpUartLine(this.rp2040.uart[0], (link) =>
+      this.onBaudRateChange?.(link.baud, link),
+    );
+    // arduino-pico parks clk_peri on the 48 MHz USB PLL at boot (set_sys_clock_khz);
+    // the engine must follow, or every rate reads 125/48 too fast.
+    watchRpPeriClock(
+      this.rp2040 as unknown as Parameters<typeof watchRpPeriClock>[0],
+      RP2040_CLOCKS_KEY,
+      () => line.publish(),
+    );
     let serialBuffer = '';
     this.rp2040.uart[0].onByte = (value: number) => {
       const ch = String.fromCharCode(value);
@@ -828,7 +880,10 @@ export class RP2040Simulator implements LineCapable {
     if (this.rp2040) {
       for (const g of candidates) {
         const pin = this.rp2040.gpio[g];
-        if (pin && (pin as unknown as { functionSelect: number }).functionSelect === FUNCTION_UART) {
+        if (
+          pin &&
+          (pin as unknown as { functionSelect: number }).functionSelect === FUNCTION_UART
+        ) {
           return g;
         }
       }
@@ -879,7 +934,7 @@ export class RP2040Simulator implements LineCapable {
       bits.push(((byte >> i) & 1) !== 0);
     }
     bits.push(true); // stop bit (rp2040js doesn't expose 2-stop-bit selection
-                     // cleanly; default to 1 — same behaviour as 8N1 sketches)
+    // cleanly; default to 1 — same behaviour as 8N1 sketches)
 
     let prevState = true;
     for (let i = 0; i < bits.length; i++) {
@@ -1052,7 +1107,10 @@ export class RP2040Simulator implements LineCapable {
         // retires nothing. `skipBudget` is 0 while the floor holds; the frame
         // then executes the instruction it would have skipped.
         const budget = this.lines
-          ? this.lines.skipBudget(Math.min(cyclesTarget - cyclesDone, IDLE_SLICE_CYCLES), this.totalCycles)
+          ? this.lines.skipBudget(
+              Math.min(cyclesTarget - cyclesDone, IDLE_SLICE_CYCLES),
+              this.totalCycles,
+            )
           : Math.min(cyclesTarget - cyclesDone, IDLE_SLICE_CYCLES);
         const jumped = this.advanceClock(budget, pioDiv, clock);
         if (jumped <= 0) {
@@ -1166,6 +1224,7 @@ export class RP2040Simulator implements LineCapable {
             if (this.onSerialData) this.onSerialData(String.fromCharCode(byte));
           }
         };
+        this.onBaudRateChange?.(0, USB_CDC_LINK);
 
         // Re-wire peripherals (skipping UART0 serial)
         this.rp2040.uart[1].onByte = (value: number) => {

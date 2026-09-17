@@ -27,7 +27,14 @@ import type { I2CDevice } from '../simulation/I2CBusManager';
 import type { RP2040I2CDevice } from '../simulation/RP2040Simulator';
 import type { Wire, WireInProgress, WireEndpoint } from '../types/wire';
 import type { BoardKind, BoardInstance, LanguageMode, WifiStatus } from '../types/board';
-import { BOARD_KIND_FQBN, BOARD_SUPPORTS_ESPIDF, BOARD_SUPPORTS_MICROPYTHON, EMULATED_WIFI_SSIDS, isPiBoardKind, isStm32BoardKind } from '../types/board';
+import {
+  BOARD_KIND_FQBN,
+  BOARD_SUPPORTS_ESPIDF,
+  BOARD_SUPPORTS_MICROPYTHON,
+  EMULATED_WIFI_SSIDS,
+  isPiBoardKind,
+  isStm32BoardKind,
+} from '../types/board';
 import { annotateSerialChunk } from '../utils/serialDiagnostics';
 import { blockedByBoardGate, reportBoardRunRefused } from '../lib/proBoardGate';
 import { getSerialTxInterceptor } from '../lib/proHardwareSerial';
@@ -63,6 +70,13 @@ import { isBoardSeated } from '../utils/socketSnap';
 import { computeSeating } from '../utils/breadboardSnap';
 import { createSerialBatcher } from './serialBatcher';
 import { emitSerialTap } from './serialTap';
+import { applySerialWireDisplay, applySerialWireTransmit, nominalBaud } from './serialWire';
+import type { SerialLink } from './serialWire';
+
+/** A simulator that publishes the line its console is clocking. */
+type SerialLineReporter = {
+  onBaudRateChange: ((baud: number, link: SerialLink) => void) | null;
+};
 import {
   reensureSerialHooks as icReensureSerialHooks,
   bindBoard as icBindBoard,
@@ -70,7 +84,11 @@ import {
   updateWires as icUpdateWires,
   setInterconnectRuntime,
 } from '../simulation/Interconnect';
-import { SENSOR_CONTROLS, getSensorControl, getSensorControlForComponent } from '../simulation/sensorControlConfig';
+import {
+  SENSOR_CONTROLS,
+  getSensorControl,
+  getSensorControlForComponent,
+} from '../simulation/sensorControlConfig';
 import { SINGLE_WIRE_SENSOR_MODELS } from '../simulation/sensorModels';
 import type { LineSupport } from '../simulation/line/LineHost';
 import { traceBoardGpio } from '../simulation/PinTrace';
@@ -207,10 +225,7 @@ export class Esp32BridgeShim {
         for (const b of data) dev.writeByte(b);
         dev.stop?.();
       } catch (e) {
-        console.warn(
-          `[Esp32BridgeShim] proxy write replay failed for 0x${addr.toString(16)}`,
-          e,
-        );
+        console.warn(`[Esp32BridgeShim] proxy write replay failed for 0x${addr.toString(16)}`, e);
       }
     };
   }
@@ -375,7 +390,11 @@ export class Esp32BridgeShim {
       if (pin >= 11 && pin <= 20) return 10 + (pin - 11);
       return -1;
     }
-    if (kind === 'esp32-c3' || kind === 'xiao-esp32-c3' || kind === 'aitewinrobot-esp32c3-supermini') {
+    if (
+      kind === 'esp32-c3' ||
+      kind === 'xiao-esp32-c3' ||
+      kind === 'aitewinrobot-esp32c3-supermini'
+    ) {
       return pin >= 0 && pin <= 5 ? pin : -1;
     }
     if (pin >= 36 && pin <= 39) return pin - 36; // GPIO 36→CH0 … 39→CH3
@@ -477,10 +496,11 @@ export class Esp32BridgeShim {
    * Lazy-initialised so the bridge subscription only happens once a part
    * actually accesses `.spi`.
    */
-  private _spiAdapter: { onByte: ((mosi: number) => void) | null;
-                         completeTransfer: (miso: number) => void } | null = null;
-  get spi(): { onByte: ((mosi: number) => void) | null;
-               completeTransfer: (miso: number) => void } {
+  private _spiAdapter: {
+    onByte: ((mosi: number) => void) | null;
+    completeTransfer: (miso: number) => void;
+  } | null = null;
+  get spi(): { onByte: ((mosi: number) => void) | null; completeTransfer: (miso: number) => void } {
     if (!this._spiAdapter) {
       const adapter = {
         onByte: null as ((mosi: number) => void) | null,
@@ -493,8 +513,9 @@ export class Esp32BridgeShim {
         // reponding to CMD0) was talking to nobody in js mode — measured as
         // SD.begin()=0 with sd_diskio retrying CMD0 forever.
         completeTransfer: (miso: number) => {
-          (this.bridge as unknown as { setSpiResponse?: (b: number) => void })
-            .setSpiResponse?.(miso);
+          (this.bridge as unknown as { setSpiResponse?: (b: number) => void }).setSpiResponse?.(
+            miso,
+          );
         },
       };
       // Forward every per-byte WS event into whichever handler the part
@@ -615,8 +636,9 @@ export class Esp32BridgeShim {
    * No-op on bridges without an audio path (a silent speaker).
    */
   setSpeakerMonitor(cb: ((peak: number) => void) | null): void {
-    (this.bridge as { setSpeakerMonitor?: (c: ((p: number) => void) | null) => void })
-      .setSpeakerMonitor?.(cb);
+    (
+      this.bridge as { setSpeakerMonitor?: (c: ((p: number) => void) | null) => void }
+    ).setSpeakerMonitor?.(cb);
   }
 
   /**
@@ -678,10 +700,7 @@ export class Esp32BridgeShim {
             ownedAddrs.add(device.address);
             // Prime the resync hash so the first tick doesn't push a
             // redundant identical dump.
-            this._lastDumpHash.set(
-              device.address,
-              Esp32BridgeShim._hashRegs(regs),
-            );
+            this._lastDumpHash.set(device.address, Esp32BridgeShim._hashRegs(regs));
           } catch (e) {
             console.warn(
               `[Esp32BridgeShim] syncProxyFromPeer dump failed for 0x${device.address.toString(16)}`,
@@ -767,10 +786,7 @@ export class Esp32BridgeShim {
   private _ensureResyncTimer(): void {
     if (this._resyncTimer !== null) return;
     if (this._proxiedByPeer.size === 0) return;
-    this._resyncTimer = setInterval(
-      () => this._resyncTick(),
-      Esp32BridgeShim.RESYNC_INTERVAL_MS,
-    );
+    this._resyncTimer = setInterval(() => this._resyncTick(), Esp32BridgeShim.RESYNC_INTERVAL_MS);
   }
 
   private _stopResyncTimerIfIdle(): void {
@@ -914,7 +930,7 @@ function makePinPullHandler(boardId: string) {
     // guest read 0 forever. On wired+sourced nets the connector overrides
     // with the solved level right after, so the "mis-wired button still
     // works" bug does NOT come back: the solve remains authoritative.
-    if (pull !== 0 && !(pm?.getOutputPins().has(gpio))) {
+    if (pull !== 0 && !pm?.getOutputPins().has(gpio)) {
       const sim = simulatorMap.get(boardId) as
         | { setPinState?: (pin: number, state: boolean) => void }
         | undefined;
@@ -959,10 +975,14 @@ class Stm32BridgeShim {
   stop(): void {}
   reset(): void {}
   setSpeed(_s: number): void {}
-  getSpeed(): number { return 1; }
+  getSpeed(): number {
+    return 1;
+  }
   loadHex(_hex: string): void {}
   loadBinary(_b64: string): void {}
-  isRunning(): boolean { return this.bridge.connected; }
+  isRunning(): boolean {
+    return this.bridge.connected;
+  }
 
   /** Drive a GPIO input from a part. `pin` is the linear pin (port*16+pin). */
   setPinState(pin: number, state: boolean): void {
@@ -1295,11 +1315,7 @@ interface SimulatorState {
    * Record a board's build. `extras.uf2` is the RP2 hardware-flash artifact
    * (see BoardInstance.compiledUf2); omitted/null for every other family.
    */
-  compileBoardProgram: (
-    boardId: string,
-    program: string,
-    extras?: { uf2?: string | null },
-  ) => void;
+  compileBoardProgram: (boardId: string, program: string, extras?: { uf2?: string | null }) => void;
   loadMicroPythonProgram: (
     boardId: string,
     files: Array<{ name: string; content: string }>,
@@ -1459,11 +1475,7 @@ interface SimulatorState {
    */
   recordAddComponent: (component: Component) => void;
   recordRemoveComponent: (id: string) => void;
-  recordMove: (
-    id: string,
-    from: { x: number; y: number },
-    to: { x: number; y: number },
-  ) => void;
+  recordMove: (id: string, from: { x: number; y: number }, to: { x: number; y: number }) => void;
   recordRotate: (id: string, prevRotation: number, nextRotation: number) => void;
   recordSetProperty: (id: string, key: string, prevValue: unknown, nextValue: unknown) => void;
   recordAddWire: (wire: Wire) => void;
@@ -1479,6 +1491,8 @@ interface SimulatorState {
   toggleSerialMonitor: () => void;
   serialWrite: (text: string) => void;
   serialWriteToBoard: (boardId: string, text: string) => void;
+  /** Publish the line a board's console is clocking (engine bridges; see serialWire). */
+  setBoardSerialLink: (boardId: string, link: SerialLink | null) => void;
   clearSerialOutput: () => void;
   clearBoardSerialOutput: (boardId: string) => void;
 }
@@ -1488,7 +1502,7 @@ function createSimulator(
   boardKind: BoardKind,
   pm: PinManager,
   onSerial: (ch: string) => void,
-  onBaud: (baud: number) => void,
+  onBaud: (baud: number, link: SerialLink) => void,
   onPinTime: (pin: number, state: boolean, t: number) => void,
 ): AVRSimulator | RP2040Simulator | RiscVSimulator | Esp32C3Simulator | ProBoardSimulator {
   let sim: AVRSimulator | RP2040Simulator | RiscVSimulator | Esp32C3Simulator | ProBoardSimulator;
@@ -1510,7 +1524,9 @@ function createSimulator(
     sim = new AVRSimulator(pm, 'uno');
   }
   sim.onSerialData = onSerial;
-  if (sim instanceof AVRSimulator) sim.onBaudRateChange = onBaud;
+  // Every simulator that reports its console line (AVR, RP2040, the overlay's RP2350)
+  // carries the same slot; the ESP32 engines report through their bridge instead.
+  if ('onBaudRateChange' in sim) (sim as SerialLineReporter).onBaudRateChange = onBaud;
   sim.onPinChangeWithTime = onPinTime;
   return sim;
 }
@@ -1526,6 +1542,7 @@ const INITIAL_BOARD: BoardInstance = {
   compiledProgram: null,
   serialOutput: '',
   serialBaudRate: 0,
+  serialLink: undefined,
   serialMonitorOpen: false,
   activeFileGroupId: `group-${INITIAL_BOARD_ID}`,
   languageMode: 'arduino' as LanguageMode,
@@ -1543,9 +1560,13 @@ const { append: appendSerial } = createSerialBatcher((perBoard) => {
     const boards = s.boards.map((b) => {
       const raw = perBoard.get(b.id);
       if (!raw) return b;
+      // What a terminal at the other end of the link decodes. Identity unless a
+      // receiver model is installed AND its settings disagree with the board's
+      // (see store/serialWire.ts) — the tap above still gets the raw bytes.
+      const wired = applySerialWireDisplay(b.id, raw);
       // Attach the one-line explanation when a known cryptic firmware error
       // scrolls past (issue #270); a no-op for ordinary output.
-      const chunk = annotateSerialChunk(b.serialOutput, raw);
+      const chunk = annotateSerialChunk(b.serialOutput, wired);
       if (s.activeBoardId === b.id) globalOut += chunk;
       return { ...b, serialOutput: b.serialOutput + chunk };
     });
@@ -1694,6 +1715,11 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         boards: s.boards.map((b) => (b.id === id ? { ...b, bleStatus: bs } : b)),
       }));
     };
+    // The console line the engine decoded out of the UART divider. Same shape for
+    // every board kind, so the monitor needs no per-chip knowledge.
+    bridge.onSerialLink = (link) => {
+      useSimulatorStore.getState().setBoardSerialLink(id, link);
+    };
     esp32BridgeMap.set(id, bridge);
     // Provide a shim so PartSimulationRegistry components (DHT22, etc.)
     // can call setPinState / access pinManager on ESP32 boards.
@@ -1705,14 +1731,22 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
     // doesn't keep firing.
     const existingShim = simulatorMap.get(id) as any;
     if (existingShim?.clearAllProxies) {
-      try { existingShim.clearAllProxies(); } catch { /* ignore */ }
+      try {
+        existingShim.clearAllProxies();
+      } catch {
+        /* ignore */
+      }
     }
     // The parts on the canvas attached their I2C device models to the OLD
     // shim (their attach closures hold it) and will not re-attach for a
     // bridge rebuild — carry them over, or the rebuilt engine boots with an
     // empty I2C bus and every Wire transaction fails.
     if (existingShim instanceof Esp32BridgeShim) {
-      try { shim.adoptPartsFrom(existingShim); } catch { /* ignore */ }
+      try {
+        shim.adoptPartsFrom(existingShim);
+      } catch {
+        /* ignore */
+      }
     }
     simulatorMap.set(id, shim);
     // The Interconnect's serial fan-out wraps the INSTANCE's
@@ -1726,13 +1760,15 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
     'arduino-uno',
     initialPm,
     (ch) => appendSerial(INITIAL_BOARD_ID, ch),
-    (baud) => {
+    (baud, link) => {
       set((s) => {
         const boards = s.boards.map((b) =>
-          b.id === INITIAL_BOARD_ID ? { ...b, serialBaudRate: baud } : b,
+          b.id === INITIAL_BOARD_ID
+            ? { ...b, serialBaudRate: nominalBaud(baud), serialLink: link }
+            : b,
         );
         const isActive = s.activeBoardId === INITIAL_BOARD_ID;
-        return { boards, ...(isActive ? { serialBaudRate: baud } : {}) };
+        return { boards, ...(isActive ? { serialBaudRate: nominalBaud(baud) } : {}) };
       });
     },
     getOscilloscopeCallback(INITIAL_BOARD_ID),
@@ -1756,7 +1792,11 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       if (board.running) return false; // never yank a live simulation
       const old = esp32BridgeMap.get(boardId);
       if (old) {
-        try { old.disconnect(); } catch { /* ignore */ }
+        try {
+          old.disconnect();
+        } catch {
+          /* ignore */
+        }
       }
       wireEsp32Board(boardId, board.boardKind, pm);
       // A deep-linked overlay board is created BEFORE the overlay registers
@@ -1832,12 +1872,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
           // so a BMP280 on the Pi's I2C pins never got its backend model.
           try {
             const st = get();
-            attachSlavesFromCanvas(
-              id,
-              bridge,
-              st.components as never,
-              st.wires as never,
-            );
+            attachSlavesFromCanvas(id, bridge, st.components as never, st.wires as never);
           } catch (e) {
             console.warn('[pi] slave scan failed:', e);
           }
@@ -1961,13 +1996,13 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
           boardKind,
           pm,
           serialCallback,
-          (baud) => {
+          (baud, link) => {
             set((s) => {
               const boards = s.boards.map((b) =>
-                b.id === id ? { ...b, serialBaudRate: baud } : b,
+                b.id === id ? { ...b, serialBaudRate: nominalBaud(baud), serialLink: link } : b,
               );
               const isActive = s.activeBoardId === id;
-              return { boards, ...(isActive ? { serialBaudRate: baud } : {}) };
+              return { boards, ...(isActive ? { serialBaudRate: nominalBaud(baud) } : {}) };
             });
           },
           getOscilloscopeCallback(id),
@@ -2017,6 +2052,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         compiledProgram: null,
         serialOutput: '',
         serialBaudRate: 0,
+        serialLink: undefined,
         serialMonitorOpen: false,
         activeFileGroupId: `group-${id}`,
         languageMode: seededLanguage,
@@ -2131,7 +2167,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         // a sibling board up. Re-derive it from whatever board is active
         // now (false if none remain).
         const nextActive = activeBoardId
-          ? boards.find((b) => b.id === activeBoardId) ?? null
+          ? (boards.find((b) => b.id === activeBoardId) ?? null)
           : null;
         const running = nextActive ? nextActive.running : false;
         return { boards, activeBoardId, wires, running };
@@ -2161,8 +2197,15 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
     },
 
     loadProjectState: (payload) => {
-      const { stopSimulation, removeBoard, addBoard, setComponents, setWires,
-        setActiveBoardId, recalculateAllWirePositions } = get();
+      const {
+        stopSimulation,
+        removeBoard,
+        addBoard,
+        setComponents,
+        setWires,
+        setActiveBoardId,
+        recalculateAllWirePositions,
+      } = get();
       // Tear down current state
       if (get().running) stopSimulation();
       const oldIds = get().boards.map((b) => b.id);
@@ -2211,10 +2254,10 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       setWires(payload.wires);
 
       // Active board: prefer the saved one, fall back to the first.
-      const targetActive = payload.activeBoardId &&
-        get().boards.find((b) => b.id === payload.activeBoardId)
-        ? payload.activeBoardId
-        : (get().boards[0]?.id ?? null);
+      const targetActive =
+        payload.activeBoardId && get().boards.find((b) => b.id === payload.activeBoardId)
+          ? payload.activeBoardId
+          : (get().boards[0]?.id ?? null);
       if (targetActive) setActiveBoardId(targetActive);
 
       // Wires need a frame for the wokwi-elements to mount in the DOM before
@@ -2239,9 +2282,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       set({
         activeBoardId: boardId,
         // Sync legacy flat fields to this board's values
-        boardType: (isPiBoardKind(board.boardKind)
-          ? 'arduino-uno'
-          : board.boardKind) as BoardType,
+        boardType: (isPiBoardKind(board.boardKind) ? 'arduino-uno' : board.boardKind) as BoardType,
         boardPosition: { x: board.x, y: board.y },
         simulator: simulatorMap.get(boardId) ?? null,
         pinManager: pinManagerMap.get(boardId) ?? legacyPinManager,
@@ -2264,7 +2305,9 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         console.warn(`[compileBoardProgram] board not found: ${boardId}`);
         return;
       }
-      console.log(`[compileBoardProgram] ${boardId} kind=${board.boardKind} programLen=${program?.length ?? 0}`);
+      console.log(
+        `[compileBoardProgram] ${boardId} kind=${board.boardKind} programLen=${program?.length ?? 0}`,
+      );
 
       if (isEsp32Kind(board.boardKind)) {
         // All ESP32 boards (Xtensa + RISC-V C3): send firmware to QEMU via bridge.
@@ -2369,9 +2412,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         // writes each one in bounded steps — see simulation/micropythonSession.ts.
         const mainFile = files.find((f) => f.name === 'main.py') ?? files[0];
         if (mainFile) {
-          const auxFiles = files.filter(
-            (f) => f !== mainFile && f.name.endsWith('.py'),
-          );
+          const auxFiles = files.filter((f) => f !== mainFile && f.name.endsWith('.py'));
 
           // Does this run get a real, WORKING network driver? Two gates:
           //  - the sketch must want WiFi (must match what startBoard()
@@ -2385,9 +2426,8 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
           //    handing it the real driver today stalls esp_wifi_init with
           //    no output at all, which is strictly worse than the stub.
           //    Absent property (plain OSS bridge) means supported.
-          const bridgeMpyWifi = (
-            esp32Bridge as { micropythonWifiSupported?: boolean }
-          ).micropythonWifiSupported;
+          const bridgeMpyWifi = (esp32Bridge as { micropythonWifiSupported?: boolean })
+            .micropythonWifiSupported;
           // Does this run get the REAL network driver? Only one thing decides
           // it now: whether the backend behind this board models the radio.
           //
@@ -2463,69 +2503,72 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
           // becomes the FIRST project network instead of Velxio-GUEST.
           // Without the provider (OSS build) the classic four stand.
           const customSsids =
-            (window as { __velxio_custom_wifi_ssids__?: () => string[] | null })
-              .__velxio_custom_wifi_ssids__?.() ?? null;
+            (
+              window as { __velxio_custom_wifi_ssids__?: () => string[] | null }
+            ).__velxio_custom_wifi_ssids__?.() ?? null;
           const shimSsids: readonly string[] = customSsids ?? EMULATED_WIFI_SSIDS;
-          const networkStub = wifiOn ? [
-            'import network as _vlx_net',
-            'import time as _vlx_time',
-            `_VLX_SSIDS = (${shimSsids.map((s) => JSON.stringify(s)).join(', ')},)`,
-            'class _VlxWLAN:',
-            '    def __init__(self, *a, **k):',
-            '        self._w = _vlx_net.WLAN(*a, **k)',
-            '    def connect(self, ssid=None, key=None, **kw):',
-            '        if ssid is not None and ssid not in _VLX_SSIDS:',
-            `            print("[velxio] SSID %r is not part of the emulated network; connecting to ${JSON.stringify(shimSsids[0]).replace(/"/g, "'")} instead" % ssid)`,
-            `            ssid, key = ${JSON.stringify(shimSsids[0])}, ""`,
-            '        if ssid is None:',
-            '            return self._w.connect()',
-            '        return self._w.connect(ssid, key, **kw)',
-            // The sleepy poll pair. The canonical connect idiom is
-            // `while not wlan.isconnected(): pass` — a pure Python busy-wait.
-            // The emulated CPU only fast-forwards through WAITI idles, so a
-            // busy-wait pins the sim at real execution speed (~2% of the
-            // chip) and the handshake that costs ~1.5M instructions under a
-            // sleepy loop costs ~194M under a busy one — measured; it reads
-            // as "WiFi hangs". Sleeping 20ms per unanswered poll turns the
-            // user's busy loop into an idle loop without touching their code.
-            '    def isconnected(self):',
-            '        ok = self._w.isconnected()',
-            '        if not ok:',
-            '            _vlx_time.sleep_ms(20)',
-            '        return ok',
-            '    def status(self, *a):',
-            '        st = self._w.status(*a)',
-            '        _vlx_time.sleep_ms(20)',
-            '        return st',
-            '    def __getattr__(self, n):',
-            '        return getattr(self._w, n)',
-            'class _VlxNetwork:',
-            '    STA_IF = _vlx_net.STA_IF',
-            '    AP_IF = _vlx_net.AP_IF',
-            '    WLAN = _VlxWLAN',
-            '    def __getattr__(self, n):',
-            '        return getattr(_vlx_net, n)',
-            'sys.modules["network"] = _VlxNetwork()',
-          ] : [
-            'class _StubWLAN:',
-            '    def __init__(self, *a, **k):',
-            '        self._calls = 0',
-            '    def active(self, on=None): return True',
-            '    def connect(self, ssid=None, pwd=None): pass',
-            '    def disconnect(self): pass',
-            '    def isconnected(self):',
-            '        self._calls += 1',
-            '        return self._calls > 2',
-            '    def ifconfig(self, c=None): return ("10.0.2.15", "255.255.255.0", "10.0.2.2", "10.0.2.3")',
-            '    def config(self, *a, **k): return b"velxio"',
-            '    def status(self, *a): return 1010',
-            '    def scan(self): return []',
-            'class _StubNetwork:',
-            '    STA_IF = 0',
-            '    AP_IF = 1',
-            '    WLAN = _StubWLAN',
-            'sys.modules["network"] = _StubNetwork()',
-          ];
+          const networkStub = wifiOn
+            ? [
+                'import network as _vlx_net',
+                'import time as _vlx_time',
+                `_VLX_SSIDS = (${shimSsids.map((s) => JSON.stringify(s)).join(', ')},)`,
+                'class _VlxWLAN:',
+                '    def __init__(self, *a, **k):',
+                '        self._w = _vlx_net.WLAN(*a, **k)',
+                '    def connect(self, ssid=None, key=None, **kw):',
+                '        if ssid is not None and ssid not in _VLX_SSIDS:',
+                `            print("[velxio] SSID %r is not part of the emulated network; connecting to ${JSON.stringify(shimSsids[0]).replace(/"/g, "'")} instead" % ssid)`,
+                `            ssid, key = ${JSON.stringify(shimSsids[0])}, ""`,
+                '        if ssid is None:',
+                '            return self._w.connect()',
+                '        return self._w.connect(ssid, key, **kw)',
+                // The sleepy poll pair. The canonical connect idiom is
+                // `while not wlan.isconnected(): pass` — a pure Python busy-wait.
+                // The emulated CPU only fast-forwards through WAITI idles, so a
+                // busy-wait pins the sim at real execution speed (~2% of the
+                // chip) and the handshake that costs ~1.5M instructions under a
+                // sleepy loop costs ~194M under a busy one — measured; it reads
+                // as "WiFi hangs". Sleeping 20ms per unanswered poll turns the
+                // user's busy loop into an idle loop without touching their code.
+                '    def isconnected(self):',
+                '        ok = self._w.isconnected()',
+                '        if not ok:',
+                '            _vlx_time.sleep_ms(20)',
+                '        return ok',
+                '    def status(self, *a):',
+                '        st = self._w.status(*a)',
+                '        _vlx_time.sleep_ms(20)',
+                '        return st',
+                '    def __getattr__(self, n):',
+                '        return getattr(self._w, n)',
+                'class _VlxNetwork:',
+                '    STA_IF = _vlx_net.STA_IF',
+                '    AP_IF = _vlx_net.AP_IF',
+                '    WLAN = _VlxWLAN',
+                '    def __getattr__(self, n):',
+                '        return getattr(_vlx_net, n)',
+                'sys.modules["network"] = _VlxNetwork()',
+              ]
+            : [
+                'class _StubWLAN:',
+                '    def __init__(self, *a, **k):',
+                '        self._calls = 0',
+                '    def active(self, on=None): return True',
+                '    def connect(self, ssid=None, pwd=None): pass',
+                '    def disconnect(self): pass',
+                '    def isconnected(self):',
+                '        self._calls += 1',
+                '        return self._calls > 2',
+                '    def ifconfig(self, c=None): return ("10.0.2.15", "255.255.255.0", "10.0.2.2", "10.0.2.3")',
+                '    def config(self, *a, **k): return b"velxio"',
+                '    def status(self, *a): return 1010',
+                '    def scan(self): return []',
+                'class _StubNetwork:',
+                '    STA_IF = 0',
+                '    AP_IF = 1',
+                '    WLAN = _StubWLAN',
+                'sys.modules["network"] = _StubNetwork()',
+              ];
 
           const wifiStub = [
             'import sys',
@@ -2643,7 +2686,13 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       set((s) => ({
         boards: s.boards.map((b) =>
           b.id === boardId
-            ? { ...b, languageMode: mode, compiledProgram: null, compiledUf2: null, hasWifi: undefined }
+            ? {
+                ...b,
+                languageMode: mode,
+                compiledProgram: null,
+                compiledUf2: null,
+                hasWifi: undefined,
+              }
             : b,
         ),
       }));
@@ -2704,9 +2753,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         // a board that was not running.
         set((s) => ({
           boards: s.boards.map((b) =>
-            b.id === boardId
-              ? { ...b, engineMode: decision.engine, running: true }
-              : b,
+            b.id === boardId ? { ...b, engineMode: decision.engine, running: true } : b,
           ),
           serialMonitorOpen: true,
           ...(s.activeBoardId === boardId ? { running: true } : {}),
@@ -2715,9 +2762,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
           const instant = getInstantEngine();
           void instant?.run(boardId).finally(() => {
             set((s) => {
-              const boards = s.boards.map((b) =>
-                b.id === boardId ? { ...b, running: false } : b,
-              );
+              const boards = s.boards.map((b) => (b.id === boardId ? { ...b, running: false } : b));
               const isActive = s.activeBoardId === boardId;
               return { boards, ...(isActive ? { running: false } : {}) };
             });
@@ -2734,9 +2779,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
               `[${boardKindOfBoard(board)}] no bridge for ${boardId}: the guest cannot start`,
             );
             set((s) => ({
-              boards: s.boards.map((b) =>
-                b.id === boardId ? { ...b, running: false } : b,
-              ),
+              boards: s.boards.map((b) => (b.id === boardId ? { ...b, running: false } : b)),
             }));
           }
         }
@@ -2772,8 +2815,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
               if (val === undefined) continue;
               // A text property goes over as it was typed. Everything else is
               // a number the dialog stored as a string.
-              props[key] =
-                textKeys.has(key) || typeof val !== 'string' ? val : parseFloat(val);
+              props[key] = textKeys.has(key) || typeof val !== 'string' ? val : parseFloat(val);
             }
             // Extra pins (e.g. echo_pin for HC-SR04) resolve the same way
             if (sensorDef.extraPins) {
@@ -2946,13 +2988,14 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         // opened, so real internet and the Pro custom-AP config never applied
         // — WiFi that reached an IP and could reach nothing.
         const pioSim = rpSim as
-          | (typeof rpSim & { getPioPeripheral?: () => { onSimulationStart?: (f: unknown[]) => void } | null })
+          | (typeof rpSim & {
+              getPioPeripheral?: () => { onSimulationStart?: (f: unknown[]) => void } | null;
+            })
           | null;
         if (typeof pioSim?.getPioPeripheral === 'function') {
           const editorState = useEditorStore.getState();
           const rawFiles = editorState.fileGroups[board.activeFileGroupId];
-          const boardFiles =
-            rawFiles && rawFiles.length > 0 ? rawFiles : editorState.files;
+          const boardFiles = rawFiles && rawFiles.length > 0 ? rawFiles : editorState.files;
           pioSim.getPioPeripheral()?.onSimulationStart?.(boardFiles);
         }
       }
@@ -3030,14 +3073,16 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
           // previous "re-wire" line was destroying that wrapper and
           // silently breaking sibling-board serial forwarding after
           // every Reset press.
-          if (sim instanceof AVRSimulator) {
-            sim.onBaudRateChange = (baud) => {
+          if ('onBaudRateChange' in sim) {
+            (sim as SerialLineReporter).onBaudRateChange = (baud, link) => {
               set((s) => {
                 const boards = s.boards.map((b) =>
-                  b.id === boardId ? { ...b, serialBaudRate: baud } : b,
+                  b.id === boardId
+                    ? { ...b, serialBaudRate: nominalBaud(baud), serialLink: link }
+                    : b,
                 );
                 const isActive = s.activeBoardId === boardId;
-                return { boards, ...(isActive ? { serialBaudRate: baud } : {}) };
+                return { boards, ...(isActive ? { serialBaudRate: nominalBaud(baud) } : {}) };
               });
             };
           }
@@ -3046,7 +3091,9 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
 
       set((s) => {
         const boards = s.boards.map((b) =>
-          b.id === boardId ? { ...b, running: false, serialOutput: '', serialBaudRate: 0 } : b,
+          b.id === boardId
+            ? { ...b, running: false, serialOutput: '', serialBaudRate: 0, serialLink: undefined }
+            : b,
         );
         const isActive = s.activeBoardId === boardId;
         // Bump hexEpoch so every component part re-attaches with a fresh
@@ -3083,7 +3130,10 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
             // chip reads them via vx_attr_read) — never as top-level props.
             if (c.metadataId === 'custom-chip') {
               const prev = (c.properties.attrs ?? {}) as Record<string, number>;
-              return { ...c, properties: { ...c.properties, attrs: { ...prev, ...def.defaultValues } } };
+              return {
+                ...c,
+                properties: { ...c.properties, attrs: { ...prev, ...def.defaultValues } },
+              };
             }
             return { ...c, properties: { ...c.properties, ...def.defaultValues } };
           }),
@@ -3107,6 +3157,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
     burntComponents: new Set<string>(),
     serialOutput: '',
     serialBaudRate: 0,
+    serialLink: undefined,
     serialMonitorOpen: false,
     remoteConnected: false,
     remoteSocket: null,
@@ -3179,6 +3230,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
           compiledHex: null,
           serialOutput: '',
           serialBaudRate: 0,
+          serialLink: undefined,
           boards: s.boards.map((b) =>
             b.id === boardId
               ? {
@@ -3188,6 +3240,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
                   compiledUf2: null,
                   serialOutput: '',
                   serialBaudRate: 0,
+                  serialLink: undefined,
                 }
               : b,
           ),
@@ -3197,10 +3250,12 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
           type as BoardKind,
           pm,
           serialCallback,
-          (baud) =>
+          (baud, link) =>
             set((s) => {
               const boards = s.boards.map((b) =>
-                b.id === boardId ? { ...b, serialBaudRate: baud } : b,
+                b.id === boardId
+                  ? { ...b, serialBaudRate: nominalBaud(baud), serialLink: link }
+                  : b,
               );
               return { boards, serialBaudRate: baud };
             }),
@@ -3219,6 +3274,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
           compiledHex: null,
           serialOutput: '',
           serialBaudRate: 0,
+          serialLink: undefined,
           boards: s.boards.map((b) =>
             b.id === boardId
               ? {
@@ -3228,6 +3284,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
                   compiledUf2: null,
                   serialOutput: '',
                   serialBaudRate: 0,
+                  serialLink: undefined,
                 }
               : b,
           ),
@@ -3307,10 +3364,12 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
           boardType as BoardKind,
           pm,
           serialCallback,
-          (baud) =>
+          (baud, link) =>
             set((s) => {
               const boards = s.boards.map((b) =>
-                b.id === boardId ? { ...b, serialBaudRate: baud } : b,
+                b.id === boardId
+                  ? { ...b, serialBaudRate: nominalBaud(baud), serialLink: link }
+                  : b,
               );
               return { boards, serialBaudRate: baud };
             }),
@@ -3380,7 +3439,8 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
           ? {}
           : { burntComponents: new Set(s.burntComponents).add(componentId) },
       ),
-    clearBurntComponents: () => set((s) => (s.burntComponents.size === 0 ? {} : { burntComponents: new Set() })),
+    clearBurntComponents: () =>
+      set((s) => (s.burntComponents.size === 0 ? {} : { burntComponents: new Set() })),
 
     stopSimulation: () => {
       const { activeBoardId } = get();
@@ -3521,7 +3581,8 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
     updateComponent: (id, updates) => {
       const before = get().components.find((c) => c.id === id);
       const isBbMove =
-        !!before && isBreadboard(before.metadataId) &&
+        !!before &&
+        isBreadboard(before.metadataId) &&
         (updates.x !== undefined || updates.y !== undefined);
       const dx = isBbMove ? (updates.x ?? before.x) - before.x : 0;
       const dy = isBbMove ? (updates.y ?? before.y) - before.y : 0;
@@ -3533,8 +3594,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       // position (x/y) OR rotation. Without this, rotating a component
       // leaves every wire anchored to the pre-rotation pin positions, so
       // the part visually disconnects from its cables.
-      const rotationChanged =
-        updates.properties && 'rotation' in updates.properties;
+      const rotationChanged = updates.properties && 'rotation' in updates.properties;
       if (updates.x !== undefined || updates.y !== undefined || rotationChanged) {
         get().updateWirePositions(id);
         // Reseat ONLY on geometry changes (move/rotate) — the DOM pinInfo is
@@ -3861,14 +3921,16 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
           const updated = { ...wire };
           if (wire.start.componentId === componentId) {
             const pos = calculatePinPosition(
-              componentId, wire.start.pinName, compX, compY, rotation,
+              componentId,
+              wire.start.pinName,
+              compX,
+              compY,
+              rotation,
             );
             if (pos) updated.start = { ...wire.start, x: pos.x, y: pos.y };
           }
           if (wire.end.componentId === componentId) {
-            const pos = calculatePinPosition(
-              componentId, wire.end.pinName, compX, compY, rotation,
-            );
+            const pos = calculatePinPosition(componentId, wire.end.pinName, compX, compY, rotation);
             if (pos) updated.end = { ...wire.end, x: pos.x, y: pos.y };
           }
           return updated;
@@ -3888,7 +3950,13 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       // buried board cannot be grabbed to unplug it.
       const seatedOnIt = s.components.some((c) => c.id === id)
         ? s.boards.filter((b) =>
-            isBoardSeated(b.id, b.boardKind, b.x, b.y, s.components.filter((c) => c.id === id)),
+            isBoardSeated(
+              b.id,
+              b.boardKind,
+              b.x,
+              b.y,
+              s.components.filter((c) => c.id === id),
+            ),
           )
         : [];
       let top = s.zTop;
@@ -3935,7 +4003,11 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         const endY = endComp ? endComp.y + 6 : endBoard ? endBoard.y : state.boardPosition.y;
         const endRotation = endComp ? Number(endComp.properties?.rotation) || 0 : 0;
         const endPos = calculatePinPosition(
-          wire.end.componentId, wire.end.pinName, endX, endY, endRotation,
+          wire.end.componentId,
+          wire.end.pinName,
+          endX,
+          endY,
+          endRotation,
         );
         updated.end = endPos
           ? { ...wire.end, x: endPos.x, y: endPos.y }
@@ -3978,11 +4050,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
           // was clean.
           const elbow =
             routed === null
-              ? previewElbow(
-                  { x: wire.start.x, y: wire.start.y },
-                  wire.end.x,
-                  wire.end.y,
-                )
+              ? previewElbow({ x: wire.start.x, y: wire.start.y }, wire.end.x, wire.end.y)
               : null;
           updatedWires[i] = {
             ...wire,
@@ -4069,16 +4137,14 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
     recordAddComponent: (component) => {
       get().pushCommand({
         description: `Add ${component.metadataId}`,
-        execute: () =>
-          set((s) => ({ components: [...s.components, component] })),
+        execute: () => set((s) => ({ components: [...s.components, component] })),
         undo: () =>
           set((s) => ({
             components: s.components.filter((c) => c.id !== component.id),
             // Mirror the cascade in removeComponent so a redo→undo round
             // trip of an add-then-wired pair stays consistent.
             wires: s.wires.filter(
-              (w) =>
-                w.start.componentId !== component.id && w.end.componentId !== component.id,
+              (w) => w.start.componentId !== component.id && w.end.componentId !== component.id,
             ),
           })),
       });
@@ -4098,9 +4164,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         execute: () =>
           set((s) => ({
             components: s.components.filter((c) => c.id !== id),
-            wires: s.wires.filter(
-              (w) => w.start.componentId !== id && w.end.componentId !== id,
-            ),
+            wires: s.wires.filter((w) => w.start.componentId !== id && w.end.componentId !== id),
           })),
         undo: () => {
           set((s) => ({
@@ -4128,9 +4192,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
           description: 'Move component',
           execute: () => {
             set((s) => ({
-              components: s.components.map((c) =>
-                c.id === id ? { ...c, x: to.x, y: to.y } : c,
-              ),
+              components: s.components.map((c) => (c.id === id ? { ...c, x: to.x, y: to.y } : c)),
             }));
             get().updateWirePositions(id);
           },
@@ -4154,9 +4216,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
           execute: () => {
             set((s) => ({
               components: s.components.map((c) =>
-                c.id === id
-                  ? { ...c, properties: { ...c.properties, rotation: nextRotation } }
-                  : c,
+                c.id === id ? { ...c, properties: { ...c.properties, rotation: nextRotation } } : c,
               ),
             }));
             // Wires must follow the part on undo / redo too, otherwise a
@@ -4167,9 +4227,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
           undo: () => {
             set((s) => ({
               components: s.components.map((c) =>
-                c.id === id
-                  ? { ...c, properties: { ...c.properties, rotation: prevRotation } }
-                  : c,
+                c.id === id ? { ...c, properties: { ...c.properties, rotation: prevRotation } } : c,
               ),
             }));
             get().updateWirePositions(id);
@@ -4186,17 +4244,13 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
           execute: () =>
             set((s) => ({
               components: s.components.map((c) =>
-                c.id === id
-                  ? { ...c, properties: { ...c.properties, [key]: nextValue } }
-                  : c,
+                c.id === id ? { ...c, properties: { ...c.properties, [key]: nextValue } } : c,
               ),
             })),
           undo: () =>
             set((s) => ({
               components: s.components.map((c) =>
-                c.id === id
-                  ? { ...c, properties: { ...c.properties, [key]: prevValue } }
-                  : c,
+                c.id === id ? { ...c, properties: { ...c.properties, [key]: prevValue } } : c,
               ),
             })),
         },
@@ -4258,20 +4312,26 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       const board = get().boards.find((b) => b.id === boardId);
       if (!board) return;
 
+      // The wire runs both ways: a terminal transmitting at the wrong rate hands the
+      // board corrupted bytes, which is why a mismatched echo example echoes garbage
+      // back. Hardware monitors returned above — those bytes cross a real wire.
+      // Encoded ONCE here, so every board kind receives the same bytes a real terminal
+      // would put on the line (and the wire model corrupts bytes, never code points).
+      const bytes = applySerialWireTransmit(boardId, new TextEncoder().encode(text));
       if (isPiBoardKind(board.boardKind)) {
         const bridge = getBoardBridge(boardId);
         if (bridge) {
-          for (let i = 0; i < text.length; i++) {
-            bridge.sendSerialByte(text.charCodeAt(i));
-          }
+          for (const byte of bytes) bridge.sendSerialByte(byte);
         }
       } else if (isEsp32Kind(board.boardKind)) {
         const esp32Bridge = getEsp32Bridge(boardId);
         if (esp32Bridge) {
-          esp32Bridge.sendSerialBytes(Array.from(new TextEncoder().encode(text)));
+          esp32Bridge.sendSerialBytes(Array.from(bytes));
         }
       } else {
-        getBoardSimulator(boardId)?.serialWrite(text);
+        let latin1 = '';
+        for (const byte of bytes) latin1 += String.fromCharCode(byte);
+        getBoardSimulator(boardId)?.serialWrite(latin1);
       }
     },
 
@@ -4282,6 +4342,32 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         serialOutput: '',
         boards: s.boards.map((b) => (b.id === boardId ? { ...b, serialOutput: '' } : b)),
       }));
+    },
+
+    setBoardSerialLink: (boardId: string, link: SerialLink | null) => {
+      set((s) => {
+        const prev = s.boards.find((b) => b.id === boardId)?.serialLink;
+        // Same line, same object graph: a re-render per decoded byte is not free.
+        if (
+          (prev ?? null) === null
+            ? link === null
+            : link !== null &&
+              prev!.baud === link.baud &&
+              prev!.source === link.source &&
+              prev!.dataBits === link.dataBits &&
+              prev!.parity === link.parity &&
+              prev!.stopBits === link.stopBits
+        ) {
+          return {};
+        }
+        const boards = s.boards.map((b) =>
+          b.id === boardId
+            ? { ...b, serialLink: link ?? undefined, serialBaudRate: nominalBaud(link?.baud ?? 0) }
+            : b,
+        );
+        const isActive = s.activeBoardId === boardId;
+        return { boards, ...(isActive ? { serialBaudRate: nominalBaud(link?.baud ?? 0) } : {}) };
+      });
     },
 
     serialWriteToBoard: (boardId: string, text: string) => {

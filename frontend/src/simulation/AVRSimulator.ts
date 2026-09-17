@@ -38,6 +38,7 @@ import { PinManager } from './PinManager';
 import type { LineCapable, LineHostPort, LineSupport } from './line/LineHost';
 import { LineSensorHub } from './line/LineSensorHub';
 import { hexToUint8Array } from '../utils/hexParser';
+import type { SerialLink } from '../store/serialWire';
 import { I2CBusManager, nullI2CMaster } from './I2CBusManager';
 import type { I2CDevice } from './I2CBusManager';
 import { attachUsiI2c } from './UsiI2cBridge';
@@ -216,10 +217,10 @@ const attiny85AdcConfig: ADCConfig = {
   muxInputMask: 0xf,
   muxChannels: attiny85AdcChannels,
   adcReferences: [
-    ADCReference.AVCC,        // 00 = VCC
-    ADCReference.AREF,        // 01 = external AREF (PB0)
+    ADCReference.AVCC, // 00 = VCC
+    ADCReference.AREF, // 01 = external AREF (PB0)
     ADCReference.Internal1V1, // 10 = internal 1.1 V
-    ADCReference.Reserved,    // 11 = reserved
+    ADCReference.Reserved, // 11 = reserved
   ],
 };
 
@@ -349,8 +350,23 @@ export class AVRSimulator implements LineCapable {
 
   /** Serial output buffer — subscribers receive each byte or line */
   public onSerialData: ((char: string) => void) | null = null;
-  /** Fires whenever the sketch changes Serial baud rate (Serial.begin) */
-  public onBaudRateChange: ((baudRate: number) => void) | null = null;
+  /** Fires whenever the sketch changes the USART configuration (Serial.begin). Carries
+   *  the full line — rate AND frame format — because a host terminal needs both to
+   *  decode the wire, and `Serial.begin(9600, SERIAL_7E1)` is a legal sketch. */
+  public onBaudRateChange: ((baudRate: number, link: SerialLink) => void) | null = null;
+
+  /** The line UART0 is clocking right now, or null before the sketch configures it. */
+  public serialLink(): SerialLink | null {
+    const usart = this.usart;
+    if (!usart || !(usart.baudRate > 0)) return null;
+    return {
+      source: 'uart',
+      baud: usart.baudRate,
+      dataBits: usart.bitsPerChar,
+      parity: usart.parityEnabled ? (usart.parityOdd ? 'odd' : 'even') : 'none',
+      stopBits: usart.stopBits,
+    };
+  }
   /**
    * Fires for every digital pin transition with a millisecond timestamp
    * derived from the CPU cycle counter (cycles / CPU_HZ * 1000).
@@ -415,8 +431,7 @@ export class AVRSimulator implements LineCapable {
   private attachEeprom(): void {
     const cpu = this.cpu;
     if (!cpu) return;
-    const size =
-      this.boardVariant === 'mega' ? 4096 : this.boardVariant === 'tiny85' ? 512 : 1024;
+    const size = this.boardVariant === 'mega' ? 4096 : this.boardVariant === 'tiny85' ? 512 : 1024;
     const backend = this.eepromBackend ?? new EEPROMMemoryBackend(size);
     this.eepromBackend = backend;
     const config = this.boardVariant === 'tiny85' ? attiny85EepromConfig : eepromConfig;
@@ -534,7 +549,15 @@ export class AVRSimulator implements LineCapable {
       };
       this.usart.onRxComplete = () => this.drainSerialRxQueue();
       this.usart.onConfigurationChange = () => {
-        if (this.onBaudRateChange && this.usart) this.onBaudRateChange(this.usart.baudRate);
+        if (this.onBaudRateChange && this.usart) {
+          this.onBaudRateChange(this.usart.baudRate, {
+            source: 'uart',
+            baud: this.usart.baudRate,
+            dataBits: this.usart.bitsPerChar,
+            parity: this.usart.parityEnabled ? (this.usart.parityOdd ? 'odd' : 'even') : 'none',
+            stopBits: this.usart.stopBits,
+          });
+        }
         // Seed idle HIGH on the TX pin the first time TXEN flips on.
         this.handleUartConfigChange();
       };
@@ -670,7 +693,7 @@ export class AVRSimulator implements LineCapable {
     }
     if (usart.parityEnabled) {
       // Even parity = bit that makes total ones even; odd = total ones odd.
-      const parity = usart.parityOdd ? (onesCount % 2 === 0) : (onesCount % 2 !== 0);
+      const parity = usart.parityOdd ? onesCount % 2 === 0 : onesCount % 2 !== 0;
       bits.push(parity);
     }
     for (let i = 0; i < usart.stopBits; i++) bits.push(true);
@@ -762,7 +785,14 @@ export class AVRSimulator implements LineCapable {
       this.portB!.addListener((value) => {
         const ddr = readDdr(0x37);
         if (value !== this.lastPortBValue || ddr !== this.lastDdr.get('PORTB')) {
-          this.pinManager.updatePort('PORTB', value, this.lastPortBValue, TINY85_PIN_MAP, ddr, cpu.cycles);
+          this.pinManager.updatePort(
+            'PORTB',
+            value,
+            this.lastPortBValue,
+            TINY85_PIN_MAP,
+            ddr,
+            cpu.cycles,
+          );
           this.firePinChangeWithTime(value, this.lastPortBValue, null, 0);
           this.lastPortBValue = value;
           this.lastDdr.set('PORTB', ddr);
@@ -771,9 +801,17 @@ export class AVRSimulator implements LineCapable {
     } else if (this.boardVariant === 'mega') {
       // Mega: use explicit per-bit pin maps for all 11 ports
       const MEGA_DDR_ADDRS: Record<string, number> = {
-        PORTA: 0x21, PORTB: 0x24, PORTC: 0x27, PORTD: 0x2A,
-        PORTE: 0x2D, PORTF: 0x30, PORTG: 0x33, PORTH: 0x101,
-        PORTJ: 0x104, PORTK: 0x107, PORTL: 0x10A,
+        PORTA: 0x21,
+        PORTB: 0x24,
+        PORTC: 0x27,
+        PORTD: 0x2a,
+        PORTE: 0x2d,
+        PORTF: 0x30,
+        PORTG: 0x33,
+        PORTH: 0x101,
+        PORTJ: 0x104,
+        PORTK: 0x107,
+        PORTL: 0x10a,
       };
       for (const [portName, port] of this.megaPorts) {
         const pinMap = MEGA_PORT_BIT_MAP[portName];
@@ -795,7 +833,14 @@ export class AVRSimulator implements LineCapable {
       this.portB!.addListener((value) => {
         const ddr = readDdr(0x24);
         if (value !== this.lastPortBValue || ddr !== this.lastDdr.get('PORTB')) {
-          this.pinManager.updatePort('PORTB', value, this.lastPortBValue, undefined, ddr, cpu.cycles);
+          this.pinManager.updatePort(
+            'PORTB',
+            value,
+            this.lastPortBValue,
+            undefined,
+            ddr,
+            cpu.cycles,
+          );
           this.firePinChangeWithTime(value, this.lastPortBValue, null, 8);
           this.lastPortBValue = value;
           this.lastDdr.set('PORTB', ddr);
@@ -804,16 +849,30 @@ export class AVRSimulator implements LineCapable {
       this.portC!.addListener((value) => {
         const ddr = readDdr(0x27);
         if (value !== this.lastPortCValue || ddr !== this.lastDdr.get('PORTC')) {
-          this.pinManager.updatePort('PORTC', value, this.lastPortCValue, undefined, ddr, cpu.cycles);
+          this.pinManager.updatePort(
+            'PORTC',
+            value,
+            this.lastPortCValue,
+            undefined,
+            ddr,
+            cpu.cycles,
+          );
           this.firePinChangeWithTime(value, this.lastPortCValue, null, 14);
           this.lastPortCValue = value;
           this.lastDdr.set('PORTC', ddr);
         }
       });
       this.portD!.addListener((value) => {
-        const ddr = readDdr(0x2A);
+        const ddr = readDdr(0x2a);
         if (value !== this.lastPortDValue || ddr !== this.lastDdr.get('PORTD')) {
-          this.pinManager.updatePort('PORTD', value, this.lastPortDValue, undefined, ddr, cpu.cycles);
+          this.pinManager.updatePort(
+            'PORTD',
+            value,
+            this.lastPortDValue,
+            undefined,
+            ddr,
+            cpu.cycles,
+          );
           this.firePinChangeWithTime(value, this.lastPortDValue, null, 0);
           this.lastPortDValue = value;
           this.lastDdr.set('PORTD', ddr);
@@ -992,7 +1051,15 @@ export class AVRSimulator implements LineCapable {
         };
         this.usart.onRxComplete = () => this.drainSerialRxQueue();
         this.usart.onConfigurationChange = () => {
-          if (this.onBaudRateChange && this.usart) this.onBaudRateChange(this.usart.baudRate);
+          if (this.onBaudRateChange && this.usart) {
+            this.onBaudRateChange(this.usart.baudRate, {
+              source: 'uart',
+              baud: this.usart.baudRate,
+              dataBits: this.usart.bitsPerChar,
+              parity: this.usart.parityEnabled ? (this.usart.parityOdd ? 'odd' : 'even') : 'none',
+              stopBits: this.usart.stopBits,
+            });
+          }
           this.handleUartConfigChange();
         };
 

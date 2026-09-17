@@ -793,6 +793,7 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
     _chip_spi_runtimes:  list = []          # runtimes that called vx_spi_attach
     _chip_timer_runtimes: list = []         # runtimes with active timers
     _chip_pin_watch_runtimes: list = []     # runtimes that called vx_pin_watch
+    _chip_fb_runtimes: list = []            # runtimes that called vx_framebuffer_init
 
     # ePaper SSD168x slaves keyed by frontend component_id. The slave decodes
     # SPI bytes; on MASTER_ACTIVATION it emits an `epaper_update` WS frame.
@@ -1753,6 +1754,30 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
         name='esp32-spi-batch-flush',
     ).start()
 
+    # Custom-chip framebuffers ride the same cadence: whatever rows a display
+    # chip painted in the last 50 ms go out as one `chip_framebuffer` event.
+    # Per-write emission is not an option (a pixel-by-pixel driver makes
+    # hundreds of thousands of vx_buffer_write calls per screen), and the
+    # 20 fps ceiling is the one the SPI batches already impose on what a
+    # browser-side decoder can see.
+    _CHIP_FB_PERIOD_S = 0.05
+
+    def _chip_fb_flush_loop():
+        while not _stopped.is_set():
+            _stopped.wait(_CHIP_FB_PERIOD_S)
+            if _stopped.is_set():
+                break
+            for rt in list(_chip_fb_runtimes):
+                try:
+                    rt.flush_framebuffer()
+                except Exception as e:
+                    _log(f'[custom-chip framebuffer] flush error: {e!r}')
+
+    threading.Thread(
+        target=_chip_fb_flush_loop, daemon=True,
+        name='esp32-chip-fb-flush',
+    ).start()
+
     def _on_spi_event(bus_id: int, event: int) -> int:
         """Synchronous — must return immediately; called from QEMU thread.
 
@@ -2004,6 +2029,12 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                 wasm_bytes = base64.b64decode(wasm_b64)
                 attrs      = s.get('attrs', {}) or {}
                 pin_map    = s.get('pin_map', {}) or {}
+                # chip.json's display size and the canvas component id, so a
+                # framebuffer chip's rows can be routed to its element. Absent
+                # on older frontends: the chip then gets the 128x64 default and
+                # its frames carry no id (dropped by the frontend, as before).
+                display    = s.get('display') or None
+                comp_id    = s.get('component_id') or None
                 # Chip-to-chip nets, resolved by the frontend with the
                 # same union-find chipNets.ts runs for browser boards.
                 # Each entry: {'pin': <chip pin>, 'net': <net id>,
@@ -2069,8 +2100,14 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                     net_map=net_map,
                     net_bus=net_bus,
                     uart_map=uart_map,
+                    display=display,
+                    component_id=comp_id,
                 )
                 runtime.run_chip_setup()
+
+                if runtime.has_framebuffer():
+                    _chip_fb_runtimes.append(runtime)
+                    _log(f"[custom-chip] framebuffer chip registered ({comp_id})")
 
                 if runtime.i2c_address is not None:
                     slave = WasmChipI2CSlave(runtime.i2c_address, runtime)
@@ -2106,7 +2143,8 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
         if rt is None:
             return
         for lst in (_chip_uart_runtimes, _chip_spi_runtimes,
-                    _chip_pin_watch_runtimes, _chip_timer_runtimes):
+                    _chip_pin_watch_runtimes, _chip_timer_runtimes,
+                    _chip_fb_runtimes):
             while rt in lst:
                 lst.remove(rt)
         bus = _chip_net_bus[0]

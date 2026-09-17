@@ -38,12 +38,14 @@ Your support helps cover server costs, library maintenance, and frees up time to
 These companies have supported Velxio and provided their hardware so their components can be emulated accurately:
 
 <p align="center">
-  <a href="https://www.dfrobot.com/"><img src="docs/partners/dfrobot.png" alt="DFRobot" width="150"></a>&nbsp;
+  <a href="https://www.dfrobot.com/?tracking=rzqVux"><img src="docs/partners/dfrobot.png" alt="DFRobot" width="150"></a>&nbsp;
   <a href="https://www.espressif.com/"><img src="docs/partners/espressif.png" alt="Espressif" width="150"></a>&nbsp;
-  <a href="https://m5stack.com/"><img src="docs/partners/m5stack.png" alt="M5Stack" width="150"></a>&nbsp;
+  <a href="https://shop.m5stack.com/?ref=ehphcrsn"><img src="docs/partners/m5stack.png" alt="M5Stack" width="150"></a>&nbsp;
   <a href="https://www.seeedstudio.com/"><img src="docs/partners/seeed-studio.png" alt="Seeed Studio" width="150"></a>&nbsp;
   <a href="https://pimoroni.com/"><img src="docs/partners/pimoroni.png" alt="Pimoroni" width="150"></a>
 </p>
+
+<sub>The DFRobot and M5Stack links above are affiliate links: a purchase made through them earns Velxio a small commission at no extra cost to you, and it helps pay for the hosted instance. The simulator itself is AGPL and free either way.</sub>
 
 Their hardware is in the catalog today: the M5Stack Cardputer and Core, the Pimoroni Badger 2350 and Galactic Unicorn, the Seeed Studio XIAO family and Grove modules, the DFRobot UNIHIKER and Gravity sensors, and the whole Espressif ESP32 line up to the ESP32-C6. Of these, the M5Stack, Pimoroni and DFRobot boards, the Seeed XIAO Sense, C6 and RP2040, and the ESP32-C6 DevKit are only available online at velxio.dev; the self-hosted image ships the Arduino, Raspberry Pi Pico and ESP32 families (see [Supported Boards](#supported-boards)).
 

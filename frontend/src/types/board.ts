@@ -7,8 +7,8 @@ export type BoardKind =
   | 'raspberry-pi-pico' // RP2040, browser emulation
   | 'pi-pico-w' // RP2040 + WiFi, browser emulation (WiFi ignored)
   | 'raspberry-pi-zero' // QEMU virt + Cortex-A7 (armhf), backend — looks-like Pi Zero
-  | 'raspberry-pi-1'    // QEMU virt + Cortex-A7 (armhf), backend — looks-like Pi 1
-  | 'raspberry-pi-2'    // QEMU virt + Cortex-A7 (armhf), backend
+  | 'raspberry-pi-1' // QEMU virt + Cortex-A7 (armhf), backend — looks-like Pi 1
+  | 'raspberry-pi-2' // QEMU virt + Cortex-A7 (armhf), backend
   | 'raspberry-pi-3' // QEMU virt + Cortex-A53, backend
   | 'raspberry-pi-4' // QEMU virt + Cortex-A72, backend
   | 'raspberry-pi-5' // QEMU virt + Cortex-A76, backend
@@ -167,6 +167,14 @@ export interface BoardInstance {
   flashRevision?: string | null;
   serialOutput: string;
   serialBaudRate: number;
+  /**
+   * The line the board is clocking `Serial` on right now — rate, frame format and
+   * whether there is a wire at all (a USB-CDC console has no baud, on silicon as much
+   * as here). Published by the simulator/engine, never by the sketch's source text.
+   * Undefined until the guest configures its UART, and for boards whose engine does
+   * not report one; the monitor then makes no claim about the rate.
+   */
+  serialLink?: import('../store/serialWire').SerialLink;
   serialMonitorOpen: boolean;
   activeFileGroupId: string;
   languageMode: LanguageMode; // 'arduino' (default), 'micropython' or 'espidf'
@@ -208,8 +216,7 @@ export function isKnownBoardKind(kind: string): kind is BoardKind {
   // 'constructor' and '__proto__' would all pass — and the strings reaching
   // here come from files people send each other.
   return (
-    Object.prototype.hasOwnProperty.call(BOARD_KIND_LABELS, kind) ||
-    getProBoard(kind) !== undefined
+    Object.prototype.hasOwnProperty.call(BOARD_KIND_LABELS, kind) || getProBoard(kind) !== undefined
   );
 }
 
@@ -320,10 +327,7 @@ export const BOARD_KIND_ESPIDF_FQBN: Partial<Record<BoardKind, string>> = {};
  * Arduino-less board (FQBN null) fail with "No FQBN for board kind" even when
  * its ESP-IDF mode is perfectly buildable.
  */
-export function fqbnForLanguage(
-  kind: BoardKind,
-  mode: LanguageMode | undefined,
-): string | null {
+export function fqbnForLanguage(kind: BoardKind, mode: LanguageMode | undefined): string | null {
   if (mode === 'espidf' && BOARD_KIND_ESPIDF_FQBN[kind]) {
     return BOARD_KIND_ESPIDF_FQBN[kind] as string;
   }

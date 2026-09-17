@@ -211,7 +211,9 @@ export const SerialMonitor: React.FC = () => {
               onClick={() => handleTabClick(board.id)}
               title={boardDisplayName(board)}
             >
-              <span style={{ fontSize: 9, marginRight: 3, color: isActive ? color : 'var(--wb-10)' }}>
+              <span
+                style={{ fontSize: 9, marginRight: 3, color: isActive ? color : 'var(--wb-10)' }}
+              >
                 {BOARD_ICON[board.boardKind] ?? '●'}
               </span>
               {board.name?.trim() || BOARD_SHORT_LABEL[board.boardKind] || board.boardKind}
@@ -227,10 +229,19 @@ export const SerialMonitor: React.FC = () => {
               MicroPython REPL
             </span>
           )}
+          {!isMicroPython && activeBoard?.serialLink?.source === 'usb-cdc' && (
+            <span
+              style={styles.baudRate}
+              title="This console is a USB device endpoint, not a UART. As on the real board, the terminal's baud setting is ignored."
+            >
+              USB CDC
+            </span>
+          )}
           {activeBoard?.serialBaudRate != null &&
             activeBoard.serialBaudRate > 0 &&
+            activeBoard.serialLink?.source !== 'usb-cdc' &&
             !isMicroPython && (
-              <span style={styles.baudRate}>
+              <span style={styles.baudRate} title="The rate the board is clocking Serial at.">
                 {activeBoard.serialBaudRate.toLocaleString()} baud
               </span>
             )}
@@ -255,6 +266,11 @@ export const SerialMonitor: React.FC = () => {
         </div>
       </div>
 
+      {/* Overlay slot for a full-width notice about the LINK itself — e.g. the
+          terminal's baud not matching the rate the board is clocking, which is
+          why the text below is unreadable (empty in OSS). */}
+      <div data-velxio-slot="serial-banner" />
+
       {/* Output area. QEMU-Linux boards get the interactive xterm (shell
           input, line editing, ANSI) instead of the read-only mirror — this
           replaced the separate RaspberryPiWorkspace as the one terminal. */}
@@ -265,110 +281,111 @@ export const SerialMonitor: React.FC = () => {
           <PiTerminal key={activeBoard.id} boardId={activeBoard.id} />
         </div>
       ) : (
-      <pre ref={outputRef} style={styles.output}>
-        {activeBoard?.serialOutput
-          ? (() => {
-              // Firmwares and the Pi's Linux console emit ANSI escapes the
-              // <pre> can't render, so they leak through as literal text:
-              // SGR colour (`\x1b[0;32m`), and — on the Pi shell — the DSR
-              // cursor-position query `\x1b[6n` plus cursor moves / clears,
-              // which showed up as a stray `[6n` next to the prompt. Strip
-              // all CSI sequences (and keypad-mode toggles); a raw log <pre>
-              // can't act on any of them anyway. (xterm in PiTerminal still
-              // parses + answers them — this only cleans the dumb mirror.)
-              const text = activeBoard.serialOutput
-                .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')
-                .replace(/\x1b[=>]/g, '')
-                // Line-editing bytes the guest shell echoes (DEL on
-                // backspace, BEL, other C0 controls) render as tofu boxes
-                // in a <pre>; strip everything except \t \n \r.
-                .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
-              // ESP32 (QEMU slirp) hands out 192.168.4.x; the Pico W virtual
-              // net hands out 10.13.37.x. Both reach their emulated server
-              // through the same /api/gateway proxy, so linkify either subnet.
-              // The http:// prefix is OPTIONAL: Arduino sketches tend to print
-              // full URLs, but MicroPython's idiom is the bare ifconfig()[0]
-              // ("Open: 192.168.4.15") — requiring the scheme left exactly
-              // those users with a dead-end IP that is unreachable outside
-              // the emulated network. The trailing dot-check keeps a longer
-              // address like 192.168.4.15.99 from half-matching.
-              const ipRegex = /(?:http:\/\/)?(?:192\.168\.4|10\.13\.37)\.(\d{1,3})(?!\d|\.\d)(\/[^\s]*)?/g;
-              // ...but ONLY once the board actually joined a network. A sketch
-              // that calls WiFi.softAP() becomes the access point instead of a
-              // client, and the ESP32's SoftAP default address is 192.168.4.1
-              // — the very subnet above. The address alone cannot tell the two
-              // apart, so a captive-portal sketch used to get a gateway link
-              // that could never resolve: the bridge the proxy looks up is
-              // registered on 'got_ip', which only a STATION ever reaches, so
-              // the click landed on a 404 telling the user to connect to WiFi
-              // when the sketch had deliberately chosen not to. Gate on the
-              // status every family reports: QEMU (wifi_status_parser),
-              // the in-browser JS engines, and the Pico W's cyw43 peripheral
-              // all emit 'got_ip'. Without it the IP stays plain text.
-              const reachable = activeBoard.wifiStatus?.status === 'got_ip';
-              const matches = reachable ? [...text.matchAll(ipRegex)] : [];
+        <pre ref={outputRef} style={styles.output}>
+          {activeBoard?.serialOutput
+            ? (() => {
+                // Firmwares and the Pi's Linux console emit ANSI escapes the
+                // <pre> can't render, so they leak through as literal text:
+                // SGR colour (`\x1b[0;32m`), and — on the Pi shell — the DSR
+                // cursor-position query `\x1b[6n` plus cursor moves / clears,
+                // which showed up as a stray `[6n` next to the prompt. Strip
+                // all CSI sequences (and keypad-mode toggles); a raw log <pre>
+                // can't act on any of them anyway. (xterm in PiTerminal still
+                // parses + answers them — this only cleans the dumb mirror.)
+                const text = activeBoard.serialOutput
+                  .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')
+                  .replace(/\x1b[=>]/g, '')
+                  // Line-editing bytes the guest shell echoes (DEL on
+                  // backspace, BEL, other C0 controls) render as tofu boxes
+                  // in a <pre>; strip everything except \t \n \r.
+                  .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
+                // ESP32 (QEMU slirp) hands out 192.168.4.x; the Pico W virtual
+                // net hands out 10.13.37.x. Both reach their emulated server
+                // through the same /api/gateway proxy, so linkify either subnet.
+                // The http:// prefix is OPTIONAL: Arduino sketches tend to print
+                // full URLs, but MicroPython's idiom is the bare ifconfig()[0]
+                // ("Open: 192.168.4.15") — requiring the scheme left exactly
+                // those users with a dead-end IP that is unreachable outside
+                // the emulated network. The trailing dot-check keeps a longer
+                // address like 192.168.4.15.99 from half-matching.
+                const ipRegex =
+                  /(?:http:\/\/)?(?:192\.168\.4|10\.13\.37)\.(\d{1,3})(?!\d|\.\d)(\/[^\s]*)?/g;
+                // ...but ONLY once the board actually joined a network. A sketch
+                // that calls WiFi.softAP() becomes the access point instead of a
+                // client, and the ESP32's SoftAP default address is 192.168.4.1
+                // — the very subnet above. The address alone cannot tell the two
+                // apart, so a captive-portal sketch used to get a gateway link
+                // that could never resolve: the bridge the proxy looks up is
+                // registered on 'got_ip', which only a STATION ever reaches, so
+                // the click landed on a 404 telling the user to connect to WiFi
+                // when the sketch had deliberately chosen not to. Gate on the
+                // status every family reports: QEMU (wifi_status_parser),
+                // the in-browser JS engines, and the Pico W's cyw43 peripheral
+                // all emit 'got_ip'. Without it the IP stays plain text.
+                const reachable = activeBoard.wifiStatus?.status === 'got_ip';
+                const matches = reachable ? [...text.matchAll(ipRegex)] : [];
 
-              if (matches.length > 0) {
-                const parts: (string | React.ReactNode)[] = [];
-                let lastIdx = 0;
-                const sessionId = getTabSessionId();
-                const backendBase =
-                  (import.meta.env.VITE_API_BASE as string | undefined) ??
-                  'http://localhost:8001/api';
+                if (matches.length > 0) {
+                  const parts: (string | React.ReactNode)[] = [];
+                  let lastIdx = 0;
+                  const sessionId = getTabSessionId();
+                  const backendBase =
+                    (import.meta.env.VITE_API_BASE as string | undefined) ??
+                    'http://localhost:8001/api';
 
-                matches.forEach((m, i) => {
-                  const start = m.index!;
-                  const end = start + m[0].length;
-                  const path = m[2] || '/';
-                  const clientId = `${sessionId}::${activeBoard.id}`;
-                  const gatewayUrl = `${backendBase}/gateway/${clientId}${path}`;
+                  matches.forEach((m, i) => {
+                    const start = m.index!;
+                    const end = start + m[0].length;
+                    const path = m[2] || '/';
+                    const clientId = `${sessionId}::${activeBoard.id}`;
+                    const gatewayUrl = `${backendBase}/gateway/${clientId}${path}`;
 
-                  parts.push(text.slice(lastIdx, start));
-                  // Boards whose network stack lives in THIS tab (Pico W, and
-                  // any ESP32 on the in-browser JS engine — wifiStatus carries
-                  // inBrowser) must open in the in-app iframe: a new tab
-                  // backgrounds this one, the emulation gets timer-throttled,
-                  // and the in-chip server times out. QEMU boards run
-                  // backend-side, so a new tab is fine there.
-                  const servesInTab =
-                    activeBoard.boardKind === 'pi-pico-w' ||
-                    activeBoard.wifiStatus?.inBrowser === true;
-                  parts.push(
-                    <a
-                      key={i}
-                      href={gatewayUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      onClick={
-                        servesInTab
-                          ? (e) => {
-                              e.preventDefault();
-                              openDeviceGateway(gatewayUrl);
-                            }
-                          : undefined
-                      }
-                      style={{
-                        color: '#4fc3f7',
-                        textDecoration: 'underline',
-                        fontWeight: 'bold',
-                        cursor: 'pointer',
-                      }}
-                      title={t('editor.serial.iotGatewayTitle')}
-                    >
-                      {m[0]} ({t('editor.serial.openIotGateway')} ↗)
-                    </a>,
-                  );
-                  lastIdx = end;
-                });
-                parts.push(text.slice(lastIdx));
-                return parts;
-              }
-              return text;
-            })()
-          : activeBoard?.running
-            ? t('editor.serial.waitingData') + '\n'
-            : t('editor.serial.startSim') + '\n'}
-      </pre>
+                    parts.push(text.slice(lastIdx, start));
+                    // Boards whose network stack lives in THIS tab (Pico W, and
+                    // any ESP32 on the in-browser JS engine — wifiStatus carries
+                    // inBrowser) must open in the in-app iframe: a new tab
+                    // backgrounds this one, the emulation gets timer-throttled,
+                    // and the in-chip server times out. QEMU boards run
+                    // backend-side, so a new tab is fine there.
+                    const servesInTab =
+                      activeBoard.boardKind === 'pi-pico-w' ||
+                      activeBoard.wifiStatus?.inBrowser === true;
+                    parts.push(
+                      <a
+                        key={i}
+                        href={gatewayUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={
+                          servesInTab
+                            ? (e) => {
+                                e.preventDefault();
+                                openDeviceGateway(gatewayUrl);
+                              }
+                            : undefined
+                        }
+                        style={{
+                          color: '#4fc3f7',
+                          textDecoration: 'underline',
+                          fontWeight: 'bold',
+                          cursor: 'pointer',
+                        }}
+                        title={t('editor.serial.iotGatewayTitle')}
+                      >
+                        {m[0]} ({t('editor.serial.openIotGateway')} ↗)
+                      </a>,
+                    );
+                    lastIdx = end;
+                  });
+                  parts.push(text.slice(lastIdx));
+                  return parts;
+                }
+                return text;
+              })()
+            : activeBoard?.running
+              ? t('editor.serial.waitingData') + '\n'
+              : t('editor.serial.startSim') + '\n'}
+        </pre>
       )}
 
       {/* Input row — the xterm handles Pi input itself */}
@@ -377,34 +394,34 @@ export const SerialMonitor: React.FC = () => {
         activeBoard?.running &&
         activeBoard?.engineMode !== 'instant'
       ) && (
-      <div style={styles.inputRow}>
-        <input
-          type="text"
-          value={inputValue}
-          onChange={(e) => setInputValue(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder={
-            isMicroPython
-              ? t('editor.serial.placeholderPython')
-              : t('editor.serial.placeholderText')
-          }
-          style={styles.input}
-          disabled={!activeBoard?.running}
-        />
-        <select
-          value={lineEnding}
-          onChange={(e) => setLineEnding(e.target.value as typeof lineEnding)}
-          style={styles.select}
-        >
-          <option value="none">{t('editor.serial.lineEnd.none')}</option>
-          <option value="nl">{t('editor.serial.lineEnd.nl')}</option>
-          <option value="cr">{t('editor.serial.lineEnd.cr')}</option>
-          <option value="both">{t('editor.serial.lineEnd.both')}</option>
-        </select>
-        <button onClick={handleSend} disabled={!activeBoard?.running} style={styles.sendBtn}>
-          {t('editor.serial.send')}
-        </button>
-      </div>
+        <div style={styles.inputRow}>
+          <input
+            type="text"
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={
+              isMicroPython
+                ? t('editor.serial.placeholderPython')
+                : t('editor.serial.placeholderText')
+            }
+            style={styles.input}
+            disabled={!activeBoard?.running}
+          />
+          <select
+            value={lineEnding}
+            onChange={(e) => setLineEnding(e.target.value as typeof lineEnding)}
+            style={styles.select}
+          >
+            <option value="none">{t('editor.serial.lineEnd.none')}</option>
+            <option value="nl">{t('editor.serial.lineEnd.nl')}</option>
+            <option value="cr">{t('editor.serial.lineEnd.cr')}</option>
+            <option value="both">{t('editor.serial.lineEnd.both')}</option>
+          </select>
+          <button onClick={handleSend} disabled={!activeBoard?.running} style={styles.sendBtn}>
+            {t('editor.serial.send')}
+          </button>
+        </div>
       )}
     </div>
   );

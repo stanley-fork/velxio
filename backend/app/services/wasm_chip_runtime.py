@@ -29,6 +29,8 @@ import struct
 import threading
 import time
 from typing import Callable, Optional
+import base64
+import zlib
 
 import wasmtime
 
@@ -234,6 +236,8 @@ class WasmChipRuntime:
         net_map: dict[str, str] | None = None,
         net_bus: Optional[ChipNetBus] = None,
         uart_map: dict[int, int] | None = None,
+        display: dict | None = None,
+        component_id: str | None = None,
     ):
         """
         Args:
@@ -259,6 +263,11 @@ class WasmChipRuntime:
             uart_map:   {gpio: uart_id} for the UART pins this chip is wired to,
                         from the board's UART pin table in the frontend. Decides
                         which UART vx_uart_attach binds to; empty keeps CHIP_UART.
+            display:    chip.json's `display: {width, height}` - the framebuffer
+                        vx_framebuffer_init hands the chip. Same default as the
+                        browser runtime (128x64) when the chip declares none.
+            component_id: the canvas component this chip is, so a framebuffer
+                        frame can be routed to its element (like ePaper frames).
         """
         self._engine = wasmtime.Engine()
         self._store = wasmtime.Store(self._engine)
@@ -322,6 +331,28 @@ class WasmChipRuntime:
         # sit in both maps (a net that also carries a board GPIO); the two
         # entries keep separate last_value so neither source double-fires.
         self._net_watches: dict[int, list[dict]] = {}
+
+        # Framebuffer (vx_framebuffer_init). RGBA8888, the size chip.json declares.
+        # Written by the chip from whichever thread runs its WASM (QEMU's IO thread
+        # for a bus callback, the chip-timer thread for a timer) and read by the
+        # worker's flush thread, hence the lock. The dirty range is a byte span,
+        # turned into whole rows at flush time: a display driver paints windows,
+        # and shipping the rows they touched instead of the whole buffer is what
+        # keeps a 480x320 panel from pushing 600 kB per frame down the WS.
+        self.component_id = component_id
+        dw = dh = 0
+        if isinstance(display, dict):
+            try:
+                dw, dh = int(display.get('width', 0)), int(display.get('height', 0))
+            except (TypeError, ValueError):
+                dw = dh = 0
+        self._display = (dw, dh) if dw > 0 and dh > 0 else None
+        self._fb: bytearray | None = None
+        self._fb_w = 0
+        self._fb_h = 0
+        self._fb_dirty_lo: int | None = None
+        self._fb_dirty_hi = 0
+        self._fb_lock = threading.Lock()
 
         # Timestamp anchor for sim_now_nanos
         self._t0 = time.monotonic_ns()
@@ -795,15 +826,49 @@ class WasmChipRuntime:
             self._write_bytes(buf_ptr, data[:n] + b"\x00")
             return n
 
-        # ── Framebuffer (stubs — no display in the headless worker) ──
-        def vx_framebuffer_init(_w_ptr: int, _h_ptr: int) -> int:
-            return -1
+        # ── Framebuffer ──
+        # The worker has no canvas, but the chip's pixels still have somewhere to
+        # go: the frontend element that placed the chip. The buffer lives here,
+        # the worker ships the rows the chip touched (see flush_framebuffer), and
+        # CustomChipPart paints them. Before this the three calls were stubs, so a
+        # custom display chip on the QEMU path decoded its SPI perfectly and
+        # showed nothing (issue #338).
+        def vx_framebuffer_init(w_ptr: int, h_ptr: int) -> int:
+            w, h = self._display or (128, 64)
+            with self._fb_lock:
+                if self._fb is None:
+                    self._fb = bytearray(w * h * 4)
+                    self._fb_w, self._fb_h = w, h
+                    # The first frame is the whole buffer, so a chip that never
+                    # writes still gets its (black) glass painted once.
+                    self._fb_dirty_lo, self._fb_dirty_hi = 0, len(self._fb)
+            self._write_bytes(w_ptr, struct.pack('<I', self._fb_w))
+            self._write_bytes(h_ptr, struct.pack('<I', self._fb_h))
+            return 0
 
-        def vx_buffer_write(_handle: int, _offset: int, _data: int, _len: int) -> None:
-            return
+        def vx_buffer_write(_handle: int, offset: int, data: int, length: int) -> None:
+            if self._fb is None or length <= 0 or offset < 0:
+                return
+            end = min(offset + length, len(self._fb))
+            n = end - offset
+            if n <= 0:
+                return
+            chunk = self._read_bytes(data, n)
+            with self._fb_lock:
+                self._fb[offset:end] = chunk
+                lo = self._fb_dirty_lo
+                self._fb_dirty_lo = offset if lo is None else min(lo, offset)
+                self._fb_dirty_hi = max(self._fb_dirty_hi, end)
 
-        def vx_buffer_read(_handle: int, _offset: int, _data: int, _len: int) -> None:
-            return
+        def vx_buffer_read(_handle: int, offset: int, data: int, length: int) -> None:
+            if self._fb is None or length <= 0 or offset < 0:
+                return
+            end = min(offset + length, len(self._fb))
+            if end <= offset:
+                return
+            with self._fb_lock:
+                chunk = bytes(self._fb[offset:end])
+            self._write_bytes(data, chunk)
 
         # ── External ROM (no ROM delivery path on the ESP32 worker yet — a
         #    chip calling these gets an empty ROM instead of failing to
@@ -907,6 +972,46 @@ class WasmChipRuntime:
             self._attrs[str(name)] = float(value)
 
     # ── Pin watch dispatch (worker calls this from _on_pin_change) ──────────
+    # ── Framebuffer delivery ──────────────────────────────────────────────────
+
+    def has_framebuffer(self) -> bool:
+        """True once chip_setup called vx_framebuffer_init."""
+        return self._fb is not None
+
+    def flush_framebuffer(self) -> bool:
+        """Ship the rows the chip touched since the last flush as ONE
+        `chip_framebuffer` event: RGBA rows y0..y1 (inclusive), zlib-deflated,
+        base64. Called by the worker's flush thread on a fixed cadence, never
+        per vx_buffer_write — a driver that paints a 480x320 window pixel by
+        pixel makes hundreds of thousands of writes per screen. Returns True
+        when a frame went out."""
+        if self._fb is None:
+            return False
+        with self._fb_lock:
+            lo = self._fb_dirty_lo
+            if lo is None:
+                return False
+            hi = self._fb_dirty_hi
+            self._fb_dirty_lo, self._fb_dirty_hi = None, 0
+            stride = self._fb_w * 4
+            y0 = lo // stride
+            y1 = min(self._fb_h - 1, max(y0, (hi - 1) // stride))
+            rows = bytes(self._fb[y0 * stride:(y1 + 1) * stride])
+        # Compress OUTSIDE the lock: the chip keeps painting meanwhile. Level 1
+        # is plenty — flat colour and text compress by two orders of magnitude,
+        # and the flush cadence matters more than the last few percent.
+        packed = zlib.compress(rows, 1)
+        self._emit({
+            'type': 'chip_framebuffer',
+            'component_id': self.component_id,
+            'width': self._fb_w,
+            'height': self._fb_h,
+            'y0': y0,
+            'y1': y1,
+            'rows_zlib_b64': base64.b64encode(packed).decode('ascii'),
+        })
+        return True
+
     def has_pin_watches(self) -> bool:
         return bool(self._pin_watches)
 

@@ -36,6 +36,11 @@ export interface ProBoardSimulator {
   readonly isProBoardSimulator: true;
   onSerialData: ((ch: string) => void) | null;
   onPinChangeWithTime: ((pin: number, state: boolean, time: number) => void) | null;
+  /** The line the console is clocking (see store/serialWire.ts); optional — a
+   *  simulator that does not report one leaves the monitor making no claim. */
+  onBaudRateChange?:
+    | ((baudRate: number, link: import('../store/serialWire').SerialLink) => void)
+    | null;
   stop(): void;
   detachPioPeripheral?(): void;
 }
@@ -188,11 +193,7 @@ export interface ProBoardDef {
    *  Called shortly after run start with the board's DOM element plus its
    *  simulator shim and ESP32 bridge (either may be null depending on the run
    *  path); must return a cleanup that detaches everything. */
-  attachBuiltins?: (ctx: {
-    el: HTMLElement;
-    sim: unknown;
-    bridge: unknown;
-  }) => () => void;
+  attachBuiltins?: (ctx: { el: HTMLElement; sim: unknown; bridge: unknown }) => () => void;
 
   /**
    * Seed code a freshly placed board starts with, per language mode.
@@ -211,7 +212,10 @@ export interface ProBoardDef {
    * (piFamily) boards, whose seed is the guest script.
    */
   defaultFiles?: Partial<
-    Record<'arduino' | 'micropython' | 'espidf' | 'python', Array<{ name: string; content: string }>>
+    Record<
+      'arduino' | 'micropython' | 'espidf' | 'python',
+      Array<{ name: string; content: string }>
+    >
   >;
   /** Library manifest seeded together with `defaultFiles.arduino` — the seed
    *  sketch includes the vendor library, so the board must declare it or the
@@ -306,11 +310,7 @@ export function getGuestSetup(kind: string): string | undefined {
 // built-in screen, but an overlay can route the guest's display frames to
 // a panel wired on the canvas. Carrying that through a stub ProBoardDef
 // would take over the board's artwork, so it gets its own registry.
-type BuiltinsAttach = (ctx: {
-  el: HTMLElement;
-  sim: unknown;
-  bridge: unknown;
-}) => () => void;
+type BuiltinsAttach = (ctx: { el: HTMLElement; sim: unknown; bridge: unknown }) => () => void;
 
 const boardBuiltins = new Map<string, BuiltinsAttach>();
 

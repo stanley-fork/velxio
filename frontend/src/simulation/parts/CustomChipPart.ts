@@ -19,6 +19,8 @@ import {
   detectSimulatorKind,
 } from '../customChips';
 import { hostsChipsInWorker } from '../customChips/simulatorBridges';
+import { b64ToBytes, inflateZlib, spliceFramebufferRows } from '../customChips/inflateZlib';
+import type { ChipFramebufferFrame } from '../Esp32Bridge';
 import { chipVirtualPin } from '../customChips/chipVirtualPin';
 import { useSimulatorStore } from '../../store/useSimulatorStore';
 import { useElectricalStore } from '../../store/useElectricalStore';
@@ -36,23 +38,66 @@ import { setAdcVoltage, analogRailVolts } from './partUtils';
 // the libretro Galaksija core's keyMap. The chip's set_key takes this offset;
 // reading 0x2000+offset on the bus returns pressed/released.
 const GALAKSIJA_KEY_OFFSET: Record<string, number> = {
-  KeyA: 1, KeyB: 2, KeyC: 3, KeyD: 4, KeyE: 5, KeyF: 6, KeyG: 7, KeyH: 8, KeyI: 9,
-  KeyJ: 10, KeyK: 11, KeyL: 12, KeyM: 13, KeyN: 14, KeyO: 15, KeyP: 16, KeyQ: 17,
-  KeyR: 18, KeyS: 19, KeyT: 20, KeyU: 21, KeyV: 22, KeyW: 23, KeyX: 24, KeyY: 25,
-  KeyZ: 26, ArrowUp: 27, ArrowDown: 28, ArrowLeft: 29, Backspace: 29,
-  ArrowRight: 30, Space: 31, Digit0: 32, Digit1: 33, Digit2: 34, Digit3: 35,
-  Digit4: 36, Digit5: 37, Digit6: 38, Digit7: 39, Digit8: 40, Digit9: 41,
-  Semicolon: 42, Quote: 43, Comma: 44, Equal: 45, Period: 46, Slash: 47,
-  Enter: 48, Tab: 49, Delete: 51, ShiftLeft: 53, ShiftRight: 53,
+  KeyA: 1,
+  KeyB: 2,
+  KeyC: 3,
+  KeyD: 4,
+  KeyE: 5,
+  KeyF: 6,
+  KeyG: 7,
+  KeyH: 8,
+  KeyI: 9,
+  KeyJ: 10,
+  KeyK: 11,
+  KeyL: 12,
+  KeyM: 13,
+  KeyN: 14,
+  KeyO: 15,
+  KeyP: 16,
+  KeyQ: 17,
+  KeyR: 18,
+  KeyS: 19,
+  KeyT: 20,
+  KeyU: 21,
+  KeyV: 22,
+  KeyW: 23,
+  KeyX: 24,
+  KeyY: 25,
+  KeyZ: 26,
+  ArrowUp: 27,
+  ArrowDown: 28,
+  ArrowLeft: 29,
+  Backspace: 29,
+  ArrowRight: 30,
+  Space: 31,
+  Digit0: 32,
+  Digit1: 33,
+  Digit2: 34,
+  Digit3: 35,
+  Digit4: 36,
+  Digit5: 37,
+  Digit6: 38,
+  Digit7: 39,
+  Digit8: 40,
+  Digit9: 41,
+  Semicolon: 42,
+  Quote: 43,
+  Comma: 44,
+  Equal: 45,
+  Period: 46,
+  Slash: 47,
+  Enter: 48,
+  Tab: 49,
+  Delete: 51,
+  ShiftLeft: 53,
+  ShiftRight: 53,
 };
 
 PartSimulationRegistry.register('custom-chip', {
   attachEvents: (_element, simulator, getArduinoPin, componentId) => {
     const sim = simulator as any;
 
-    const component = useSimulatorStore
-      .getState()
-      .components.find((c) => c.id === componentId);
+    const component = useSimulatorStore.getState().components.find((c) => c.id === componentId);
     if (!component) {
       console.warn(`[custom-chip] component ${componentId} not found in store`);
       return () => {};
@@ -73,7 +118,11 @@ PartSimulationRegistry.register('custom-chip', {
       // error — treat it like a pinless chip rather than throwing on ''.
       const obj = chipJsonStr.trim() ? JSON.parse(chipJsonStr) : {};
       pins = normalizeChipPinNames(obj.pins);
-      if (obj.display && typeof obj.display.width === 'number' && typeof obj.display.height === 'number') {
+      if (
+        obj.display &&
+        typeof obj.display.width === 'number' &&
+        typeof obj.display.height === 'number'
+      ) {
         display = { width: obj.display.width, height: obj.display.height };
       }
     } catch (e) {
@@ -95,7 +144,9 @@ PartSimulationRegistry.register('custom-chip', {
         if (!Number.isNaN(n)) attrsObj[k] = n;
         else if (typeof v === 'string') strAttrsObj[k] = v;
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
 
     // Pull external ROM bytes (base64-encoded) if the chip's program lives
     // in a project file like .s / .hex / .bin compiled to romBytes by the
@@ -183,6 +234,10 @@ PartSimulationRegistry.register('custom-chip', {
           pin_map: pinMap,
           nets,
           uart_map: uartMap,
+          // The worker allocates the framebuffer vx_framebuffer_init hands the
+          // chip, and needs the id to send the rows back to THIS element.
+          component_id: componentId,
+          display: display ?? undefined,
         });
         console.info(
           `[custom-chip:${componentId}] sent to backend ESP32 worker (chip runs synchronously inside QEMU process). pinMap=${JSON.stringify(pinMap)} nets=${JSON.stringify(nets)} uartMap=${JSON.stringify(uartMap)}`,
@@ -190,10 +245,69 @@ PartSimulationRegistry.register('custom-chip', {
       } catch (e) {
         console.error(`[custom-chip:${componentId}] failed to register on ESP32 backend:`, e);
       }
+      // A display chip's pixels come back from the worker as `chip_framebuffer`
+      // rows (see Esp32Bridge.onChipFramebuffer). Kept in a full RGBA image here
+      // so a partial frame (the rows a driver's window touched) lands on top of
+      // what was already drawn, and painted at most once per animation frame —
+      // the worker flushes at ~20 fps, but nothing obliges the browser to
+      // repaint faster than it displays.
+      let offFramebuffer: () => void = () => {};
+      const bridge = (
+        sim as { getBridge?: () => { onChipFramebuffer?: unknown } }
+      ).getBridge?.() as
+        | { onChipFramebuffer: ((id: string, frame: ChipFramebufferFrame) => void) | null }
+        | undefined;
+      const chipEl = document.getElementById(componentId) as
+        | (HTMLElement & { paintFramebuffer?: (rgba: Uint8Array, w: number, h: number) => void })
+        | null;
+      if (bridge && display && typeof chipEl?.paintFramebuffer === 'function') {
+        const image = new Uint8Array(display.width * display.height * 4);
+        let dirty = false;
+        let paintHandle: number | null = null;
+        let queue: Promise<void> = Promise.resolve();
+        let gone = false;
+        const paint = () => {
+          paintHandle = null;
+          if (gone || !dirty) return;
+          dirty = false;
+          try {
+            chipEl.paintFramebuffer!(image, display.width, display.height);
+          } catch {
+            /* swallow */
+          }
+        };
+        const prev = bridge.onChipFramebuffer;
+        bridge.onChipFramebuffer = (id, frame) => {
+          prev?.(id, frame);
+          if (id !== componentId || gone) return;
+          // Frames are applied in arrival order: inflate is async, and two
+          // in flight at once could land the older rows on top of the newer.
+          queue = queue
+            .then(async () => {
+              if (gone) return;
+              if (frame.width !== display.width || frame.height !== display.height) return;
+              const rows = await inflateZlib(b64ToBytes(frame.rowsZlibB64));
+              spliceFramebufferRows(image, frame.width, frame.y0, frame.y1, rows);
+              dirty = true;
+              if (paintHandle === null) paintHandle = requestAnimationFrame(paint);
+            })
+            .catch((e) => {
+              console.warn(`[custom-chip:${componentId}] framebuffer frame dropped:`, e);
+            });
+        };
+        offFramebuffer = () => {
+          gone = true;
+          if (paintHandle !== null) cancelAnimationFrame(paintHandle);
+          bridge.onChipFramebuffer = prev;
+        };
+      }
       // Overlay extensions (e.g. pro live sensor controls) hook the chip
       // lifecycle here; pure OSS registers none.
       const cleanupExtensions = runChipAttachExtensions({
-        kind: 'esp32', componentId, simulator: sim, virtualPin,
+        kind: 'esp32',
+        componentId,
+        simulator: sim,
+        virtualPin,
       });
       // Cleanup: tell the worker the chip is gone. While the guest runs this
       // is a live detach (a chip deleted from the canvas leaves the bus and
@@ -201,10 +315,13 @@ PartSimulationRegistry.register('custom-chip', {
       // list it would replay at the next Run, and the part re-registers when
       // it attaches again. The same cleanup as the ePaper part.
       return () => {
+        offFramebuffer();
         cleanupExtensions();
         try {
           sim.unregisterSensor?.(virtualPin);
-        } catch { /* bridge gone */ }
+        } catch {
+          /* bridge gone */
+        }
       };
     }
     // ── End ESP32 path ──────────────────────────────────────────────────────
@@ -277,9 +394,13 @@ PartSimulationRegistry.register('custom-chip', {
           const boardPin = wires.get(pinName);
           if (boardPin == null || isSyntheticChipPin(boardPin)) return;
           try {
-            (sim as { setPinState?: (pin: number, state: boolean) => void })
-              .setPinState?.(boardPin, value);
-          } catch { /* board not ready yet */ }
+            (sim as { setPinState?: (pin: number, state: boolean) => void }).setPinState?.(
+              boardPin,
+              value,
+            );
+          } catch {
+            /* board not ready yet */
+          }
         });
 
         inst.start();
@@ -287,7 +408,11 @@ PartSimulationRegistry.register('custom-chip', {
         // Overlay extensions (e.g. pro live sensor controls) hook the chip
         // lifecycle here; pure OSS registers none.
         extensionCleanup = runChipAttachExtensions({
-          kind: 'browser', componentId, simulator: sim, instance: inst, wires,
+          kind: 'browser',
+          componentId,
+          simulator: sim,
+          instance: inst,
+          wires,
         });
 
         // Bridge UART: AVR Serial.write(byte) → chip.feedUart(byte).
@@ -327,12 +452,28 @@ PartSimulationRegistry.register('custom-chip', {
         }
 
         // Bridge framebuffer → chip's web component canvas (when chip has display).
+        // The runtime reports every vx_buffer_write; a driver painting a 480x320
+        // window pixel by pixel makes hundreds of thousands of them per screen,
+        // and repainting the canvas on each one froze the tab (issue #338). So
+        // the callback only notes that the buffer moved, and the rAF tick below
+        // paints it at most once per frame.
         const el = document.getElementById(componentId) as HTMLElement | null;
+        let framebufferDirty: { rgba: Uint8Array; width: number; height: number } | null = null;
         if (el && typeof (el as any).paintFramebuffer === 'function' && inst.hasFramebuffer) {
           inst.onFramebufferUpdate((rgba, width, height) => {
-            try { (el as any).paintFramebuffer(rgba, width, height); } catch { /* swallow */ }
+            framebufferDirty = { rgba, width, height };
           });
         }
+        const paintFramebufferIfDirty = () => {
+          const fb = framebufferDirty;
+          if (!fb || !el) return;
+          framebufferDirty = null;
+          try {
+            (el as any).paintFramebuffer(fb.rgba, fb.width, fb.height);
+          } catch {
+            /* swallow */
+          }
+        };
 
         // Bridge the browser keyboard → a chip's memory-mapped keyboard (a chip
         // exporting set_key, e.g. galaksija-keyboard). Maps physical keys
@@ -355,7 +496,10 @@ PartSimulationRegistry.register('custom-chip', {
           const onDown = (e: KeyboardEvent) => {
             if (e.repeat || editable()) return;
             const o = GALAKSIJA_KEY_OFFSET[e.code];
-            if (o !== undefined) { instance?.setKey(o, true); e.preventDefault(); }
+            if (o !== undefined) {
+              instance?.setKey(o, true);
+              e.preventDefault();
+            }
           };
           const onUp = (e: KeyboardEvent) => {
             if (editable()) return;
@@ -379,6 +523,9 @@ PartSimulationRegistry.register('custom-chip', {
         // exposes the same epoch via vx_sim_now_nanos.
         const tick = () => {
           if (disposed || !instance) return;
+          // Whatever the chip drew since the last frame reaches the canvas now,
+          // running or stopped — a stopped chip still shows its last picture.
+          paintFramebufferIfDirty();
           // Freeze the chip while the simulation is stopped — but keep the rAF
           // alive so Run resumes instantly.
           //   - Board-less: driven by the editor Run/Stop via the electrical
@@ -417,7 +564,10 @@ PartSimulationRegistry.register('custom-chip', {
       if (rafHandle) cancelAnimationFrame(rafHandle);
       rafHandle = 0;
       if (uartListener) bridges.uartListeners.delete(uartListener);
-      if (uartBitBanger) { uartBitBanger.dispose(); uartBitBanger = null; }
+      if (uartBitBanger) {
+        uartBitBanger.dispose();
+        uartBitBanger = null;
+      }
       if (keyboardCleanup) keyboardCleanup();
       if (instance) instance.dispose();
       instance = null;
