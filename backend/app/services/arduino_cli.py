@@ -204,6 +204,39 @@ def register_extra_core(
     }
 
 
+def _strip_comments(source: str) -> str:
+    """The sketch with its // and /* */ comments blanked out.
+
+    Only used to ask whether a line is really THERE. A gallery sketch that
+    mentions `#include <Adafruit_TinyUSB.h>` in a comment ("on hardware you
+    also need...") used to read as if the include were present, so the prelude
+    was skipped and the XIAO nRF52840 examples failed to link with "undefined
+    reference to `Serial'" (production, 2026-09-17).
+    """
+    out: list[str] = []
+    i = 0
+    n = len(source)
+    while i < n:
+        two = source[i : i + 2]
+        if two == "//":
+            j = source.find("\n", i)
+            i = n if j < 0 else j
+        elif two == "/*":
+            j = source.find("*/", i + 2)
+            i = n if j < 0 else j + 2
+        else:
+            out.append(source[i])
+            i += 1
+    return "".join(out)
+
+
+def _has_prelude(content: str, prelude: str) -> bool:
+    """Is every line of `prelude` already in `content` as CODE, not in a comment?"""
+    lines = [ln.strip() for ln in prelude.splitlines() if ln.strip()]
+    code = _strip_comments(content)
+    return all(ln in code for ln in lines)
+
+
 def _extra_core_for_fqbn(fqbn: str) -> dict | None:
     for core_id, entry in _EXTRA_CORES.items():
         if entry["match"] in fqbn:
@@ -562,7 +595,7 @@ class ArduinoCLIService:
                 if write_name == "sketch.ino":
                     extra = _extra_core_for_fqbn(board_fqbn)
                     prelude = extra["sketch_prelude"] if extra else None
-                    if prelude and prelude.strip() not in content:
+                    if prelude and not _has_prelude(content, prelude):
                         content = prelude + content
 
                 # Folder support: names may carry '/' paths ("apps/badge/x.py").
