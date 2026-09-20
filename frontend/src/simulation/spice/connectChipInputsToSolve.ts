@@ -69,13 +69,23 @@ export function connectChipInputsToSolve(): () => void {
         if (!net) continue;
         const v = nodeVoltages[net];
         if (v == null) continue;
+        // Not a level: ngspice hands back NaN for every node of a transient
+        // step that did not converge, and it fails both threshold tests, so it
+        // used to fall through to the default below and take every chip input
+        // down at once. Same guard as the MCU path (issue #333).
+        if (!Number.isFinite(v)) continue;
 
         const synth = syntheticChipPin(comp.id, pinName);
         const prev = lastState.get(synth);
         let next: boolean;
         if (v >= V_HIGH) next = true;
         else if (v <= V_LOW) next = false;
-        else next = prev ?? false; // inside the hysteresis band — hold
+        // Inside the band: hold. The MCU path also declines to invent a level
+        // when there is no history, but a custom chip's pins are not the same
+        // case — nothing reported a problem with the old default here, and a
+        // chip that expects its inputs to start low at power-on would notice
+        // the difference. The proven defect is the non-finite one above.
+        else next = prev ?? false;
         if (prev === next) continue;
         lastState.set(synth, next);
         pinManager.triggerPinChange(synth, next);
@@ -86,7 +96,18 @@ export function connectChipInputsToSolve(): () => void {
   const unsub = useElectricalStore.subscribe((state, prev) => {
     if (state.nodeVoltages !== prev.nodeVoltages) writeChipInputs();
   });
+  // Forget what was pushed when the run is torn down and rebuilt. Stop and
+  // Reset are cold boots: PinManager.hardResetPinStates() wipes the synthetic
+  // chip pins, so a cache that still remembers a HIGH would skip re-emitting
+  // it and the chip would come back up seeing a level nobody is holding.
+  // Same reason the MCU connector clears its cache on a boards change.
+  const unsubBoards = useSimulatorStore.subscribe((state, prev) => {
+    if (state.boards !== prev.boards || state.hexEpoch !== prev.hexEpoch) lastState.clear();
+  });
   // Initial pass for examples that pre-populate the store before mount.
   writeChipInputs();
-  return () => unsub();
+  return () => {
+    unsub();
+    unsubBoards();
+  };
 }

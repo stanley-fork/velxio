@@ -13,6 +13,7 @@ import { RP2040Simulator } from '../simulation/RP2040Simulator';
 import { RiscVSimulator } from '../simulation/RiscVSimulator';
 import { Esp32C3Simulator } from '../simulation/Esp32C3Simulator';
 import { PinManager } from '../simulation/PinManager';
+import { ExternalPinScopeFeed } from '../simulation/externalPinScope';
 import { SignalRouter } from '../simulation/SignalRouter';
 import { requestElectricalResolve } from '../simulation/spice/electricalResolveHook';
 import { ledcSignalForChannel } from '../simulation/esp32-signals';
@@ -171,6 +172,8 @@ export class Esp32BridgeShim {
   onSerialData: ((ch: string) => void) | null = null;
   onPinChangeWithTime: ((pin: number, state: boolean, timeMs: number) => void) | null = null;
   onBaudRateChange: ((baud: number) => void) | null = null;
+  /** Levels the circuit applies; the engine only reports the ones it drives. */
+  private externalScope = new ExternalPinScopeFeed(() => performance.now());
   private bridge: Esp32Bridge;
 
   /**
@@ -232,6 +235,31 @@ export class Esp32BridgeShim {
 
   setPinState(pin: number, state: boolean): void {
     this.bridge.sendPinEvent(pin, state);
+    this.reportExternalLevel(pin, state);
+  }
+
+  /**
+   * Show the oscilloscope a level the CIRCUIT applied.
+   *
+   * The engine reports `gpio_change` when the FIRMWARE drives a pad; an
+   * `esp32_gpio_in` injection moves the guest's GPIO_IN register and comes
+   * back as nothing, so a probed button pin drew the last driven level for
+   * ever (see simulation/externalPinScope). Skipped when the bridge dropped
+   * the injection because a backend sensor owns that line — reporting a level
+   * that was never applied is the one thing worse than reporting none.
+   * `performance.now()` is deliberate: it is the clock the bridge stamps its
+   * own edges with.
+   */
+  private reportExternalLevel(pin: number, state: boolean): void {
+    if (this.bridge.ownsSensorPin(pin)) return;
+    // The pad lives in another process, so its drive can only be asked of the
+    // sticky "has driven this session" set — the same gate the connector uses
+    // to decide what to inject in the first place.
+    if (this.pinManager.getOutputPins().has(pin)) return;
+    // The store hands the scope callback to the BRIDGE (that is where the
+    // engine's own edges arrive), so that is the sink to reach for; the
+    // shim's own slot is honoured first for the tests that fill it.
+    this.externalScope.emit(this.onPinChangeWithTime ?? this.bridge.onPinChangeWithTime, pin, state);
   }
 
   /**
@@ -960,6 +988,8 @@ class Stm32BridgeShim {
   onSerialData: ((ch: string) => void) | null = null;
   onPinChangeWithTime: ((pin: number, state: boolean, timeMs: number) => void) | null = null;
   onBaudRateChange: ((baud: number) => void) | null = null;
+  /** Levels the circuit applies; the worker only reports the ones it drives. */
+  private externalScope = new ExternalPinScopeFeed(() => performance.now());
   private bridge: Stm32Bridge;
   private i2cBusInstance: I2CBusManager;
   private _i2cTransactionListeners = new Map<number, (data: number[]) => void>();
@@ -987,6 +1017,12 @@ class Stm32BridgeShim {
   /** Drive a GPIO input from a part. `pin` is the linear pin (port*16+pin). */
   setPinState(pin: number, state: boolean): void {
     this.bridge.sendPinEvent(pin, state);
+    // …and tell the scope, which otherwise only ever hears the edges the
+    // firmware drives (see simulation/externalPinScope). The sink lives on the
+    // bridge, where the worker's own edges arrive, and carries the same
+    // `performance.now()` clock they are stamped with.
+    if (this.pinManager.getOutputPins().has(pin)) return;
+    this.externalScope.emit(this.onPinChangeWithTime ?? this.bridge.onPinChangeWithTime, pin, state);
   }
 
   /**
@@ -1582,6 +1618,24 @@ const { append: appendSerial } = createSerialBatcher((perBoard) => {
  */
 export function appendHardwareSerial(boardId: string, chunk: string): void {
   appendSerial(boardId, chunk);
+}
+
+/**
+ * A line from the SIMULATOR, not from the firmware, in a board's serial
+ * monitor: a part explaining why what the person sees is what a real one
+ * would show (an e-paper that refreshed blank because the picture went to the
+ * wrong RAM plane). The Circuit check carries the same sentence, but it is
+ * read at the NEXT Run; this is read while the blank panel is on screen.
+ */
+export function appendSimulatorNote(boardId: string, text: string): void {
+  const line = `\r\n[Velxio] ${text}\r\n`;
+  // A Linux board's console is a terminal fed by the bridge's serial callback,
+  // not by the store: a note that only lands in serialOutput stays invisible
+  // there until the terminal is mounted again. Send it down the path the
+  // guest's own bytes take; that callback appends to the store as well.
+  const onSerial = bridgeMap.get(boardId)?.onSerialData;
+  if (onSerial) onSerial(line);
+  else appendSerial(boardId, line);
 }
 
 // ── Store ─────────────────────────────────────────────────────────────────
@@ -2892,10 +2946,23 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
           // slave. No card -> clear any stale image from a previous run.
           const sdCard = components.find((c) => c.metadataId === 'microsd-card');
           // Overlay-registered boards can declare a BUILT-IN microSD on a
-          // shared SPI bus: attach it even without a card component, and tell
-          // the bridge to CS-gate it so it doesn't eat the display's pixel
-          // stream. A standalone card owns the bus -> no gating.
+          // shared SPI bus: attach it even without a card component.
           const builtInSdCs = getProBoard(board.boardKind)?.builtInSdCsPin;
+          // Which GPIO deselects the card. A card on the canvas is gated by
+          // the CS pin the user WIRED — the same walk the sensors above use,
+          // so a CS that reaches the board through a breadboard strip counts.
+          // Chip select is not a formality on this bus: a real card holds MISO
+          // in high-Z until its CS goes low, which is the only reason a
+          // display and a card can share SCK/MOSI/MISO at all. Leaving a
+          // standalone card permanently selected made it answer the display's
+          // pixel stream, and the screen went blank the moment a card was
+          // dropped on the canvas (issue #343) — with no wiring that could
+          // avoid it.
+          // An unwired CS keeps the old always-selected behaviour: on real
+          // hardware that pin would float and nothing would work, but there
+          // are saved projects that never wired it and do work here, and a
+          // card nobody shares a bus with is harmed by nothing.
+          const wiredSdCs = sdCard ? traceBoardGpio(traceState, sdCard.id, 'CS', boardId) : null;
           if (sdCard || builtInSdCs !== undefined) {
             try {
               // Uploads come from the card component when one is on the
@@ -2906,7 +2973,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
                 : decodeSdFiles(board.sdFiles);
               const image = buildProjectSdImage(useEditorStore.getState().files, uploaded);
               esp32Bridge.sdImageB64 = bytesToB64(image);
-              esp32Bridge.sdCsPin = sdCard ? undefined : builtInSdCs;
+              esp32Bridge.sdCsPin = sdCard ? (wiredSdCs ?? undefined) : builtInSdCs;
             } catch (e) {
               console.warn('[microsd] SD image build failed:', e);
               esp32Bridge.sdImageB64 = undefined;
