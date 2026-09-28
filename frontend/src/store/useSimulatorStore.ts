@@ -93,6 +93,7 @@ import {
 } from '../simulation/buses';
 import { RemoteI2cLane } from '../simulation/buses/remoteI2c';
 import { RemoteUartLane } from '../simulation/buses/remoteUart';
+import { remotePullLane, type RemotePullLane } from '../simulation/buses/remotePulls';
 import { i2cPartWorkerPin } from '../simulation/parts/i2cPart';
 import {
   loadSdBusChip,
@@ -235,6 +236,8 @@ export class Esp32BridgeShim {
    * instead of leaving them on the UART their record alone named.
    */
   private readonly sensorOwners = new Map<number, string>();
+  /** The module pulls on this board's pins, the `pulls` half of the map. */
+  private readonly pullLane: RemotePullLane;
 
   constructor(bridge: Esp32Bridge, pm: PinManager) {
     this.bridge = bridge;
@@ -281,9 +284,15 @@ export class Esp32BridgeShim {
     // The start config asks for the I2C and UART halves as they are when the
     // socket opens: a first Run may come before any membership change pushed
     // one.
+    // The module pulls on the board's pins, for the worker's pad model: sent
+    // with the start and whenever a part's resistors come or go.
+    this.pullLane = remotePullLane(pm, (pulls) =>
+      (bridge as unknown as { sendPullMap?: (m: unknown[]) => void }).sendPullMap?.(pulls),
+    );
     (bridge as unknown as { onBusMapRequest?: unknown }).onBusMapRequest = () => ({
       i2c: this.i2cLane.poll().i2c,
       uart: this.uartLane.poll(this.sensorOwners.values()).uart,
+      pulls: this.pullLane.poll().pulls,
     });
   }
 
@@ -1028,6 +1037,8 @@ class Stm32BridgeShim {
   private readonly uartLane: RemoteUartLane;
   /** The owners of the records the worker holds, by pin; see Esp32BridgeShim.sensorOwners. */
   private readonly sensorOwners = new Map<number, string>();
+  /** The module pulls on its pins (the `pulls` half); see Esp32BridgeShim.pullLane. */
+  private readonly pullLane: RemotePullLane;
 
   constructor(bridge: Stm32Bridge, pm: PinManager) {
     this.bridge = bridge;
@@ -1045,9 +1056,13 @@ class Stm32BridgeShim {
     );
     bridge.onSpiBatch = (mosi) => this.remoteLane.port?.deliver(mosi);
     bridge.onUartTxBytes = (uart, bytes) => this.uartLane.deliver(uart, bytes);
+    // The module pulls on the board's pins, for the worker's pad model; see
+    // Esp32BridgeShim.pullLane.
+    this.pullLane = remotePullLane(pm, (pulls) => bridge.sendPullMap(pulls));
     bridge.onBusMapRequest = () => ({
       i2c: this.i2cLane.poll().i2c,
       uart: this.uartLane.poll(this.sensorOwners.values()).uart,
+      pulls: this.pullLane.poll().pulls,
     });
   }
 
@@ -4783,14 +4798,17 @@ export function commitSensorProjectValue(componentId: string, controlKey: string
 
 /**
  * A sensor part just attached: hand it the values the PROJECT sets for it,
- * so it starts from them whether or not its attach reads them off the element
- * (most parts do; a part that keeps its own starting value would otherwise
- * ignore a value set in the property dialog until the panel opened or Reset
- * replayed it). Only the controls the project sets are delivered: one the
- * project leaves unset keeps the part's own start, as before, and the panel's
- * cache is not touched, so its first open still replays the full project set.
- * A replay, so nothing the part mirrors back is taken for a live edit. Custom chips are
- * left alone: they read properties.attrs themselves, once their module loads.
+ * and the control definition's default for every value the project leaves
+ * unset, so it starts from exactly what the panel and the property dialog
+ * show whether or not its attach reads them off the element. The control
+ * default is the one source of a sensor's starting value: a part that kept a
+ * literal of its own used to start somewhere else (an unset BMP280 read 25 C
+ * while the panel and the dialog said 24) until the panel opened or Reset
+ * replayed the full set, which is what this now does on every Run. The
+ * panel's cache is not touched, so its first open still replays the full
+ * project set. A replay, so nothing the part mirrors back is taken for a live
+ * edit. Custom chips are left alone: they read properties.attrs themselves,
+ * once their module loads, and their attribute defaults come from chip.json.
  */
 export function replayProjectSensorValuesOnAttach(componentId: string): void {
   if (!getSensorUpdate(componentId)) return;
@@ -4802,8 +4820,6 @@ export function replayProjectSensorValuesOnAttach(componentId: string): void {
   const set: Record<string, number | boolean> = {};
   for (const ctrl of def.controls) {
     if (ctrl.type !== 'slider') continue;
-    const raw = comp.properties?.[ctrl.propertyKey ?? ctrl.key];
-    if (raw === undefined || raw === null || raw === '') continue;
     if (all[ctrl.key] !== undefined) set[ctrl.key] = all[ctrl.key];
   }
   if (Object.keys(set).length > 0) replayProjectSensorValues(componentId, set, { cache: false });
