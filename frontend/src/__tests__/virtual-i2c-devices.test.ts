@@ -15,7 +15,7 @@
  * without needing the third-party to be built.
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { bareBoard, putI2cDevice, clearBench } from './helpers/i2cBench';
 import {
   I2CBusManager,
@@ -223,40 +223,133 @@ describe('I2CMemoryDevice', () => {
 });
 
 // ─── VirtualDS1307 ────────────────────────────────────────────────────────────
+//
+// What the chip does register by register is in the bus vectors the model
+// shares with its backend twin (rtc-vectors.test.ts). These are the cases a
+// sketch runs into first, on a clock the test holds still.
+
+/** A clock a test moves by hand: 12:34:56.250 of Wednesday 30 September 2026. */
+function rtcClock() {
+  const clock = { now: Date.UTC(2026, 8, 30, 12, 34, 56, 250), read: () => clock.now };
+  return clock;
+}
+
+/** Wire.beginTransmission, the pointer, the bytes, endTransmission. */
+function rtcWrite(dev: I2CDevice, ...bytes: number[]): void {
+  dev.start?.(false);
+  for (const b of bytes) dev.writeByte(b);
+  dev.stop?.();
+}
+
+/** The pointer, a repeated START, n bytes. */
+function rtcRead(dev: I2CDevice, reg: number, n: number): number[] {
+  dev.start?.(false);
+  dev.writeByte(reg);
+  dev.start?.(true);
+  const out = Array.from({ length: n }, () => dev.readByte());
+  dev.stop?.();
+  return out;
+}
 
 describe('VirtualDS1307', () => {
   it('address is 0x68', () => {
     expect(new VirtualDS1307().address).toBe(0x68);
   });
 
-  it('readByte for reg 0 returns valid BCD seconds (0–59)', () => {
-    const dev = new VirtualDS1307();
-    dev.writeByte(0x00); // set pointer to seconds
-    const raw = dev.readByte();
-    const tens = (raw >> 4) & 0xf;
-    const units = raw & 0xf;
-    expect(tens).toBeLessThanOrEqual(5);
-    expect(units).toBeLessThanOrEqual(9);
+  it('reads the host clock in BCD, with Monday as day 1', () => {
+    const dev = new VirtualDS1307({ clock: rtcClock().read });
+    expect(rtcRead(dev, 0x00, 7)).toEqual([0x56, 0x34, 0x12, 0x03, 0x30, 0x09, 0x26]);
   });
 
-  it('reads 7 consecutive BCD time registers', () => {
-    const dev = new VirtualDS1307();
-    dev.writeByte(0x00); // start at seconds
-    for (let i = 0; i < 7; i++) {
-      const byte = dev.readByte();
-      expect(byte).toBeGreaterThanOrEqual(0x00);
-      expect(byte).toBeLessThanOrEqual(0x99);
+  it('with no clock given, reads the time of the browser', () => {
+    vi.useFakeTimers();
+    try {
+      // Local time, whatever the zone of the machine that runs the test.
+      vi.setSystemTime(new Date(2026, 8, 30, 12, 34, 56, 250));
+      const dev = new VirtualDS1307();
+      expect(rtcRead(dev, 0x00, 7)).toEqual([0x56, 0x34, 0x12, 0x03, 0x30, 0x09, 0x26]);
+      vi.setSystemTime(new Date(2026, 8, 30, 23, 59, 59, 0));
+      expect(rtcRead(dev, 0x00, 3)).toEqual([0x59, 0x59, 0x23]);
+    } finally {
+      vi.useRealTimers();
     }
   });
 
+  it('a host that calls no start() is answered as well', () => {
+    const dev = new VirtualDS1307({ clock: rtcClock().read });
+    dev.writeByte(0x00);
+    expect(Array.from({ length: 3 }, () => dev.readByte())).toEqual([0x56, 0x34, 0x12]);
+  });
+
   it('stop() resets firstByte so next write is a new pointer', () => {
-    const dev = new VirtualDS1307();
+    const dev = new VirtualDS1307({ clock: rtcClock().read });
     dev.writeByte(0x02); // set pointer to hours
     dev.stop();
     dev.writeByte(0x00); // new pointer (seconds)
-    const raw = dev.readByte();
-    // raw should be seconds BCD (tens ≤ 5)
-    expect((raw >> 4) & 0xf).toBeLessThanOrEqual(5);
+    expect(dev.readByte()).toBe(0x56);
+  });
+
+  it('keeps the time a sketch sets and counts from it', () => {
+    // The write used to be dropped: the Grove example set 12:30:00 and
+    // printed the time of the browser.
+    const clock = rtcClock();
+    const dev = new VirtualDS1307({ clock: clock.read });
+    rtcWrite(dev, 0x00, 0x00, 0x30, 0x12, 0x06, 0x19, 0x01, 0x13);
+    clock.now += 2000;
+    expect(rtcRead(dev, 0x00, 7)).toEqual([0x02, 0x30, 0x12, 0x06, 0x19, 0x01, 0x13]);
+  });
+
+  it('stays on the host clock when the sketch sets the build time of its firmware', () => {
+    const clock = rtcClock();
+    const built = [{ year: 2026, month: 9, day: 29, hour: 23, minute: 39, second: 41 }];
+    const dev = new VirtualDS1307({ clock: clock.read, buildTimes: () => built });
+    rtcWrite(dev, 0x00, 0x41, 0x39, 0x23, 0x00, 0x29, 0x09, 0x26);
+    clock.now += 2000;
+    expect(rtcRead(dev, 0x00, 3)).toEqual([0x58, 0x34, 0x12]);
+  });
+
+  it('asks for the build times when the sketch sets the clock, and not before', () => {
+    let asked = 0;
+    const dev = new VirtualDS1307({
+      clock: rtcClock().read,
+      buildTimes: () => {
+        asked++;
+        return [];
+      },
+    });
+    rtcRead(dev, 0x00, 7);
+    rtcWrite(dev, 0x08, 0xaa);
+    rtcWrite(dev, 0x03, 0x05);
+    expect(asked).toBe(0);
+    rtcWrite(dev, 0x00, 0x00, 0x30, 0x12);
+    expect(asked).toBe(1);
+  });
+
+  it('CH stops the clock, and isrunning() reads it', () => {
+    const clock = rtcClock();
+    const dev = new VirtualDS1307({ clock: clock.read });
+    const isrunning = () => !(rtcRead(dev, 0x00, 1)[0] >> 7);
+    expect(isrunning()).toBe(true);
+    rtcWrite(dev, 0x00, 0x80 | 0x56);
+    clock.now += 5000;
+    expect(isrunning()).toBe(false);
+    expect(rtcRead(dev, 0x00, 3)).toEqual([0xd6, 0x34, 0x12]);
+  });
+
+  it('keeps the 56 bytes of RAM and wraps the pointer from 0x3F to 0x00', () => {
+    const dev = new VirtualDS1307({ clock: rtcClock().read });
+    rtcWrite(dev, 0x3e, 0xa1, 0xb2);
+    expect(rtcRead(dev, 0x3e, 4)).toEqual([0xa1, 0xb2, 0x56, 0x34]);
+  });
+
+  it('dumpRegisters() is the time of the moment, CONTROL and the RAM', () => {
+    const clock = rtcClock();
+    const dev = new VirtualDS1307({ clock: clock.read });
+    rtcWrite(dev, 0x08, 0xca, 0xfe);
+    clock.now += 4000;
+    expect(Array.from(dev.dumpRegisters().slice(0, 10))).toEqual([
+      0x00, 0x35, 0x12, 0x03, 0x30, 0x09, 0x26, 0x03, 0xca, 0xfe,
+    ]);
   });
 });
 
@@ -355,6 +448,11 @@ describe('VirtualBMP280 — temperature compensation', () => {
    * the two 20-bit raw ADC values.  Returns { adcP, adcT }.
    */
   function readRawAdc(dev: VirtualBMP280): { adcP: number; adcT: number } {
+    // The chip powers on asleep and measures nothing there: normal mode,
+    // oversampling x1, as every driver selects before it reads.
+    dev.writeByte(0xf4);
+    dev.writeByte(0x27);
+    dev.stop();
     dev.writeByte(0xf7);
     const pMsb = dev.readByte();
     const pLsb = dev.readByte();
@@ -417,11 +515,11 @@ describe('VirtualBMP280 — temperature compensation', () => {
     return p + ((digP9 * p * p) / 2147483648.0 + (p * digP8) / 32768.0 + digP7) / 16.0;
   }
 
-  it('default 25°C produces compensated temperature within ±0.5°C', () => {
+  it('default 24°C, where the sensor panel starts, produces compensated temperature within ±0.5°C', () => {
     const dev = new VirtualBMP280();
     const { adcT } = readRawAdc(dev);
     const centideg = compensateT(adcT);
-    expect(centideg / 100).toBeCloseTo(25, 0);
+    expect(centideg / 100).toBeCloseTo(24, 0);
   });
 
   it('setting temperatureC = 20 produces ~20°C compensated output', () => {
@@ -448,6 +546,9 @@ describe('VirtualBMP280 — temperature compensation', () => {
 
 describe('VirtualBMP280 — pressure compensation', () => {
   function readRawAdc(dev: VirtualBMP280): { adcP: number; adcT: number } {
+    dev.writeByte(0xf4);
+    dev.writeByte(0x27); // normal mode, oversampling x1
+    dev.stop();
     dev.writeByte(0xf7);
     const pMsb = dev.readByte(),
       pLsb = dev.readByte(),
@@ -518,10 +619,136 @@ describe('VirtualBMP280 — ctrl_meas register is writable', () => {
     const dev = new VirtualBMP280();
     // Set reg pointer via normal write
     dev.writeByte(0xf4); // pointer → 0xF4
-    dev.writeByte(0x57); // write 0x57 (forced mode + oversampling)
+    dev.writeByte(0x57); // write 0x57 (normal mode + oversampling)
     dev.stop();
     dev.writeByte(0xf4); // read back
     expect(dev.readByte()).toBe(0x57);
+  });
+});
+
+// The rules below are held to the datasheet, step by step, by the shared bus
+// vectors (bmp280-vectors.test.ts). These are the same rules on the bare
+// model, one driver's habit each.
+describe('VirtualBMP280 — what a driver can tell from the chip', () => {
+  const write = (dev: VirtualBMP280, ...bytes: number[]) => {
+    for (const b of bytes) expect(dev.writeByte(b)).toBe(true);
+    dev.stop();
+  };
+  const read = (dev: VirtualBMP280, reg: number, n: number): number[] => {
+    dev.writeByte(reg);
+    const out = Array.from({ length: n }, () => dev.readByte());
+    dev.stop();
+    return out;
+  };
+  const RESET_VALUE = [0x80, 0x00, 0x00, 0x80, 0x00, 0x00];
+
+  it('holds the reset value 0x80000 in the data registers until a mode is selected', () => {
+    const dev = new VirtualBMP280();
+    expect(read(dev, 0xf7, 6)).toEqual(RESET_VALUE);
+    dev.temperatureC = 30;
+    dev.pressureHPa = 900;
+    expect(read(dev, 0xf7, 6)).toEqual(RESET_VALUE);
+  });
+
+  it('measuring reads 1 on the first status read after a forced write and 0 after', () => {
+    // SparkFun's Example6 and pocketBME280's examples wait for the 1 with no
+    // timeout, Adafruit's takeForcedMeasurement() waits for the 0.
+    const dev = new VirtualBMP280();
+    expect(read(dev, 0xf3, 1)).toEqual([0x00]);
+    write(dev, 0xf4, 0x25);
+    expect([0, 1, 2].map(() => read(dev, 0xf3, 1)[0])).toEqual([0x08, 0, 0]);
+  });
+
+  it('im_update is never seen', () => {
+    // esp-idf-lib and the Bosch API wait for it to clear after a soft reset.
+    const dev = new VirtualBMP280();
+    write(dev, 0xe0, 0xb6);
+    expect(read(dev, 0xf3, 1)[0] & 0x01).toBe(0);
+    write(dev, 0xf4, 0x25);
+    expect(read(dev, 0xf3, 1)[0] & 0x01).toBe(0);
+  });
+
+  it('forced mode is one measurement, and the mode bits are back at 00', () => {
+    const dev = new VirtualBMP280();
+    dev.temperatureC = 30;
+    write(dev, 0xf4, 0x25);
+    expect(read(dev, 0xf4, 1)).toEqual([0x24]);
+    const first = read(dev, 0xf7, 6);
+    expect(first).not.toEqual(RESET_VALUE);
+    dev.temperatureC = 10;
+    expect(read(dev, 0xf7, 6), 'what was measured stays until the next conversion').toEqual(first);
+    write(dev, 0xf4, 0x26); // 10 is forced mode too
+    expect(read(dev, 0xf4, 1)).toEqual([0x24]);
+    expect(read(dev, 0xf7, 6)).not.toEqual(first);
+  });
+
+  it('a soft reset restores the power-on registers and reads 0x00, and keeps the panel', () => {
+    const dev = new VirtualBMP280();
+    dev.temperatureC = 30;
+    write(dev, 0xf5, 0x90);
+    write(dev, 0xf4, 0x57);
+    const measured = read(dev, 0xf7, 6);
+    write(dev, 0xe0, 0xb6);
+    expect(read(dev, 0xe0, 1)).toEqual([0x00]);
+    expect(read(dev, 0xf3, 3)).toEqual([0x00, 0x00, 0x00]);
+    expect(read(dev, 0xf7, 6)).toEqual(RESET_VALUE);
+    expect(read(dev, 0xd0, 1)).toEqual([0x58]);
+    expect(dev.temperatureC).toBe(30);
+    write(dev, 0xf4, 0x57);
+    expect(read(dev, 0xf7, 6)).toEqual(measured);
+  });
+
+  it('only the reset word resets', () => {
+    const dev = new VirtualBMP280();
+    write(dev, 0xf4, 0x27);
+    write(dev, 0xe0, 0xb5);
+    expect(read(dev, 0xe0, 1)).toEqual([0x00]);
+    expect(read(dev, 0xf4, 1)).toEqual([0x27]);
+  });
+
+  it('a write is pairs of register address and data, with no auto-increment', () => {
+    const dev = new VirtualBMP280();
+    write(dev, 0xf5, 0xa0, 0xf4, 0x27);
+    expect(read(dev, 0xf4, 2)).toEqual([0x27, 0xa0]);
+    // Three bytes from a master that expects the address to count up: the
+    // third is taken for an address, and config keeps what it had.
+    write(dev, 0xf4, 0x57, 0x10);
+    expect(read(dev, 0xf4, 2)).toEqual([0x57, 0xa0]);
+  });
+
+  it('esp-idf-lib reads status and ctrl_meas with its two-byte write', () => {
+    // bmp280_is_measuring() sends { 0xF3, 0xF4 } and reads two bytes. The
+    // chip takes 0xF4 for the data of the read-only status, and the read
+    // begins at 0xF3. With an auto-incrementing write it read ctrl_meas and
+    // config, and its busy flag was bit 3 of the oversampling.
+    const dev = new VirtualBMP280();
+    write(dev, 0xf4, 0x6d); // forced, temperature x4, pressure x4
+    const poll = (): boolean => {
+      dev.writeByte(0xf3);
+      dev.writeByte(0xf4);
+      const [status, ctrl] = [dev.readByte(), dev.readByte()];
+      dev.stop();
+      return (ctrl & 0x03) === 0x01 || (status & 0x08) !== 0;
+    };
+    expect([poll(), poll(), poll()]).toEqual([true, false, false]);
+    expect(read(dev, 0xf3, 2), 'status was not written').toEqual([0x00, 0x6c]);
+  });
+
+  it('the calibration, the id and the data registers cannot be written', () => {
+    const dev = new VirtualBMP280();
+    const before = Array.from(dev.dumpRegisters());
+    for (const reg of [0x88, 0x9f, 0xd0, 0xf3, 0xf7, 0xfc, 0x00, 0xf6]) write(dev, reg, 0xaa);
+    expect(Array.from(dev.dumpRegisters())).toEqual(before);
+  });
+
+  it('dumpRegisters is what a read would find, with no trigger bit', () => {
+    const dev = new VirtualBMP280();
+    expect(Array.from(dev.dumpRegisters().slice(0xf7, 0xfd))).toEqual(RESET_VALUE);
+    write(dev, 0xf4, 0x27);
+    dev.temperatureC = 30;
+    const dump = dev.dumpRegisters();
+    expect(dump[0xf3]).toBe(0x00);
+    expect(Array.from(dump.slice(0xf7, 0xfd))).toEqual(read(dev, 0xf7, 6));
   });
 });
 
@@ -532,88 +759,115 @@ describe('VirtualDS3231 — time registers', () => {
     expect(new VirtualDS3231().address).toBe(0x68);
   });
 
-  it('register 0x00 returns valid BCD seconds (0–59)', () => {
-    const dev = new VirtualDS3231();
+  it('reads the host clock in BCD, with Monday as day 1', () => {
+    const dev = new VirtualDS3231({ clock: rtcClock().read });
+    expect(rtcRead(dev, 0x00, 7)).toEqual([0x56, 0x34, 0x12, 0x03, 0x30, 0x09, 0x26]);
+  });
+
+  it('a burst is one instant, however long the guest takes over it', () => {
+    const clock = rtcClock();
+    clock.now = Date.UTC(2026, 8, 30, 12, 59, 59, 900);
+    const dev = new VirtualDS3231({ clock: clock.read });
+    dev.start(false);
     dev.writeByte(0x00);
-    const raw = dev.readByte();
-    const tens = (raw >> 4) & 0xf;
-    const units = raw & 0xf;
-    expect(tens).toBeLessThanOrEqual(5);
-    expect(units).toBeLessThanOrEqual(9);
+    dev.start(true);
+    const seconds = dev.readByte();
+    clock.now += 200; // 13:00:00.100
+    const rest = [dev.readByte(), dev.readByte()];
+    dev.stop();
+    expect([seconds, ...rest]).toEqual([0x59, 0x59, 0x12]);
+    expect(rtcRead(dev, 0x00, 3)).toEqual([0x00, 0x00, 0x13]);
   });
 
-  it('register 0x02 (hours) returns valid BCD 0–23', () => {
-    const dev = new VirtualDS3231();
-    dev.writeByte(0x02);
-    const raw = dev.readByte();
-    const tens = (raw >> 4) & 0xf;
-    const units = raw & 0xf;
-    const hours = tens * 10 + units;
-    expect(hours).toBeGreaterThanOrEqual(0);
-    expect(hours).toBeLessThanOrEqual(23);
+  it('register 0x0E (control) powers on at 0x1C', () => {
+    // It read 0x00, and RTClib's setAlarm1() refuses to arm an alarm unless
+    // INTCN reads 1.
+    const dev = new VirtualDS3231({ clock: rtcClock().read });
+    expect(rtcRead(dev, 0x0e, 1)).toEqual([0x1c]);
   });
 
-  it('reads 7 consecutive BCD time registers without error', () => {
-    const dev = new VirtualDS3231();
-    dev.writeByte(0x00);
-    for (let i = 0; i < 7; i++) {
-      expect(() => dev.readByte()).not.toThrow();
-    }
+  it('register 0x0F (status) powers on at 0x08, and lostPower() is false', () => {
+    // A module somebody set, as the DS1307 powers on with CH 0.
+    const dev = new VirtualDS3231({ clock: rtcClock().read });
+    const lostPower = () => rtcRead(dev, 0x0f, 1)[0] >> 7 === 1;
+    expect(rtcRead(dev, 0x0f, 1)).toEqual([0x08]);
+    expect(lostPower()).toBe(false);
+    // OSF can only be written to 0: a sketch cannot set it either.
+    rtcWrite(dev, 0x0f, 0x88);
+    expect(lostPower()).toBe(false);
   });
 
-  it('register 0x0E (control) reads 0x00', () => {
-    const dev = new VirtualDS3231();
-    dev.writeByte(0x0e);
-    expect(dev.readByte()).toBe(0x00);
+  it('CONV is over by the next read', () => {
+    const dev = new VirtualDS3231({ clock: rtcClock().read });
+    rtcWrite(dev, 0x0e, 0x1c | 0x20);
+    expect(rtcRead(dev, 0x0e, 2)).toEqual([0x1c, 0x08]);
   });
 
-  it('register 0x0F (status) reads 0x00 (OSF cleared)', () => {
-    const dev = new VirtualDS3231();
-    dev.writeByte(0x0f);
-    expect(dev.readByte()).toBe(0x00);
+  it('A1F latches when the time matches and clears when the sketch writes 0 to it', () => {
+    const clock = rtcClock();
+    const dev = new VirtualDS3231({ clock: clock.read });
+    const alarmFired = () => (rtcRead(dev, 0x0f, 1)[0] & 0x01) === 1;
+    // RTClib setAlarm1(12:35:00, DS3231_A1_Hour), then AI1E.
+    rtcWrite(dev, 0x07, 0x00, 0x35, 0x12, 0x80 | 0x30);
+    rtcWrite(dev, 0x0e, 0x1c | 0x01);
+    clock.now += 3000;
+    expect(alarmFired()).toBe(false);
+    clock.now += 1000;
+    expect(alarmFired()).toBe(true);
+    clock.now += 60_000;
+    expect(alarmFired()).toBe(true);
+    rtcWrite(dev, 0x0f, rtcRead(dev, 0x0f, 1)[0] & ~0x01);
+    expect(alarmFired()).toBe(false);
+  });
+
+  it('wraps the pointer from 0x12 to 0x00', () => {
+    const dev = new VirtualDS3231({ clock: rtcClock().read });
+    expect(rtcRead(dev, 0x11, 4)).toEqual([0x19, 0x00, 0x56, 0x34]);
   });
 });
 
 describe('VirtualDS3231 — temperature registers', () => {
-  it('register 0x11 returns integer part of temperature (25°C = 0x19)', () => {
-    const dev = new VirtualDS3231();
-    dev.temperatureC = 25.0;
-    dev.writeByte(0x11);
-    expect(dev.readByte()).toBe(25); // 25 = 0x19
-  });
+  const temperature = (celsius: number): number[] => {
+    const dev = new VirtualDS3231({ clock: rtcClock().read });
+    dev.temperatureC = celsius;
+    return rtcRead(dev, 0x11, 2);
+  };
 
-  it('register 0x12 returns 0x00 for integer temperature (no fractional)', () => {
-    const dev = new VirtualDS3231();
-    dev.temperatureC = 25.0;
-    dev.writeByte(0x12);
-    expect(dev.readByte()).toBe(0x00);
+  it('register 0x11 returns integer part of temperature (25°C = 0x19)', () => {
+    expect(temperature(25.0)).toEqual([25, 0x00]);
   });
 
   it('register 0x12 returns 0x80 for 0.5°C fractional (bits 7:6 = 0b10)', () => {
-    const dev = new VirtualDS3231();
-    dev.temperatureC = 25.5;
-    dev.writeByte(0x12);
     // 0.5°C / 0.25°C = 2 = 0b10 → stored in bits 7:6 = 0x80
-    expect(dev.readByte()).toBe(0x80);
+    expect(temperature(25.5)).toEqual([25, 0x80]);
   });
 
   it('handles negative temperature: -5°C MSB = 0xFB (251 as unsigned)', () => {
-    const dev = new VirtualDS3231();
-    dev.temperatureC = -5.0;
-    dev.writeByte(0x11);
-    // trunc(-5) & 0xFF = 251
-    expect(dev.readByte()).toBe(-5 & 0xff);
+    expect(temperature(-5.0)).toEqual([-5 & 0xff, 0x00]);
+  });
+
+  it("is two's complement in quarter degrees below zero", () => {
+    // MSB = trunc(T) and the fraction added on top read -0.25 C as +0.75 and
+    // -5.25 C as -4.25. The ten bits are one number: q = round(T x 4).
+    expect(temperature(-0.25)).toEqual([0xff, 0xc0]);
+    expect(temperature(-5.25)).toEqual([0xfa, 0xc0]);
+    expect(temperature(-10.75)).toEqual([0xf5, 0x40]);
+  });
+
+  it('is read-only', () => {
+    const dev = new VirtualDS3231({ clock: rtcClock().read });
+    rtcWrite(dev, 0x11, 0xaa, 0xbb);
+    expect(rtcRead(dev, 0x11, 2)).toEqual([0x19, 0x00]);
   });
 });
 
 describe('VirtualDS3231 — stop/firstByte reset', () => {
   it('stop() resets pointer acquisition', () => {
-    const dev = new VirtualDS3231();
+    const dev = new VirtualDS3231({ clock: rtcClock().read });
     dev.writeByte(0x11); // set pointer
     dev.stop();
     dev.writeByte(0x00); // new pointer → seconds
-    const raw = dev.readByte();
-    expect((raw >> 4) & 0xf).toBeLessThanOrEqual(5); // valid BCD tens digit
+    expect(dev.readByte()).toBe(0x56);
   });
 });
 

@@ -344,6 +344,23 @@ export interface I2cTarget {
   /** The MCU was reset (Stop/Run, reset, reload). Protocol state, not data. */
   boardReset?(): void;
   /**
+   * The clock of the board whose bus the chip was put on, handed over when
+   * it is placed there and taken back (null) when it leaves. For a chip that
+   * does something on its own between two transactions: the MPU-6050 takes a
+   * sample every period and raises DATA_RDY, fills its FIFO and pulses INT
+   * whether the sketch talks to it or not. It is the guest's time (see
+   * GuestClock), so a sketch that waits 40 ms finds 40 ms of samples however
+   * slowly the emulator ran them; no model reads the browser's clock.
+   *
+   * The object is the fabric's and outlives every rebuild of the SoC: read
+   * it when the time is needed, never keep a value of it across a
+   * boardReset(), where the guest's counter starts again. A board with no
+   * engine bound, or an engine that keeps no time the tab can read (a guest
+   * in a backend worker), answers clockHz() 0: there is no time there, and
+   * the chip has to make do with the events it is sent.
+   */
+  setClock?(clock: GuestClock | null): void;
+  /**
    * True when this model can NAK while present: its start() or write() may
    * return false, as a user's custom chip can (a chip that refuses a byte, or
    * its own address while busy). A host that has to answer an ACK before
@@ -354,6 +371,23 @@ export interface I2cTarget {
    * here.
    */
   readonly mayNak?: boolean;
+  /**
+   * The registers a copy of the chip's register file cannot answer for
+   * (I2CDevice.volatileReads): a host that answers reads from a copy (the
+   * Raspberry Pi relay) asks this tab for every read that touches one.
+   */
+  readonly volatileReads?: readonly number[];
+  /**
+   * The registers the chip's pointer does not move past
+   * (I2CDevice.pointerStays), for a host that keeps a pointer of its own.
+   */
+  readonly pointerStays?: readonly number[];
+  /**
+   * The register after which the chip's pointer wraps to 0x00
+   * (I2CDevice.pointerWrapsAfter), for a host that keeps a pointer of its
+   * own. Absent: after 0xFF.
+   */
+  readonly pointerWrapsAfter?: number;
 }
 
 /**
@@ -610,6 +644,7 @@ export type BusDiagnosticCode =
   | 'i2c-address-conflict'
   | 'i2c-wiring'
   | 'i2c-target-asleep'
+  | 'i2c-target-unmodelled'
   | 'uart-baud-mismatch'
   | 'uart-tx-contention'
   | 'uart-wiring'

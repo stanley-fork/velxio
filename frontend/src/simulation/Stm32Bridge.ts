@@ -30,6 +30,7 @@ import { generateUUID } from '../utils/uuid';
 import type { LineSupport } from './line/LineHost';
 import { recordPartGap } from './line/requestLine';
 import { sensorRecordOwnsPin as recordOwnsPin } from './sensorModels';
+import { withHostClock } from './parts/hostClock';
 
 const API_BASE = (): string => {
   // The desktop shell injects the sidecar URL at runtime (random port) via
@@ -103,8 +104,9 @@ export class Stm32Bridge {
 
   /** I2C/SPI device write trace + display callbacks (wired by the store). */
   onI2cTrace: ((addr: number, op: string, result: number) => void) | null = null;
-  /** Full I2C write transaction (addr + bytes) for write-only devices (SSD1306). */
-  onI2cTransaction: ((addr: number, data: number[]) => void) | null = null;
+  /** Full I2C write transaction (addr + bytes) for write-only devices
+   *  (SSD1306), with the component id of the part whose record answered it. */
+  onI2cTransaction: ((addr: number, data: number[], owner?: string) => void) | null = null;
   onSpiBatch: ((bytes: Uint8Array) => void) | null = null;
 
   private socket: WebSocket | null = null;
@@ -145,7 +147,8 @@ export class Stm32Bridge {
         type: 'start_stm32',
         data: {
           board: this.boardKind,
-          sensors: this._pendingSensors,
+          // A clock chip's record says the tab's time as of this start.
+          sensors: withHostClock(this._pendingSensors),
           // Who is on the SPI bus, with the firmware rather than after it:
           // the guest can clock its first byte before a later command would
           // arrive (project board-buses-2026-09, F4).
@@ -220,7 +223,8 @@ export class Stm32Bridge {
           // them here so the frontend virtual device can replay + render.
           const addr = msg.data.addr as number;
           const data = (msg.data.data as number[]) ?? [];
-          this.onI2cTransaction?.(addr, data);
+          const owner = msg.data.owner ? String(msg.data.owner) : undefined;
+          this.onI2cTransaction?.(addr, data, owner);
           break;
         }
         case 'i2c_trace': {

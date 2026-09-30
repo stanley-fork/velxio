@@ -14,10 +14,17 @@ ctypes boundary, the guest played by calling the worker's own callbacks):
     beside a panel that said 24;
   - answering an I2C event logs nothing and emits nothing unless
     VELXIO_I2C_TRACE is set, and with it set the trace is what it always was.
+
+Every test runs twice: with the record the tab files by default, which
+carries the part's compiled model (buses/models/mpu6050.c, `wasmB64`, P5 of
+the project), and with the record of a tab whose i2cwasm flag is off, which
+the worker answers with its Python twin (esp32_i2c_slaves.mpu6050_slave).
 """
 from __future__ import annotations
 
+import base64
 import time
+from pathlib import Path
 
 import pytest
 
@@ -54,9 +61,27 @@ PANEL_COUNTS = [8192, -4096, 12288, -2220, 13100, -6550, 1310]
 REST_COUNTS = [0, 0, 16384, -4260, 0, 0, 0]
 
 
+MODEL_B64 = base64.b64encode(
+    (Path(__file__).resolve().parents[3] / 'frontend' / 'public' / 'bus-chips' / 'mpu6050.wasm')
+    .read_bytes()).decode()
+# What the tab adds to every record: the compiled model, or nothing.
+_RECORD_MODEL: dict = {}
+
+
+@pytest.fixture(autouse=True, params=['compiled', 'twin'])
+def model(request, monkeypatch):
+    """The worker's copy of the chip: the part's compiled model, which the
+    tab sends by default, or the twin of a tab with the i2cwasm flag off."""
+    monkeypatch.setattr(
+        __import__(__name__, fromlist=['_RECORD_MODEL']), '_RECORD_MODEL',
+        {'wasmB64': MODEL_B64} if request.param == 'compiled' else {})
+    return request.param
+
+
 def record(**values) -> dict:
     """The record the tab's part files for the worker (parts/i2cPart.ts)."""
-    return {'sensor_type': 'mpu6050', 'pin': PIN, 'addr': ADDR, 'owner': 'imu1', **values}
+    return {'sensor_type': 'mpu6050', 'pin': PIN, 'addr': ADDR, 'owner': 'imu1',
+            **_RECORD_MODEL, **values}
 
 
 def write_reg(w, reg: int, *values: int) -> None:
@@ -94,6 +119,15 @@ def event_lines(log: list[str]) -> list[str]:
 
 
 class TestSeededFromTheRecord:
+    def test_the_compiled_model_runs_when_the_record_carries_it(self, worker, model):
+        w = worker(sensors=[record(**PANEL)])
+        write_reg(w, PWR_MGMT_1, 0x00)
+        assert read_sample(w) == PANEL_COUNTS
+        w.flush()
+        w.send({'cmd': 'sensor_attach', 'sensor_type': 'trace-marker', 'pin': 77})
+        log = ''.join(stderr_after(w, 'Sensor trace-marker attached'))
+        assert 'the compiled model could not be run' not in log
+
     def test_the_start_config_record_sets_the_first_read(self, worker):
         w = worker(sensors=[record(**PANEL)])
         write_reg(w, PWR_MGMT_1, 0x00)
@@ -122,10 +156,132 @@ class TestSeededFromTheRecord:
         w.sync()
         assert read_sample(w) == [-16384, *PANEL_COUNTS[1:]]
 
+    def test_the_record_picks_the_die_and_the_address(self, worker):
+        """The tab sends the variant and the address it resolved from AD0."""
+        w = worker(sensors=[record(variant='mpu9250'),
+                            {**record(), 'pin': PIN + 1, 'addr': 0x69, 'owner': 'imu2'}])
+        assert w.read_reg(0, ADDR, 0x75) == (0, 0x71)
+        assert w.read_reg(0, 0x69, 0x75) == (0, 0x68)
+
     def test_the_chip_is_asleep_until_the_sketch_wakes_it(self, worker):
         w = worker(sensors=[record(**PANEL)])
         assert w.read_reg(0, ADDR, PWR_MGMT_1) == (0, 0x40)
         assert read_sample(w) == [0] * 7
+
+
+INT_GPIO = 4
+SMPLRT_DIV, INT_PIN_CFG, INT_ENABLE, INT_STATUS = 0x19, 0x37, 0x38, 0x3A
+
+
+def int_levels(w) -> list[int]:
+    """Every level the worker put on the INT pad, in order."""
+    calls = w.guest('calls')['calls']
+    return [c[2] for c in calls if c[:2] == ['set_pin', INT_GPIO + 1]]
+
+
+def wait_levels(w, want: list[int], timeout: float = 3.0) -> list[int]:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        got = int_levels(w)
+        if got == want:
+            return got
+        time.sleep(0.01)
+    return int_levels(w)
+
+
+class TestSampledOnTheGuestClock:
+    """The twin samples on QEMU_CLOCK_VIRTUAL: DATA_RDY and the INT pad follow
+    the guest's time, which the fake libqemu moves by hand."""
+
+    @pytest.fixture
+    def clocked(self, worker, monkeypatch):
+        monkeypatch.setenv('BB_FAKE_GUEST_CLOCK', '1')
+        w = worker(sensors=[record(int_pin=INT_GPIO)])
+        write_reg(w, SMPLRT_DIV, 0x07)     # 1 kHz at DLPF_CFG 0
+        write_reg(w, INT_ENABLE, 0x01)     # DATA_RDY_EN
+        write_reg(w, PWR_MGMT_1, 0x00)     # awake at guest time 0
+        return w
+
+    def test_data_ready_comes_with_the_guest_time_and_goes_with_the_read(self, clocked):
+        w = clocked
+        assert w.read_reg(0, ADDR, INT_STATUS) == (0, 0x00)
+        w.guest('clock', ns=1_000_000)
+        assert w.read_reg(0, ADDR, INT_STATUS) == (0, 0x01)
+        assert w.read_reg(0, ADDR, INT_STATUS) == (0, 0x00)
+
+    def test_int_pulses_on_the_pad_the_record_names(self, clocked):
+        w = clocked
+        # The pad is driven from the first event on: push-pull, active high.
+        assert int_levels(w)[:1] == [0]
+        w.guest('clock', ns=1_000_000)
+        assert wait_levels(w, [0, 1]) == [0, 1], 'the timer thread raises INT at the sample'
+        w.guest('clock', ns=1_050_000)
+        assert wait_levels(w, [0, 1, 0]) == [0, 1, 0], 'and lowers it 50 us later'
+
+    def test_pulses_the_thread_woke_too_late_for_reach_the_pad_as_one(self, clocked):
+        """The guest ran past a sample and the end of its pulse before the
+        timer thread looked: the pad still pulses, once for all of them."""
+        w = clocked
+        w.guest('clock', ns=3_200_000)
+        assert wait_levels(w, [0, 1, 0]) == [0, 1, 0]
+        time.sleep(0.1)
+        assert int_levels(w) == [0, 1, 0], 'one pulse for the three samples'
+
+    def test_a_latched_int_waits_for_the_read(self, clocked):
+        w = clocked
+        write_reg(w, INT_PIN_CFG, 0x20)    # LATCH_INT_EN
+        w.guest('clock', ns=3_000_000)
+        assert wait_levels(w, [0, 1]) == [0, 1]
+        assert w.read_reg(0, ADDR, INT_STATUS) == (0, 0x01)
+        assert int_levels(w) == [0, 1, 0]
+
+    def test_no_pad_is_driven_when_int_is_not_wired(self, worker, monkeypatch):
+        monkeypatch.setenv('BB_FAKE_GUEST_CLOCK', '1')
+        w = worker(sensors=[record()])
+        write_reg(w, INT_ENABLE, 0x01)
+        write_reg(w, PWR_MGMT_1, 0x00)
+        w.guest('clock', ns=5_000_000)
+        assert w.read_reg(0, ADDR, INT_STATUS) == (0, 0x01)
+        calls = w.guest('calls')['calls']
+        assert [c for c in calls if c[0] == 'set_pin' and c[1] < 100] == []
+
+
+class TestIntTimerCost:
+    """The INT pad costs the worker's chip timer thread a bounded number of
+    wake-ups, however fast the chip samples. At 8 kHz with DATA_RDY_EN set,
+    a pulse edge comes due every 50 or 75 us of guest time; the thread used
+    to wake for each and take QEMU's I/O-thread lock every time, some 16,000
+    times a second of a guest running at the host's pace."""
+
+    TAG = 'esp32_worker.py:chip_timer'
+
+    def test_an_8khz_int_takes_the_lock_at_most_twice_a_millisecond_and_pulses_at_each_look(
+            self, worker, monkeypatch):
+        monkeypatch.setenv('BB_FAKE_GUEST_CLOCK', '1')
+        monkeypatch.setenv('BB_FAKE_BQL', '1')
+        w = worker(sensors=[record(int_pin=INT_GPIO)])
+        write_reg(w, INT_ENABLE, 0x01)     # DATA_RDY_EN; SMPLRT_DIV 0, DLPF off: 8 kHz
+        write_reg(w, PWR_MGMT_1, 0x00)
+        before = w.guest('bql')['takes'].get(self.TAG, 0)
+        start = w.guest('clock_run')['ns']
+        t0 = time.monotonic()
+        time.sleep(1.0)
+        w.guest('clock', ns=start + int((time.monotonic() - t0) * 1e9))
+        seconds = time.monotonic() - t0
+        takes = (w.guest('bql')['takes'].get(self.TAG, 0) - before) / seconds
+        edges = int_levels(w)
+        pulses = sum(1 for a, b in zip(edges, edges[1:]) if a == 0 and b == 1) / seconds
+        print(f'chip timer lock takes: {takes:.0f}/s, INT pulses delivered: {pulses:.0f}/s')
+        # One sample per millisecond at most is looked at between bus events,
+        # and its pulse end: 2,000 a second, with room for the host's jitter.
+        assert takes <= 2200, f'{takes:.0f} lock takes a second'
+        # And a pulse per look: a look past the floor finds samples that
+        # pulsed since the last one and gives the guest one edge for them;
+        # the only other look is the end of a pulse it caught live. So at
+        # least one pulse for every two takes, with room for the host.
+        # Measured on the rig: 5,747 takes and 740 pulses a second before the
+        # floor, 522 and 225 with the floor alone, about 1,100 and 580 now.
+        assert pulses >= 0.4 * takes, f'{pulses:.0f} pulses for {takes:.0f} lock takes a second'
 
 
 class TestI2cTrace:

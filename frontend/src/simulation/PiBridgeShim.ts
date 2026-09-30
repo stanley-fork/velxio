@@ -672,6 +672,18 @@ export class PiBridgeShim {
         // Two chips at one address: if either can NAK, the tab has to answer.
         const first = i2c.find((d) => d.bus === t.bus && d.addr === t.addr);
         if (first && t.ask_writes) first.ask_writes = true;
+        // And a read that either one changes is the tab's to answer.
+        if (first && t.volatile_reads) {
+          first.volatile_reads = [...new Set([...(first.volatile_reads ?? []), ...t.volatile_reads])];
+        }
+        if (first && t.pointer_stays) {
+          first.pointer_stays = [...new Set([...(first.pointer_stays ?? []), ...t.pointer_stays])];
+        }
+        // Two pointers that wrap in different places are no one pointer the
+        // relay can keep: it wraps after 0xFF, as it did before the field.
+        if (first && first.pointer_wraps_after !== t.pointer_wraps_after) {
+          delete first.pointer_wraps_after;
+        }
         continue;
       }
       seen.add(key);
@@ -702,7 +714,25 @@ export class PiBridgeShim {
         // Only a chip that can NAK costs its writes a round trip; the rest
         // are ACKed by the relay, which is what keeps a display's frame fast.
         const ask = m.target.mayNak === true ? { ask_writes: true as const } : {};
-        for (const addr of m.addresses) out.push({ bus: port.unit, addr, regs, ...ask });
+        // The registers of a mirrored chip that a read changes: the relay
+        // asks this tab for those reads (a status the read clears, a FIFO).
+        const volatile =
+          regs !== null && m.target.volatileReads?.length
+            ? { volatile_reads: [...m.target.volatileReads] }
+            : {};
+        // And the ports its pointer stays on, so the relay's pointer does too.
+        const stays =
+          regs !== null && m.target.pointerStays?.length
+            ? { pointer_stays: [...m.target.pointerStays] }
+            : {};
+        // And where its pointer wraps, so the relay's wraps there too.
+        const wraps =
+          regs !== null && typeof m.target.pointerWrapsAfter === 'number'
+            ? { pointer_wraps_after: m.target.pointerWrapsAfter }
+            : {};
+        for (const addr of m.addresses) {
+          out.push({ bus: port.unit, addr, regs, ...ask, ...volatile, ...stays, ...wraps });
+        }
       }
     }
     out.sort((a, b) => a.bus - b.bus || a.addr - b.addr);

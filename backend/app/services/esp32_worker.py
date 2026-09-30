@@ -117,6 +117,10 @@ try:
         DS1307Slave  as _DS1307Slave,
         DS3231Slave  as _DS3231Slave,
         I2CWriteSink as _I2CWriteSink,
+        find_build_times as _find_build_times,
+        rtc_slave as _rtc_slave,
+        bmp280_slave as _bmp280_slave,
+        mpu6050_slave as _mpu6050_slave,
     )
 except ImportError:
     # Fallback: direct import when running from backend/ directory as subprocess
@@ -133,6 +137,10 @@ except ImportError:
     _DS1307Slave  = _mod.DS1307Slave   # type: ignore[assignment]
     _DS3231Slave  = _mod.DS3231Slave   # type: ignore[assignment]
     _I2CWriteSink = _mod.I2CWriteSink  # type: ignore[assignment]
+    _find_build_times = _mod.find_build_times  # type: ignore[assignment]
+    _rtc_slave = _mod.rtc_slave  # type: ignore[assignment]
+    _bmp280_slave = _mod.bmp280_slave  # type: ignore[assignment]
+    _mpu6050_slave = _mod.mpu6050_slave  # type: ignore[assignment]
 
 # The table those slaves answer from, by (controller, address) and removed by
 # identity (project board-buses-2026-09, F5). Same fallback dance.
@@ -823,6 +831,22 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
     except Exception as exc:
         _emit({'type': 'error', 'message': f'Firmware decode error: {exc}'})
         os._exit(1)
+
+    # When this firmware was built, for a clock chip the sketch sets to
+    # __DATE__ and __TIME__ (esp32_i2c_slaves, decision D7 of project
+    # i2c-model-fidelity-2026-09). Read from the image the first time a
+    # sketch sets a clock: megabytes to look through, and most sketches
+    # never do.
+    _build_times: list = []
+
+    def _firmware_build_times() -> tuple:
+        if not _build_times:
+            try:
+                _build_times.append(tuple(_find_build_times(fw_bytes)))
+            except Exception as e:  # noqa: BLE001
+                _log(f'build time scan failed: {e!r}')
+                _build_times.append(())
+        return _build_times[0]
 
     rom_dir   = os.path.dirname(lib_path).encode()
     args_list = [
@@ -1922,7 +1946,7 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                 note = ''
 
             slave_type_name = type(slave).__name__
-            if slave_type_name == 'MPU6050Slave':
+            if slave_type_name in ('MPU6050Slave', 'WasmMPU6050Slave'):
                 seq = _i2c_event_seq
                 n   = seq[addr] = seq.get(addr, 0) + 1
                 _log(f'I2C #{n:03d} bus={bus_id} addr=0x{addr:02x} {op_name} {note}')
@@ -2952,6 +2976,107 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
         sensor_data['runtime'] = None
         _log('[custom-chip] detached')
 
+    class _MpuIntPin:
+        """The MPU-6050's INT pad on the GPIO its record names (`int_pin`).
+
+        The twin says what the pad does and when it moves next; this puts it
+        on the pad, as one driver of it in the pad model, so an open-drain INT
+        that lets go leaves the line to its pull. It moves at the bus events
+        that change it (the twin calls on_int_change) and, between them, on
+        the chip timer thread, which asks next_timer_deadline() like any
+        hosted chip's timers and runs on the same guest clock. That thread
+        naps at most _CHIP_TIMER_NAP_MAX_S, so a 50 us pulse lasts until its
+        next look: a sketch that counts pulses sees fewer of them than a
+        board would, one that reads on each edge or on a latched level reads
+        every sample it gets.
+
+        Between two looks of the thread at least _MPU_INT_LOOK_NS of guest
+        time passes before the next sample it waits for (a pulse under way
+        still ends on time). At 8 kHz with DATA_RDY_EN set an edge comes due
+        every 50 or 75 us: waking for each took QEMU's I/O-thread lock about
+        6,000 times a second (the thread could not keep up with 16,000) and
+        delivered one pulse in ten. Now it wakes at most twice a millisecond,
+        at a sample and at the end of its pulse, whatever the rate. A look
+        that finds the pad idle while pulses were started since the last one
+        (the thread woke past the 50 us) puts one pulse on the pad, active
+        then idle, for all of them: a sketch counting DATA_RDY interrupts
+        gets one per look, as a slow ISR would. A latched INT is a level and
+        needs none.
+        """
+
+        def __init__(self, slave, gpio: int) -> None:
+            self.slave = slave
+            self.gpio = gpio
+            self.owner = object()
+            self._last = None
+            # The guest time the thread last looked at the pad.
+            self._looked_ns = None
+            # The twin's pulse count when the pad was last seen or pulsed
+            # (None: a twin that counts none).
+            counter = getattr(slave, 'int_pulses', None)
+            self._pulses = counter() if counter is not None else None
+            slave.on_int_change = self.refresh
+
+        def refresh(self) -> None:
+            pad = self.slave.int_pad()
+            if self._pulses is not None:
+                pulses = self.slave.int_pulses()
+                missed = pulses != self._pulses
+                self._pulses = pulses
+                active, idle = self.slave.int_pad_levels()
+                if missed and pad == idle and active != idle:
+                    # Pulses came and went between two looks: one of them
+                    # reaches the pad, so the guest sees the edge.
+                    self._put(active)
+            if pad != self._last:
+                self._put(pad)
+
+        def _put(self, pad: str) -> None:
+            self._last = pad
+            if pad == 'z':
+                _pads.chip_release(self.gpio, self.owner)
+                return
+            level = 1 if pad == 'high' else 0
+            lib.qemu_picsimlab_set_pin(self.gpio + 1, level)
+            _pads.chip_drive(self.gpio, self.owner, level)
+
+        # The chip timer thread's view of it (see _chip_timer_thread). Asking
+        # the twin the time takes the samples due, so a pad that moved while
+        # the thread was asking is due at once.
+        def next_timer_deadline(self):
+            if self.slave.int_pad() != self._last:
+                return 0
+            # Asking the time takes the samples due: one that pulsed since
+            # the pad was last looked at is owed a pulse, over or not, at the
+            # next look the floor allows.
+            looked = self._looked_ns
+            if self._pulses is not None and self.slave.int_pulses() != self._pulses:
+                return 0 if looked is None else looked + _MPU_INT_LOOK_NS
+            return self.slave.int_wake_ns(
+                None if looked is None else looked + _MPU_INT_LOOK_NS)
+
+        def fire_due_timers(self) -> None:
+            self._looked_ns = _chip_now_ns()
+            self.refresh()
+
+    # The least guest time between two looks of the chip timer thread at an
+    # INT pad, 1 ms: the sample period at 1 kHz, the fastest rate with the
+    # low-pass filter on and the one DATA_RDY sketches run at (see
+    # _MpuIntPin). A faster chip is looked at on every sample that falls
+    # past it.
+    _MPU_INT_LOOK_NS = 1_000_000
+
+    def _mpu_int_attach(sensor_data: dict, slave, record: dict) -> None:
+        """Drive the pad INT is wired to, when the tab says it is wired."""
+        pin = record.get('int_pin')
+        if isinstance(pin, bool) or not isinstance(pin, int) or pin < 0:
+            return
+        drv = _MpuIntPin(slave, pin)
+        sensor_data['int_driver'] = drv
+        # The detach path releases every pad this owner drove.
+        sensor_data['pad_owner'] = drv.owner
+        _chip_timer_runtimes.append(drv)
+
     for s in initial_sensors:
         gpio = int(s.get('pin', 0))
         sensor_type = s.get('sensor_type', '')
@@ -2968,25 +3093,32 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
             # For I2C sensors, also create the slave state machine immediately
             # so _on_i2c_event can find it when the firmware's Wire.begin() runs.
             elif sensor_type == 'mpu6050':
-                i2c_addr = int(s.get('addr', 0x68))
-                slave = _MPU6050Slave(i2c_addr)
-                # The record carries where the panel's sliders are, so the
-                # first read is already theirs and not the twin's own rest.
-                slave.update(**s)
+                i2c_addr = _MPU6050Slave.address_of(s)
+                # On the guest's clock, the one the chips' timers run on: the
+                # part's compiled model when the record carries it
+                # (buses/models/mpu6050.c), the twin otherwise. The record
+                # carries where the panel's sliders are, so the first read is
+                # already theirs and not the model's own rest.
+                slave = _mpu6050_slave(s, now_ns=_guest_clock_ns)
                 _i2c_add(gpio, s, slave, i2c_addr)
+                _mpu_int_attach(sensor_data, slave, s)
                 sensor_data['i2c_addr'] = i2c_addr
                 sensor_data['slave'] = slave
             elif sensor_type == 'bmp280':
                 i2c_addr = int(s.get('addr', 0x76))
-                slave = _BMP280Slave(i2c_addr)
-                if 'temperature' in s: slave.update(float(s['temperature']), slave._press_hpa)
-                if 'pressure'    in s: slave.update(slave._temp_c, float(s['pressure']))
+                # The part's compiled model when the record carries it
+                # (buses/models/bmp280.c), the twin otherwise. As for the
+                # MPU-6050: the record carries where the panel's sliders are.
+                slave = _bmp280_slave(s)
                 _i2c_add(gpio, s, slave, i2c_addr)
                 sensor_data['i2c_addr'] = i2c_addr
                 sensor_data['slave'] = slave
             elif sensor_type in ('ds1307', 'ds3231'):
                 i2c_addr = int(s.get('addr', 0x68))
-                slave = _DS3231Slave() if sensor_type == 'ds3231' else _DS1307Slave()
+                # The record carries the tab's clock, and the panel's
+                # temperature for the DS3231, so the first read is already
+                # what the tab's model shows.
+                slave = _rtc_slave(sensor_type, s, _firmware_build_times)
                 _i2c_add(gpio, s, slave, i2c_addr)
                 sensor_data['i2c_addr'] = i2c_addr
                 sensor_data['slave'] = slave
@@ -2994,9 +3126,8 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                 # 'i2c-write-sink' is the generic form: any write-only device
                 # whose rendering lives in the browser (the Grove display
                 # chips) is ACKed here and its bytes echoed as i2c_transaction.
-                default_addr = 0x3C if sensor_type == 'ssd1306' else 0x27
-                i2c_addr = int(s.get('addr', default_addr))
-                sink = _I2CWriteSink(i2c_addr, _emit)
+                sink = _I2CWriteSink.from_record(sensor_type, s, _emit)
+                i2c_addr = sink.addr
                 _i2c_add(gpio, s, sink, i2c_addr)
                 sensor_data['i2c_addr'] = i2c_addr
                 sensor_data['slave'] = sink
@@ -3062,11 +3193,23 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                     break
                 if _chip_now_ns() < soonest_ns:
                     continue
+            # Only what is due now fires, and with nothing due the lock is
+            # not taken: a deadline can move while the thread naps (an INT
+            # pad the bus already moved, a pulse the thread woke too late
+            # for), and every take stalls the vCPU.
+            now_ns = _chip_now_ns()
+            due = []
+            for rt in list(_chip_timer_runtimes):
+                d = rt.next_timer_deadline()
+                if d is not None and d <= now_ns:
+                    due.append(rt)
+            if not due:
+                continue
             # Fire under the IO-thread lock so any pin_write the timer triggers is safe.
             if _lock_iothread:
                 _lock_iothread(b'esp32_worker.py:chip_timer', 0)
             try:
-                for rt in list(_chip_timer_runtimes):
+                for rt in due:
                     try:
                         rt.fire_due_timers()
                     except Exception as e:
@@ -3295,30 +3438,32 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                     except Exception:
                         pass
                 elif sensor_type == 'mpu6050':
-                    i2c_addr = int(cmd.get('addr', 0x68))
-                    slave = _MPU6050Slave(i2c_addr)
-                    slave.update(**cmd)
+                    i2c_addr = _MPU6050Slave.address_of(cmd)
+                    slave = _mpu6050_slave(cmd, now_ns=_guest_clock_ns)
                     _i2c_add(gpio, cmd, slave, i2c_addr)
+                    _mpu_int_attach(sensor_data, slave, cmd)
                     sensor_data['i2c_addr'] = i2c_addr
                     sensor_data['slave'] = slave
                 elif sensor_type == 'bmp280':
                     i2c_addr = int(cmd.get('addr', 0x76))
-                    slave = _BMP280Slave(i2c_addr)
+                    # A part attached while the board runs starts from its
+                    # record too. It started from the twin's own values and
+                    # took the panel's at the first slider move.
+                    slave = _bmp280_slave(cmd)
                     _i2c_add(gpio, cmd, slave, i2c_addr)
                     sensor_data['i2c_addr'] = i2c_addr
                     sensor_data['slave'] = slave
                 elif sensor_type in ('ds1307', 'ds3231'):
                     i2c_addr = int(cmd.get('addr', 0x68))
-                    slave = _DS3231Slave() if sensor_type == 'ds3231' else _DS1307Slave()
+                    slave = _rtc_slave(sensor_type, cmd, _firmware_build_times)
                     _i2c_add(gpio, cmd, slave, i2c_addr)
                     sensor_data['i2c_addr'] = i2c_addr
                     sensor_data['slave'] = slave
                 elif sensor_type == 'custom-chip':
                     _attach_custom_chip_sensor(gpio, cmd, sensor_data)
                 elif sensor_type in ('ssd1306', 'pcf8574', 'i2c-write-sink'):
-                    default_addr = 0x3C if sensor_type == 'ssd1306' else 0x27
-                    i2c_addr = int(cmd.get('addr', default_addr))
-                    sink = _I2CWriteSink(i2c_addr, _emit)
+                    sink = _I2CWriteSink.from_record(sensor_type, cmd, _emit)
+                    i2c_addr = sink.addr
                     _i2c_add(gpio, cmd, sink, i2c_addr)
                     sensor_data['i2c_addr'] = i2c_addr
                     sensor_data['slave'] = sink
@@ -3378,12 +3523,12 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                         # stays where the record or an earlier update put it.
                         slave.update(**cmd)
                     elif stype == 'bmp280' and slave is not None:
-                        slave.update(
-                            temperature_c =float(sensor.get('temperature', 25.0)),
-                            pressure_hpa  =float(sensor.get('pressure', 1013.25)),
-                        )
-                    elif stype == 'ds3231' and slave is not None:
-                        slave.temperatureC = float(sensor.get('temperature', 25.0))
+                        # Only what this update names, as above.
+                        slave.update(**cmd)
+                    elif stype in ('ds1307', 'ds3231') and slave is not None:
+                        # Only what this update names: the temperature the
+                        # slider moved to, or the tab's clock sent again.
+                        slave.update(**cmd)
                     elif stype == 'custom-chip':
                         # Live control values (chip.json `controls`) land on
                         # the chip runtime's attr store; the running WASM
@@ -3421,6 +3566,11 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                     _keypad_uninstall(sensor)
                 if sensor and sensor.get('type') == 'custom-chip':
                     _detach_custom_chip_sensor(sensor)
+                _int_drv = sensor.get('int_driver') if sensor else None
+                if _int_drv is not None:
+                    while _int_drv in _chip_timer_runtimes:
+                        _chip_timer_runtimes.remove(_int_drv)
+                    _int_drv.slave.on_int_change = None
                 # By identity, the record's pin: a second device at the same
                 # address (the same sensor on the other controller) stays.
                 _i2c_table.remove(('sensor', gpio))

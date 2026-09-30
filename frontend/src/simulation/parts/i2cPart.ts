@@ -24,6 +24,10 @@ import type { I2CDevice } from '../I2CBusManager';
 import { chipVirtualPin } from '../customChips/chipVirtualPin';
 import { hostsChipsInWorker } from '../customChips/simulatorBridges';
 
+// The bridges stamp the clock too, and import it from where nothing else comes
+// with it.
+export { hostClockRecord, withHostClock } from './hostClock';
+
 /**
  * A register-file part as a bus target.
  *
@@ -38,10 +42,17 @@ import { hostsChipsInWorker } from '../customChips/simulatorBridges';
  *
  * A model that has to know where a read begins hears every START itself
  * (`start`): the MPU-6050 answers a burst from the sample it latched there.
+ * One that does something between two transactions is handed the clock of
+ * the board it was placed on (`setClock`).
  */
 export function i2cTargetOf(device: I2CDevice): I2cTarget & { dumpRegisters?: () => Uint8Array } {
   let open = false;
-  const target: I2cTarget & { dumpRegisters?: () => Uint8Array } = {
+  const target: I2cTarget & {
+    dumpRegisters?: () => Uint8Array;
+    volatileReads?: readonly number[];
+    pointerStays?: readonly number[];
+    pointerWrapsAfter?: number;
+  } = {
     start: (_address, read) => {
       if (open && !read) device.stop?.();
       open = true;
@@ -64,12 +75,35 @@ export function i2cTargetOf(device: I2CDevice): I2cTarget & { dumpRegisters?: ()
       device.boardReset?.();
     },
   };
+  // Only a model that keeps time asks for the clock.
+  if (typeof device.setClock === 'function') {
+    target.setClock = (clock) => device.setClock!(clock);
+  }
   // A board whose guest reads the bus from somewhere else (the Pi relay)
   // answers a register file from a copy instead of a round trip per byte.
   if (typeof device.dumpRegisters === 'function') {
     target.dumpRegisters = () => device.dumpRegisters!();
+    // And the registers of it the copy cannot answer for.
+    if (device.volatileReads?.length) target.volatileReads = device.volatileReads;
+    if (device.pointerStays?.length) target.pointerStays = device.pointerStays;
+    if (typeof device.pointerWrapsAfter === 'number') target.pointerWrapsAfter = device.pointerWrapsAfter;
   }
   return target;
+}
+
+/**
+ * An I2C address as a component property holds it: the property dialog stores
+ * what was typed ("0x27", "39"), a project file may carry the number. The
+ * part reads it to place its model, and the store to file the worker record
+ * of the same part before the board starts: one parser, so the two agree.
+ */
+export function parseI2cAddress(raw: unknown, fallback: number): number {
+  if (raw === undefined || raw === null) return fallback;
+  if (typeof raw === 'number' && !isNaN(raw)) return raw & 0x7f;
+  const s = String(raw).trim();
+  if (!s) return fallback;
+  const parsed = s.toLowerCase().startsWith('0x') ? parseInt(s, 16) : parseInt(s, 10);
+  return isNaN(parsed) ? fallback : parsed & 0x7f;
 }
 
 /** What a QEMU worker needs to build its own copy of the part. */
@@ -81,7 +115,7 @@ export interface I2cPartWorkerRecord {
   /**
    * The worker's copy only ACKs and echoes what the guest wrote, and the part
    * in the tab draws from those bytes (a display, an expander). Called with
-   * every write phase the worker echoes for this address.
+   * every write phase the worker echoes for this part.
    */
   echo?: (data: number[]) => void;
 }
@@ -97,6 +131,12 @@ export interface I2cPartOptions {
 }
 
 export interface I2cPartHandle {
+  /**
+   * True when the guest is answered by the worker's copy of the part. What
+   * the chip does to the board besides answering the bus (an interrupt pin)
+   * is then the worker's to do, next to the guest, and not this tab's.
+   */
+  readonly remote: boolean;
   /** Forward live values to the worker's copy (a no-op in the tab). */
   updateWorker(values: Record<string, unknown>): void;
   /**
@@ -135,8 +175,8 @@ export function attachI2cPart(opts: I2cPartOptions): I2cPartHandle {
     registerSensor?: (type: string, pin: number, props: Record<string, unknown>) => unknown;
     updateSensor?: (pin: number, props: Record<string, unknown>) => void;
     unregisterSensor?: (pin: number) => void;
-    addI2CTransactionListener?: (addr: number, fn: (data: number[]) => void) => void;
-    removeI2CTransactionListener?: (addr: number) => void;
+    addI2CTransactionListener?: (addr: number, fn: (data: number[]) => void, owner?: string) => void;
+    removeI2CTransactionListener?: (addr: number, owner?: string) => void;
   } | null;
   const owner = opts.componentId ?? '';
   const address = device.address & 0x7f;
@@ -158,15 +198,27 @@ export function attachI2cPart(opts: I2cPartOptions): I2cPartHandle {
     : null;
 
   let workerPin: number | null = null;
+  // Whether a worker took the record: AVR, RP2040 and the rest answer
+  // registerSensor with false, and the Pi shim does for anything but a line
+  // sensor, so the part is answered here and its INT pad is this tab's.
+  let accepted = false;
   if (worker && owner && workerHosted(sim)) {
     workerPin = i2cPartWorkerPin(owner);
     // `owner` is how the worker finds this record in the bus map the tab
     // sends, which says which controller the part's SDA is on.
-    sim!.registerSensor!(worker.type, workerPin, { ...(worker.props ?? {}), addr: address, owner });
-    if (worker.echo) sim!.addI2CTransactionListener?.(address, worker.echo);
+    accepted =
+      sim!.registerSensor!(worker.type, workerPin, {
+        ...(worker.props ?? {}),
+        addr: address,
+        owner,
+      }) !== false;
+    // Under its own id: the echo names the record it came from, so two parts
+    // at one address each draw their own stream.
+    if (worker.echo) sim!.addI2CTransactionListener?.(address, worker.echo, owner);
   }
 
   return {
+    remote: workerPin !== null && accepted,
     updateWorker: (values) => {
       if (workerPin !== null) sim!.updateSensor?.(workerPin, values);
     },
@@ -178,7 +230,7 @@ export function attachI2cPart(opts: I2cPartOptions): I2cPartHandle {
       if (workerPin === null) return;
       try {
         sim!.unregisterSensor?.(workerPin);
-        if (worker?.echo) sim!.removeI2CTransactionListener?.(address);
+        if (worker?.echo) sim!.removeI2CTransactionListener?.(address, owner);
       } catch {
         /* the bridge is gone with its board */
       }
