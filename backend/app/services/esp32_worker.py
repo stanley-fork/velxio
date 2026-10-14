@@ -1011,7 +1011,7 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
     # this file) so the worker can find its sibling modules without
     # depending on the backend's package layout.
     try:
-        from app.services.signal_router import SignalRouter  # type: ignore[import-not-found] # noqa: E402
+        from app.services.signal_router import SignalRouter, diff_routes  # type: ignore[import-not-found] # noqa: E402
         from app.services.esp32_signals import (  # type: ignore[import-not-found] # noqa: E402
             ledc_signal_for_channel,
             SIG_LEDC_HS_CH0_OUT_IDX,
@@ -1031,6 +1031,7 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
             _spec.loader.exec_module(_mod)        # type: ignore[union-attr]
             sys.modules[_name] = _mod
         SignalRouter = sys.modules['signal_router'].SignalRouter
+        diff_routes = sys.modules['signal_router'].diff_routes
         ledc_signal_for_channel = sys.modules['esp32_signals'].ledc_signal_for_channel
         SIG_LEDC_HS_CH0_OUT_IDX = sys.modules['esp32_signals'].SIG_LEDC_HS_CH0_OUT_IDX
         SIG_LEDC_LS_CH_LAST = sys.modules['esp32_signals'].SIG_LEDC_LS_CH_LAST
@@ -1040,6 +1041,11 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
         spi_units = sys.modules['esp32_signals'].spi_units
         spi_cs_signals = sys.modules['esp32_signals'].spi_cs_signals
     _signal_router = SignalRouter()
+    # The routes the frontend has been told about, as `gpio_routing` events.
+    # Kept apart from `_signal_router` on purpose: `_on_gpio_matrix` updates
+    # the router synchronously, so the router cannot tell the poll what is
+    # still unannounced (see diff_routes).
+    _emitted_routes: dict[int, int] = {}
     _rmt_sig_base = rmt_signal_base(machine)
     _i2c_sda_sig = i2c_sda_signals(machine)
     _uart_tx_sig = uart_tx_signals(machine)
@@ -1146,7 +1152,14 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                 # can opt in without code changes here.
                 if SIG_LEDC_HS_CH0_OUT_IDX <= signal_id <= SIG_LEDC_LS_CH_LAST:
                     snapshot[gpio_pin] = signal_id
-            changed, cleared = _signal_router.replace_snapshot(snapshot)
+            # Diff against what was last EMITTED, not against the router:
+            # _on_gpio_matrix has usually updated the router already and a
+            # diff against it is empty, which is how no `gpio_routing` ever
+            # reached the frontend and every LEDC consumer stayed still (#385).
+            changed, cleared = diff_routes(snapshot, _emitted_routes)
+            _signal_router.replace_snapshot(snapshot)  # keep the mirror in step
+            _emitted_routes.clear()
+            _emitted_routes.update(snapshot)
             for gpio_pin, signal_id in changed:
                 _emit({'type': 'gpio_routing',
                        'gpio': gpio_pin,
@@ -1777,7 +1790,19 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
             marker = direction & 0xF000
             if marker == 0x5000:  # LEDC duty change (from esp32_ledc.c)
                 ledc_ch = (direction >> 8) & 0x0F
-                intensity = direction & 0xFF  # 0-100 percentage
+                intensity: float = direction & 0xFF  # 0-100 percentage
+                # The integer in the IRQ word is 1 % coarse: 200 us of pulse
+                # at 50 Hz, a servo step of about 19 degrees. esp32_ledc.c
+                # writes the exact float to its duty table before raising
+                # this IRQ, so read that instead when the library exposes it.
+                try:
+                    duty_ptr = lib.qemu_picsimlab_get_internals(6)  # LEDC_CHANNEL_DUTY
+                    if duty_ptr:
+                        exact = float((ctypes.c_float * 16).from_address(duty_ptr)[ledc_ch])
+                        if 0.0 <= exact <= 100.0:
+                            intensity = round(exact, 2)
+                except Exception:
+                    pass
 
                 # Refresh the GPIO Matrix snapshot first so the routing
                 # is current — emits any gpio_routing events the
@@ -1894,7 +1919,9 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
 
         So this callback ONLY mutates the in-memory SignalRouter
         snapshot. The 10 Hz poll thread (_refresh_signal_routing) is
-        the sole emitter of gpio_routing / gpio_routing_clear events.
+        the sole emitter of gpio_routing / gpio_routing_clear events,
+        and it diffs the chip's table against `_emitted_routes`, not
+        against the router this callback keeps warm.
         The callback's only benefit over the poll alone is reducing
         the worst-case routing-to-emit latency from ~100 ms to one
         poll tick, AND keeping the snapshot dict warm so the next
