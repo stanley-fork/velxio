@@ -792,6 +792,53 @@ describe('the publish window keeps every state the pads went through', () => {
   });
 });
 
+describe('a publish window never outlives the deck it was recorded on', () => {
+  it('a window that closes behind a rebuild is dropped, not solved with the new pad order', async () => {
+    // XIAO Pod (velxio-prod, 2026-10): "Circuit solver problem: no such
+    // vector undefined" on Run. A window closed while a rebuild was already
+    // queued on the solver; it ran after the rebuild, and its levels (indexed
+    // by the OLD deck's pads) were paired with the NEW deck's sources. The
+    // new deck had one pad more, so that pad's level was undefined and
+    // ngspice got `alter V_uno_10 dc undefined`.
+    const fake = new FakeSolverAdapter({ vectors: { 'v(vcc_rail)': 5 }, solveDelayMs: 40 });
+    __setSchedulerSolverFactoryForTests(() => fake);
+    let pads: Record<string, { type: string; v: number }> = { '9': { type: 'digital', v: 0 } };
+    const sim = makeSimStore({
+      components: [
+        { id: 'ra', metadataId: 'resistor', properties: { value: '1k' } },
+        { id: 'rb', metadataId: 'resistor', properties: { value: '1k' } },
+      ],
+      wires: [
+        { id: 'w1', start: { componentId: 'uno', pinName: '9' }, end: { componentId: 'ra', pinName: '1' } },
+        { id: 'w2', start: { componentId: 'ra', pinName: '2' }, end: { componentId: 'uno', pinName: 'GND' } },
+        { id: 'w3', start: { componentId: 'uno', pinName: '10' }, end: { componentId: 'rb', pinName: '1' } },
+        { id: 'w4', start: { componentId: 'rb', pinName: '2' }, end: { componentId: 'uno', pinName: 'GND' } },
+      ],
+      boards: [{ id: 'uno', boardKind: 'arduino-uno' }],
+    });
+    const elec = makeElectricalStore();
+    const service = new CircuitSimulationService(
+      sim.port, elec.port,
+      getMixedModeScheduler() as unknown as MixedModeSchedulerPort,
+      { collectBoardPinStates: () => pads },
+    );
+    startTracked(service);
+    await new Promise((r) => setTimeout(r, 150)); // initial deck: one pad
+
+    pads = { '9': { type: 'digital', v: 5 }, '10': { type: 'digital', v: 0 } };
+    void service.handleMcuEdge('uno', '9', true, 5); // opens a window, solves 40 ms
+    // A canvas change queues a rebuild behind that solve; the window closes
+    // (33 ms) after it is queued, so its publish runs after the rebuild.
+    sim.set({ components: [...sim.port.getState().components] });
+    await new Promise((r) => setTimeout(r, 400));
+
+    const bad = fake.calls.alterSource.filter(([, v]) => !Number.isFinite(v));
+    expect(bad).toEqual([]);
+    // The new deck really did carry both pads, so the race was on.
+    expect(fake.calls.loadCircuit.at(-1) ?? '').toMatch(/V_uno_10 /);
+  });
+});
+
 describe('CircuitSimulationService — error handling', () => {
   it('logs but does not throw when solver fails', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});

@@ -471,9 +471,17 @@ export class CircuitSimulationService {
   private closeWindow(): void {
     this.windowTimer = null;
     if (this.stopped || !this.timeline) return;
-    const w = this.timeline.close(nowMs());
+    const timeline = this.timeline;
+    const w = timeline.close(nowMs());
     this.windowCount++;
-    void this.run(() => this.publishWindow(w));
+    // The publish waits behind whatever the solver queue already holds, and
+    // that can be a rebuild. A rebuild replaces the pads (loadPads), and the
+    // window's levels are indexed by the OLD ones: solved against the new
+    // deck they pair the wrong source with each level, and a pad the new deck
+    // added gets `undefined` ("no such vector undefined"). The rebuild already
+    // published the state the pads hold, and anything recorded during it went
+    // onto the new timeline, so a stale window has nothing left to say.
+    void this.run(() => (this.timeline === timeline ? this.publishWindow(w) : Promise.resolve()));
   }
 
   private async publishWindow(w: WindowResult): Promise<void> {

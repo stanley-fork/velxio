@@ -167,7 +167,12 @@ WORKDIR /app/frontend
 # Lock files aren't committed in this repo (they're gitignored) — see the
 # note in .gitignore. The `rm -f` below is defense-in-depth in case
 # someone runs `docker build .` from a tree where a local lock exists.
-RUN rm -f package-lock.json \
+# npm 11, as the frontend CI uses: the npm 10.8 that node:20 ships crashes
+# building the tree from scratch ("Cannot read properties of null (reading
+# 'edgesOut')", a peer-set bug in arborist) since vitest 4.1.12 was published
+# on 2026-10-15. npm 11 resolves the same package.json.
+RUN npm install -g npm@11 --no-audit --no-fund \
+ && rm -f package-lock.json \
  && npm install --include=optional \
  && npm run build:docker
 
