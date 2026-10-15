@@ -30,7 +30,7 @@ stdout        : JSON event lines (one per line, flushed immediately)
                {"type": "gpio_pull",    "pin": N,  "pull": V}   # 0=none 1=up 2=down
                {"type": "uart_tx",      "uart": N, "byte": V}
                {"type": "ledc_duty",    "channel": N, "duty_pct": F}
-               {"type": "rmt_event",    "channel": N, ...}
+               {"type": "rmt_event",    "channel": N, ...}   (only with VELXIO_RMT_ITEMS=1)
                {"type": "ws2812_update","channel": N, "pixels": [...]}
                {"type": "i2c_event",    "bus": N, "addr": N, "event": N, "response": N}
                {"type": "i2c_trace",    "bus": N, "addr": N, "event": N, "op": "...",
@@ -1891,13 +1891,20 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                     )):
                         _log(f'[wifi-uart] {line}')
 
+    # One `rmt_event` per RMT item used to go to the tab for every symbol on
+    # the wire: 2401 messages for one frame of a 100-pixel strip, of which the
+    # frontend consumed none (the pixels reach it as `ws2812_update`). Raw items
+    # are a debugging aid now, on with VELXIO_RMT_ITEMS=1.
+    _rmt_items = _env_flag('VELXIO_RMT_ITEMS')
+
     def _on_rmt_event(channel: int, config0: int, value: int) -> None:
         if _stopped.is_set():
             return
-        level0, dur0, level1, dur1 = _decode_rmt_item(value)
-        _emit({'type': 'rmt_event', 'channel': channel, 'config0': config0,
-               'value': value, 'level0': level0, 'dur0': dur0,
-               'level1': level1, 'dur1': dur1})
+        if _rmt_items:
+            level0, dur0, level1, dur1 = _decode_rmt_item(value)
+            _emit({'type': 'rmt_event', 'channel': channel, 'config0': config0,
+                   'value': value, 'level0': level0, 'dur0': dur0,
+                   'level1': level1, 'dur1': dur1})
         if channel not in _rmt_decoders:
             _rmt_decoders[channel] = _RmtDecoder(channel)
         pixels = _rmt_decoders[channel].feed(value)
