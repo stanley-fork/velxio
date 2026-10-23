@@ -1200,6 +1200,55 @@ const MAPPERS: Record<string, Mapper> = {
     };
   },
 
+  // ── KS2E-M-DC5 relay (DPDT, 8-pin) ───────────────────────────────────────
+  // One coil between COIL1 and COIL2 and two change-over poles: P1 to NO1 /
+  // NC1 and P2 to NO2 / NC2, switched together. Same coil and switch model as
+  // `relay` above (R in series with L, 75 % pull-in, 45 % drop-out), with two
+  // differences. The coil is not polarised, so the contacts follow |V| across
+  // it and a relay wired COIL2-high still pulls in. And the part has no
+  // properties, so the coil is the 5 V nominal on its label; the KEST sheet
+  // only gives coil power < 0.36 W, i.e. at least ~70 ohm, the generic
+  // relay's default. Without this mapper the contacts were open pins in the
+  // netlist: a load on any of them never conducted.
+  'ks2e-m-dc5': (comp, netLookup) => {
+    const c1 = netLookup('COIL1');
+    const c2 = netLookup('COIL2');
+    if (!c1 || !c2) return null;
+    const coilV = 5;
+    const coilMid = `${comp.id}_coilmid`;
+    const ctrl = `${comp.id}_coilv`;
+    const ctrlInv = `${comp.id}_ncctrl`;
+    const cards = [
+      `R_${comp.id}_coil ${c1} ${coilMid} 70`,
+      `L_${comp.id}_coil ${coilMid} ${c2} 20m`,
+      `B_${comp.id}_coilv ${ctrl} 0 V = abs(V(${c1}) - V(${c2}))`,
+      `B_${comp.id}_ncctrl ${ctrlInv} 0 V = ${coilV} - abs(V(${c1}) - V(${c2}))`,
+    ];
+    let contacts = 0;
+    for (const pole of ['1', '2']) {
+      const com = netLookup(`P${pole}`);
+      if (!com) continue;
+      const no = netLookup(`NO${pole}`);
+      const nc = netLookup(`NC${pole}`);
+      if (no) {
+        cards.push(`S_${comp.id}_no${pole} ${com} ${no} ${ctrl} 0 KS2E_SW`);
+        contacts++;
+      }
+      if (nc) {
+        cards.push(`S_${comp.id}_nc${pole} ${com} ${nc} ${ctrlInv} 0 KS2E_SW`);
+        contacts++;
+      }
+    }
+    return {
+      cards,
+      modelsUsed: new Set(
+        // Its own model name: `relay` writes RELAY_SW with ITS coil voltage,
+        // and two different .model lines under one name break the netlist.
+        contacts ? [`.model KS2E_SW SW(Vt=${coilV * 0.6} Vh=${coilV * 0.15} Ron=0.05 Roff=1G)`] : [],
+      ),
+    };
+  },
+
   // ── Schottky diodes (Vf ≈ 0.3–0.45 V at 1 A). Phase 2: LTSpice models
   // sourced from OnSemi via Linear Tech standard.dio.
   'diode-1n5817': (comp, netLookup) => {
