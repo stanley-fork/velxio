@@ -1175,15 +1175,32 @@ const MAPPERS: Record<string, Mapper> = {
       `R_${comp.id}_coil ${cp} ${coilMidNet} ${coilR}`,
       `L_${comp.id}_coil ${coilMidNet} ${cn} 20m`,
     ];
+    // What the armature responds to. A bare coil has no polarity: current
+    // either way magnetises it, so the contacts follow |V| and a relay wired
+    // COIL+ to GND with the drive on COIL- pulls in like any other (the
+    // component doc always said "polarity only matters for the flyback
+    // diode"; the model used the signed voltage and stayed open). With the
+    // diode fitted the part IS polarised: driven backwards the diode conducts
+    // and, on silicon, clamps the coil to a diode drop, so it never pulls in.
+    // The solve's sources are ideal and would hold the full voltage across
+    // coil and diode alike, hence the signed control in that case, read
+    // straight off the coil pins as it always was (the deck of a relay with
+    // its diode is unchanged; only the bare coil gets the |V| source).
+    const coilDrive = includeFlyback ? `V(${cp}) - V(${cn})` : `abs(V(${cp}) - V(${cn}))`;
+    let ctrl = `${cp} ${cn}`;
+    if (!includeFlyback && (no || nc)) {
+      ctrl = `${comp.id}_coilv 0`;
+      cards.push(`B_${comp.id}_coilv ${comp.id}_coilv 0 V = ${coilDrive}`);
+    }
     if (no) {
-      // NO: closes when V_coil > Vt (normal SW behaviour)
-      cards.push(`S_${comp.id}_no ${com} ${no} ${cp} ${cn} RELAY_SW`);
+      // NO: closes when the coil drive exceeds Vt (normal SW behaviour)
+      cards.push(`S_${comp.id}_no ${com} ${no} ${ctrl} RELAY_SW`);
     }
     if (nc) {
-      // NC: inverted control — B-source maps (V_coil → Vnom − V_coil) so that
+      // NC: inverted control — B-source maps (drive → Vnom − drive) so that
       // SW still "turns on when ctrl > Vt", but meaning is inverted.
       const ctrlInvNet = `${comp.id}_ncctrl`;
-      cards.push(`B_${comp.id}_ncctrl ${ctrlInvNet} 0 V = ${coilV} - (V(${cp}) - V(${cn}))`);
+      cards.push(`B_${comp.id}_ncctrl ${ctrlInvNet} 0 V = ${coilV} - (${coilDrive})`);
       cards.push(`S_${comp.id}_nc ${com} ${nc} ${ctrlInvNet} 0 RELAY_SW`);
     }
     if (includeFlyback) {
