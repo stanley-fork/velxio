@@ -32,7 +32,14 @@ import {
   eepromConfig,
   AVRUSI,
 } from 'avr8js';
-import type { AVREEPROMConfig, SPIConfig, TWIConfig } from 'avr8js';
+import type {
+  AVREEPROMConfig,
+  AVRExternalInterrupt,
+  AVRPinChangeInterrupt,
+  AVRPortConfig,
+  SPIConfig,
+  TWIConfig,
+} from 'avr8js';
 import type { AVRTimerConfig } from 'avr8js/dist/esm/peripherals/timer';
 import type { ADCConfig, ADCMuxConfiguration } from 'avr8js/dist/esm/peripherals/adc';
 import { ADCMuxInputType, ADCReference } from 'avr8js/dist/esm/peripherals/adc';
@@ -296,18 +303,114 @@ const attiny85Timer0Config: AVRTimerConfig = {
   dividers: { 0: 0, 1: 1, 2: 8, 3: 64, 4: 256, 5: 1024, 6: 0, 7: 0 },
 };
 
-/** Ordered list of Mega ports with their avr8js configs */
-const MEGA_PORT_CONFIGS = [
+/**
+ * ── ATmega2560 interrupt wiring ─────────────────────────────────────────────
+ *
+ * avr8js's port configs carry the ATmega328P's interrupt vectors, and the
+ * Mega used them as they came: PCINT0 at word 6, which on the ATmega2560 is
+ * INT2's slot. A SoftwareSerial receiver on pin 10 (PB4) enables PCINT0, so
+ * the first edge from the other board vectored the core into an INT2 the
+ * sketch never defined; avr-libc's __bad_interrupt jumps to the reset vector,
+ * and the board rebooted on every byte ("RReRRReceiver Ready...", #397).
+ * PORTC and PORTD carried pin-change interrupts the chip does not have, and
+ * PORTE's INT4/INT5 (pins 2 and 3, the Mega's usual attachInterrupt pins)
+ * were not wired at all.
+ *
+ * The 2560's vectors are 4 bytes (JMP), so vector n sits at word 2n
+ * (iomxx0_1.h): INT0..INT7 = 1..8, PCINT0..PCINT2 = 9..11. Registers: EICRA
+ * 0x69 (ISC00..ISC31), EICRB 0x6a (ISC40..ISC71), EIMSK 0x3d, EIFR 0x3c,
+ * PCICR 0x68, PCIFR 0x3b, PCMSK0..2 0x6b..0x6d. Pins:
+ *   INT0..INT3   PD0..PD3  D21, D20, D19, D18
+ *   INT4..INT7   PE4..PE7  D2, D3, then two pads the header leaves out
+ *   PCINT0..7    PB0..PB7  D53, D52, D51, D50, D10..D13
+ *   PCINT8       PE0       D0
+ *   PCINT9..15   PJ0..PJ6  D15, D14, then pads the header leaves out
+ *   PCINT16..23  PK0..PK7  A8..A15
+ */
+const megaExtInt = (n: number): AVRExternalInterrupt => ({
+  EICR: n < 4 ? 0x69 : 0x6a,
+  EIMSK: 0x3d,
+  EIFR: 0x3c,
+  index: n,
+  iscOffset: (n % 4) * 2,
+  interrupt: 2 + 2 * n,
+});
+
+/** PCINTn's group: `mask` says which port bits belong to it, `offset` where
+ *  bit 0 of the port sits in PCMSKn. */
+const megaPinChange = (n: number, mask: number, offset: number): AVRPinChangeInterrupt => ({
+  PCIE: n,
+  PCICR: 0x68,
+  PCIFR: 0x3b,
+  PCMSK: 0x6b + n,
+  pinChangeInterrupt: 18 + 2 * n,
+  mask,
+  offset,
+});
+
+/** A port's registers alone: the ATmega328P interrupts avr8js attaches to
+ *  the same letter do not apply here. */
+const megaPortRegs = (c: AVRPortConfig): Pick<AVRPortConfig, 'PIN' | 'DDR' | 'PORT'> => ({
+  PIN: c.PIN,
+  DDR: c.DDR,
+  PORT: c.PORT,
+});
+
+/** Ordered list of Mega ports with their configs */
+const MEGA_PORT_CONFIGS: Array<{ name: string; config: AVRPortConfig }> = [
   { name: 'PORTA', config: portAConfig },
-  { name: 'PORTB', config: portBConfig },
-  { name: 'PORTC', config: portCConfig },
-  { name: 'PORTD', config: portDConfig },
-  { name: 'PORTE', config: portEConfig },
+  {
+    name: 'PORTB',
+    config: {
+      ...megaPortRegs(portBConfig),
+      pinChange: megaPinChange(0, 0xff, 0),
+      externalInterrupts: [],
+    },
+  },
+  { name: 'PORTC', config: { ...megaPortRegs(portCConfig), externalInterrupts: [] } },
+  {
+    name: 'PORTD',
+    config: {
+      ...megaPortRegs(portDConfig),
+      externalInterrupts: [megaExtInt(0), megaExtInt(1), megaExtInt(2), megaExtInt(3)],
+    },
+  },
+  {
+    name: 'PORTE',
+    config: {
+      ...megaPortRegs(portEConfig),
+      pinChange: megaPinChange(1, 0x01, 0),
+      externalInterrupts: [
+        null,
+        null,
+        null,
+        null,
+        megaExtInt(4),
+        megaExtInt(5),
+        megaExtInt(6),
+        megaExtInt(7),
+      ],
+    },
+  },
   { name: 'PORTF', config: portFConfig },
   { name: 'PORTG', config: portGConfig },
   { name: 'PORTH', config: portHConfig },
-  { name: 'PORTJ', config: portJConfig },
-  { name: 'PORTK', config: portKConfig },
+  {
+    name: 'PORTJ',
+    config: {
+      ...megaPortRegs(portJConfig),
+      pinChange: megaPinChange(1, 0x7f, 1),
+      externalInterrupts: [],
+    },
+  },
+  {
+    name: 'PORTK',
+    config: {
+      ...megaPortRegs(portKConfig),
+      pinChange: megaPinChange(2, 0xff, 0),
+      externalInterrupts: [],
+    },
+  },
   { name: 'PORTL', config: portLConfig },
 ];
 
@@ -1124,10 +1227,6 @@ export class AVRSimulator implements LineCapable, BusCapableSimulator {
       this.adc = new AVRADC(cpu, cfg.adc);
 
       // ── GPIO ports ──────────────────────────────────────────────────────
-      this.portB = new AVRIOPort(cpu, portBConfig);
-      this.portC = new AVRIOPort(cpu, portCConfig);
-      this.portD = new AVRIOPort(cpu, portDConfig);
-
       if (this.boardVariant === 'mega') {
         this.megaPorts.clear();
         this.megaPortValues.clear();
@@ -1135,6 +1234,18 @@ export class AVRSimulator implements LineCapable, BusCapableSimulator {
           this.megaPorts.set(name, new AVRIOPort(cpu, config));
           this.megaPortValues.set(name, 0);
         }
+        // The three ports the Uno code paths name are the Mega's own
+        // instances. A second AVRIOPort on the same registers, which is what
+        // this used to build first, is a zombie: the later instance takes
+        // over its register hooks, but it stays in cpu.gpioPorts with the
+        // 328P's INT0/INT1 on PD2/PD3 and answers every EIMSK write.
+        this.portB = this.megaPorts.get('PORTB')!;
+        this.portC = this.megaPorts.get('PORTC')!;
+        this.portD = this.megaPorts.get('PORTD')!;
+      } else {
+        this.portB = new AVRIOPort(cpu, portBConfig);
+        this.portC = new AVRIOPort(cpu, portCConfig);
+        this.portD = new AVRIOPort(cpu, portDConfig);
       }
     }
 
