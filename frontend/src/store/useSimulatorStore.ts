@@ -1844,6 +1844,17 @@ interface SimulatorState {
   clearBoardSerialOutput: (boardId: string) => void;
 }
 
+/**
+ * What the last re-route pass of recalculateAllWirePositions produced, and
+ * from which inputs. Every part calls that action once its pinInfo is
+ * readable, and the canvas adds settle timers on top: a 71-part project ran
+ * the whole router 70+ times on load, ~600 ms each, and froze the page for
+ * 47 s. When the wires are still the array the last pass stored and neither
+ * an endpoint nor an obstacle moved, the routes it would compute are the
+ * ones already stored.
+ */
+let lastRouted: { wires: readonly Wire[]; key: string } | null = null;
+
 // ── Helper: create a simulator for a given board kind ─────────────────────
 function createSimulator(
   boardKind: BoardKind,
@@ -4666,8 +4677,22 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       // Sequential on purpose: each wire sees the already-re-routed shapes
       // of the ones before it, which is what lays parallel runs out as a
       // tidy side-by-side bus instead of a shuffle of overlaps.
+      //
+      // ONLY those, plus the hand-authored wires: never the stale shape a
+      // later auto-routed wire still carries from the previous pass. With
+      // those in, a pass routed against the leftovers of the pass before it,
+      // so the same project came out in a different shape depending on how
+      // many passes had run (on a slow network a pass ran before the parts
+      // were measured, and its leftovers bent the final routes). Without
+      // them a pass depends only on the endpoints and the parts, and running
+      // it again changes nothing.
       if (updatedWires.some((w) => w.autoRouted && !w.bb)) {
         const rectsById = collectComponentRects(state.components);
+        const key = JSON.stringify([
+          updatedWires.map((w) => [w.id, w.start.x, w.start.y, w.end.x, w.end.y]),
+          rectsById.map(({ id, rect }) => [id, rect.x, rect.y, rect.w, rect.h]),
+        ]);
+        if (lastRouted && lastRouted.wires === state.wires && lastRouted.key === key) return;
         for (let i = 0; i < updatedWires.length; i++) {
           const wire = updatedWires[i];
           if (!wire.autoRouted || wire.bb) continue;
@@ -4678,7 +4703,10 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
             { x: wire.start.x, y: wire.start.y },
             { x: wire.end.x, y: wire.end.y },
             rects,
-            collectWireSegments(updatedWires, wire.id),
+            collectWireSegments(
+              updatedWires.filter((w, j) => j < i || !w.autoRouted),
+              wire.id,
+            ),
           );
           // routed === null means the PREVIEW elbow (longer-axis-first) is
           // clear — so that exact elbow must be materialised. Storing []
@@ -4699,6 +4727,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
             ),
           };
         }
+        lastRouted = { wires: updatedWires, key };
       }
 
       set({ wires: updatedWires });
