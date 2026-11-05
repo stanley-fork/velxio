@@ -610,4 +610,164 @@ void loop() {
       'hysteresis',
     ],
   },
+  {
+    id: 'esp32-pwm-dac-lm358-12v',
+    title: 'ESP32 PWM to 0-12 V (LM358 on a 15 V Supply)',
+    description:
+      "A 3.3 V microcontroller driving a 12 V signal. GPIO25's PWM goes through a 10k/10uF low-pass filter into an LM358 wired as a non-inverting amplifier with a gain of 3.7, and the op-amp runs from a 15 V bench supply on its V+ pin. The voltmeter shows the output, and a 100k/22k divider brings it back to GPIO34 so the serial monitor compares each target with what came out. Disconnect V+ and the op-amp falls back to the ESP32's 3.3 V: the output stops near 2 V whatever the gain.",
+    category: 'circuits',
+    difficulty: 'intermediate',
+    boardType: 'esp32',
+    code: `// ESP32 PWM to 0-12 V: an LM358 on its own 15 V supply.
+//
+// GPIO25 makes 12-bit PWM at 5 kHz; R1/C1 (10k, 10 uF) average it into a DC
+// setpoint between 0 and 3.3 V; the LM358, wired as a non-inverting amplifier
+// with a gain of 1 + 27k/10k = 3.7, lifts it to 0..12.2 V. The op-amp is
+// powered from the 15 V bench supply on its V+ pin: an op-amp cannot put out
+// more than its supply, and on the ESP32's 3.3 V an LM358 stops near 2 V.
+// A 100k/22k divider brings the output back under 3.3 V for GPIO34, so the
+// sketch prints what it got next to what it asked for. The ESP32's ADC sees
+// nothing under about 0.14 V (Espressif rates it from 150 mV up), so the 0 V
+// step prints about 0.8 V while the voltmeter shows 0.
+
+const int PWM_PIN = 25;
+const int SENSE_PIN = 34;
+const float GAIN = 1.0 + 27.0 / 10.0;          // 3.7
+const float DIVIDER = (100.0 + 22.0) / 22.0;   // 5.55
+const float targets[] = {0.0, 3.0, 6.0, 9.0, 12.0};
+
+void setup() {
+  Serial.begin(115200);
+  ledcAttach(PWM_PIN, 5000, 12);               // 5 kHz, duty 0..4095
+}
+
+void loop() {
+  for (float target : targets) {
+    int duty = constrain(lround(target / (3.3 * GAIN) * 4095), 0, 4095);
+    ledcWrite(PWM_PIN, duty);
+    delay(3000);                               // the RC settles in 5 x 0.1 s
+    float measured = analogReadMilliVolts(SENSE_PIN) / 1000.0 * DIVIDER;
+    Serial.printf("target %5.2f V  duty %4d  measured %5.2f V\\n", target, duty, measured);
+  }
+}
+`,
+    components: [
+      { type: 'wokwi-esp32-devkit-v1', id: 'esp32', x: 50, y: 50, properties: {} },
+      {
+        type: 'wokwi-signal-generator',
+        id: 'psu',
+        x: -600,
+        y: 0,
+        properties: { waveform: 'dc', offset: 15, frequency: 1000, amplitude: 0 },
+      },
+      { type: 'wokwi-resistor', id: 'r1', x: -560, y: 162.35, properties: { value: '10000' } },
+      {
+        type: 'velxio-capacitor-electrolytic',
+        id: 'c1',
+        x: -480,
+        y: 187,
+        properties: { value: '10u' },
+      },
+      { type: 'wokwi-opamp-lm358', id: 'u1', x: -400, y: 156, properties: {} },
+      { type: 'wokwi-resistor', id: 'rf', x: -390, y: 242, properties: { value: '27000' } },
+      { type: 'wokwi-resistor', id: 'rg', x: -390, y: 277, properties: { value: '10000' } },
+      { type: 'velxio-instr-voltmeter', id: 'vm', x: -260, y: 147, properties: {} },
+      { type: 'wokwi-resistor', id: 'rt', x: -120, y: 111.35, properties: { value: '100000' } },
+      { type: 'wokwi-resistor', id: 'rb', x: -120, y: 205, properties: { value: '22000' } },
+    ],
+    wires: [
+      // PWM out, over the top of the circuit, into the filter.
+      w('w1', ['esp32', '25'], ['r1', '1'], C_SIG, [
+        [40, 168],
+        [40, -30],
+        [-610, -30],
+        [-610, 168],
+      ]),
+      w('w2', ['r1', '2'], ['u1', 'IN+'], C_SIG, [[-450, 168]]),
+      w('w3', ['c1', '+'], ['r1', '2'], C_SIG, [
+        [-471.4, 252],
+        [-490, 252],
+        [-490, 168],
+      ]),
+      // The op-amp's supply: 15 V on V+, ground on V-.
+      w('w4', ['psu', 'SIG'], ['u1', 'V+'], C_PWR, [[-360, 24]]),
+      w('w5', ['psu', 'GND'], ['esp32', 'GND'], C_GND, [
+        [-500, 48],
+        [-500, 330],
+        [30, 330],
+        [30, 244],
+      ]),
+      w('w6', ['u1', 'V-'], ['esp32', 'GND'], C_GND, [
+        [-360, 232],
+        [-430, 232],
+        [-430, 330],
+        [30, 330],
+        [30, 244],
+      ]),
+      w('w7', ['c1', '−'], ['esp32', 'GND'], C_GND, [
+        [-454.5, 330],
+        [30, 330],
+        [30, 244],
+      ]),
+      // Gain of 3.7: 27k from OUT to IN-, 10k from IN- to ground.
+      w('w8', ['u1', 'IN-'], ['rf', '1'], C_SIG, [
+        [-410, 208],
+        [-410, 247.65],
+      ]),
+      w('w9', ['rf', '2'], ['u1', 'OUT'], C_OUT, [
+        [-310, 247.65],
+        [-310, 188],
+      ]),
+      w('w10', ['u1', 'IN-'], ['rg', '1'], C_SIG, [
+        [-410, 208],
+        [-410, 282.65],
+      ]),
+      w('w11', ['rg', '2'], ['esp32', 'GND'], C_GND, [
+        [-300, 282.65],
+        [-300, 330],
+        [30, 330],
+        [30, 244],
+      ]),
+      // The output on the voltmeter and, divided by 5.55, on GPIO34.
+      w('w12', ['u1', 'OUT'], ['vm', 'V+'], C_OUT, [
+        [-290, 188],
+        [-290, 171],
+      ]),
+      w('w13', ['vm', 'V-'], ['esp32', 'GND'], C_GND, [
+        [-270, 195],
+        [-270, 330],
+        [30, 330],
+        [30, 244],
+      ]),
+      w('w14', ['rt', '1'], ['vm', 'V+'], C_OUT, [
+        [-275, 117],
+        [-275, 171],
+      ]),
+      w('w15', ['rt', '2'], ['esp32', '34'], C_SIG, [[0, 117]]),
+      w('w16', ['rb', '2'], ['esp32', '34'], C_SIG, [
+        [-40, 210.65],
+        [-40, 117],
+      ]),
+      w('w17', ['rb', '1'], ['esp32', 'GND'], C_GND, [
+        [-130, 210.65],
+        [-130, 330],
+        [30, 330],
+        [30, 244],
+      ]),
+    ],
+    tags: [
+      'analog',
+      'mixed',
+      'esp32',
+      'pwm',
+      'dac',
+      'rc-filter',
+      'low-pass',
+      'opamp',
+      'lm358',
+      'non-inverting-amplifier',
+      'power-supply',
+      'level-shift',
+    ],
+  },
 ];

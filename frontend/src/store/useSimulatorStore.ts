@@ -1,3 +1,4 @@
+import { deviceFiles } from '../utils/projectOnlyFiles';
 import { create } from 'zustand';
 import { decideEngine, getInstantEngine } from '../lib/instantEngine';
 import {
@@ -979,12 +980,21 @@ function makePinPwmHandler(boardId: string) {
 }
 
 /** The one place a PWM observation reaches a pin, whichever path it came by. */
-function applyPinPwm(pm: PinManager, pin: number, dutyPct: number, freqHz?: number): void {
+export function applyPinPwm(pm: PinManager, pin: number, dutyPct: number, freqHz?: number): void {
   // The frequency rides alongside, when the engine knows it: a speaker reads it
   // back with getPwmFreq to play the sketch's actual note, and a servo to turn
   // the duty into a real pulse width.
   if (freqHz && freqHz > 0) pm.setPwmFreq(pin, freqHz);
   pm.updatePwm(pin, dutyPct / 100);
+  // An LEDC channel at duty 0 holds its pad LOW. The pad's GPIO latch is not
+  // what drives it while the GPIO matrix routes the LEDC signal there, and it
+  // can be HIGH for reasons that have nothing to do with the PWM (the solver's
+  // input feedback before the sketch attached the channel, a digitalWrite
+  // before ledcAttach). collectPinStates falls back to that latch whenever the
+  // duty is 0, so ledcWrite(pin, 0) used to put 3.3 V into the circuit: an RC
+  // filter behind it sat at full scale instead of 0 V. A later digitalWrite
+  // after ledcDetach still sets the latch as usual.
+  if (dutyPct <= 0) pm.setPinState(pin, false, 'mcu');
 }
 
 /**
@@ -1376,7 +1386,8 @@ export async function piSyncAndRunScript(boardId: string, boardKind: string): Pr
   const home = (proDef?.guestHome ?? '/home/pi').replace(/\/+$/, '');
   const board = useSimulatorStore.getState().boards.find((b) => b.id === boardId);
   const groupId = board?.activeFileGroupId ?? `group-${boardId}`;
-  const groupFiles = useEditorStore.getState().getGroupFiles(groupId);
+  // Project-only files (utils/projectOnlyFiles) stay out of the guest.
+  const groupFiles = deviceFiles(useEditorStore.getState().getGroupFiles(groupId));
   const files = groupFiles.map((f) => ({ path: `${home}/${f.name}`, content: f.content }));
   try {
     const { uploadFilesToPi } = await import('../utils/piUpload');
@@ -3015,8 +3026,11 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
 
     loadMicroPythonProgram: async (
       boardId: string,
-      files: Array<{ name: string; content: string }>,
+      projectFiles: Array<{ name: string; content: string }>,
     ) => {
+      // Project-only files (utils/projectOnlyFiles) never land on the board's
+      // filesystem: the RP2040/RP2350 path writes every file it gets to LittleFS.
+      const files = deviceFiles(projectFiles);
       const board = get().boards.find((b) => b.id === boardId);
       if (!board) return;
       if (!BOARD_SUPPORTS_MICROPYTHON.has(board.boardKind)) return;
