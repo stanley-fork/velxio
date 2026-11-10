@@ -16,6 +16,7 @@ Two compilation modes:
 """
 import asyncio
 import base64
+import contextlib
 import hashlib
 import json
 import logging
@@ -24,7 +25,9 @@ import re
 import shlex
 import shutil
 import string
+import struct
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -627,14 +630,24 @@ def _variant_lock(key: str) -> asyncio.Lock:
 _CORRUPT_COMPONENT_RE = re.compile(
     r'The downloaded component "([^"]+)"\s+is\s+corrupted', re.IGNORECASE
 )
+# The refusal of a copy whose hash file is missing or unreadable (component
+# manager 3.x, dependency_pre_download_check), which build.cmake wraps too.
+_HASHLESS_COMPONENT_RE = re.compile(
+    r'File\s+\.component_hash\s+or\s+CHECKSUMS\.json\s+for\s+component\s+'
+    r'"?([^"\s]+?)"?\s+in\s+the\s+managed\s+components\s+directory',
+    re.IGNORECASE,
+)
 
 
 def _corrupt_managed_component(stderr: str | None) -> str | None:
     """Name of the managed component the IDF component manager refused as
-    corrupted (its message wraps across lines), or None for any other cmake
-    failure."""
-    m = _CORRUPT_COMPONENT_RE.search(stderr or '')
-    return m.group(1) if m else None
+    corrupted, or for its missing hash file (both messages wrap across lines),
+    or None for any other cmake failure."""
+    for pattern in (_CORRUPT_COMPONENT_RE, _HASHLESS_COMPONENT_RE):
+        m = pattern.search(stderr or '')
+        if m:
+            return m.group(1)
+    return None
 
 
 def _heal_corrupt_managed_components(project_dir: Path, build_dir: Path) -> bool:
@@ -651,6 +664,431 @@ def _heal_corrupt_managed_components(project_dir: Path, build_dir: Path) -> bool
         cache.unlink(missing_ok=True)
         removed = True
     return removed
+
+
+# ── The component manager's shared cache (velxio/velxio-prod#215) ────────────
+# The first configure of a build variant has the IDF component manager fetch
+# the project's managed components (esp-dsp, cjson, esp-dl, ...) into ITS cache
+# and copy them into the variant's managed_components/. That cache is one
+# directory for every build on the machine, and the manager does not lock it:
+# a component it finds incomplete there is extracted again (rmtree, then
+# unpack) while another build may be copying that very component out. Two NEW
+# variants configured together on staging (2026-11-08, right after a deploy,
+# when the cache starts empty): one copy died with shutil.Error and left
+# esp-dsp in its variant with 156 of 497 files and no .component_hash, and the
+# manager then refused that copy on every later compile of the variant. The
+# variant locks above cannot help: those were two variants. So a configure
+# that may fetch holds one lock per cache, a file lock in the cache directory,
+# which also holds between processes (and between containers, should the
+# cache ever be shared through a volume).
+_COMPONENT_LOCK_NAME = '.velxio-configure.lock'
+_COMPONENT_LOCK_POLL_S = 0.2
+# A configure holds the lock for up to three cmake runs of at most 300 s each;
+# past that a waiter configures without it rather than wait for ever.
+_COMPONENT_LOCK_MAX_WAIT_S = 960.0
+_COMPONENT_HASH_RE = re.compile(r'^[A-Fa-f0-9]{64}$')  # the manager's SHA256_RE
+
+try:  # POSIX
+    import fcntl as _fcntl
+except ImportError:  # pragma: no cover - Windows
+    _fcntl = None
+try:  # Windows
+    import msvcrt as _msvcrt
+except ImportError:
+    _msvcrt = None
+
+
+def _component_cache_dir(env) -> Path:
+    """The component manager's download cache for a build run with `env`:
+    IDF_COMPONENT_CACHE_PATH, else the per-user cache dir the manager picks
+    for itself (idf_component_tools.file_cache.system_cache_path)."""
+    explicit = (env.get('IDF_COMPONENT_CACHE_PATH') or '').strip()
+    if explicit:
+        return Path(os.path.expanduser(explicit))
+    home = (env.get('HOME') or '').strip() or os.path.expanduser('~')
+    if sys.platform.startswith('win'):
+        base = (env.get('LOCALAPPDATA') or '').strip() or os.path.join(home, 'AppData', 'Local')
+        return Path(base) / 'Espressif' / 'ComponentManager' / 'Cache'
+    if sys.platform == 'darwin':
+        return Path(home) / 'Library' / 'Caches' / 'Espressif' / 'ComponentManager'
+    base = (env.get('XDG_CACHE_HOME') or '').strip() or os.path.join(home, '.cache')
+    return Path(base) / 'Espressif' / 'ComponentManager'
+
+
+def _try_lock_fd(fd: int) -> bool:
+    """An exclusive lock on `fd` without blocking: False while another holder
+    (another open of the file, in this process or any other) has it."""
+    if _fcntl is not None:
+        try:
+            _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            return False
+    if _msvcrt is not None:
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            _msvcrt.locking(fd, _msvcrt.LK_NBLCK, 1)
+            return True
+        except OSError:
+            return False
+    return True
+
+
+def _unlock_fd(fd: int) -> None:
+    try:
+        if _fcntl is not None:
+            _fcntl.flock(fd, _fcntl.LOCK_UN)
+        elif _msvcrt is not None:
+            os.lseek(fd, 0, os.SEEK_SET)
+            _msvcrt.locking(fd, _msvcrt.LK_UNLCK, 1)
+    except OSError:
+        pass
+
+
+@contextlib.asynccontextmanager
+async def _component_manager_lock(cache_dir: Path, progress_callback=None):
+    """Hold the component manager's cache for one configure.
+
+    Polled (never a blocking flock in a worker thread): a cancelled compile
+    must not leave a thread behind that takes the lock later and never gives
+    it back. A holder that dies releases it with its file descriptor."""
+    fd: int | None = None
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(cache_dir / _COMPONENT_LOCK_NAME), os.O_CREAT | os.O_RDWR, 0o644)
+    except OSError as exc:
+        logger.warning(
+            f'[espidf] no component-manager lock in {cache_dir} ({exc}); configuring without it'
+        )
+    if fd is None:
+        yield
+        return
+    locked = False
+    try:
+        t0 = time.monotonic()
+        waiting = False
+        while True:
+            try:
+                locked = _try_lock_fd(fd)
+            except OSError as exc:
+                logger.warning(f'[espidf] component-manager lock failed ({exc}); configuring without it')
+                break
+            if locked:
+                break
+            if not waiting:
+                waiting = True
+                logger.info('[espidf] another build is fetching ESP-IDF components; waiting for it')
+                if progress_callback is not None:
+                    try:
+                        progress_callback(
+                            '[velxio] waiting for another build to finish fetching ESP-IDF components\n'
+                        )
+                    except Exception:
+                        pass
+            if time.monotonic() - t0 > _COMPONENT_LOCK_MAX_WAIT_S:
+                logger.warning(
+                    f'[espidf] component-manager lock still held after '
+                    f'{_COMPONENT_LOCK_MAX_WAIT_S:.0f}s; configuring without it'
+                )
+                break
+            await asyncio.sleep(_COMPONENT_LOCK_POLL_S)
+        if waiting:
+            _timing_note(component_lock_wait_ms=int((time.monotonic() - t0) * 1000))
+        yield
+    finally:
+        if locked:
+            _unlock_fd(fd)
+        os.close(fd)
+
+
+def _broken_managed_components(project_dir: Path) -> list[Path]:
+    """The variant's managed components that the component manager would
+    refuse on every configure: a copy without a valid .component_hash, which
+    the manager writes with the copy (an interrupted copy has none)."""
+    try:
+        entries = list((project_dir / 'managed_components').iterdir())
+    except OSError:
+        return []
+    broken = []
+    for entry in entries:
+        if not entry.is_dir():
+            continue
+        try:
+            digest = (entry / '.component_hash').read_text(encoding='utf-8').strip()
+        except (OSError, UnicodeDecodeError):
+            digest = ''
+        if not _COMPONENT_HASH_RE.match(digest):
+            broken.append(entry)
+    return sorted(broken)
+
+
+def _repair_managed_components(project_dir: Path) -> list[str]:
+    """Remove the broken managed components (see _broken_managed_components):
+    with the copy gone, the next configure has the manager copy it again from
+    its cache instead of failing. Returns the names removed."""
+    removed = []
+    for entry in _broken_managed_components(project_dir):
+        shutil.rmtree(entry, ignore_errors=True)
+        removed.append(entry.name)
+    return removed
+
+
+_LOCK_DEPENDENCY_RE = re.compile(r'^  ([^\s:#][^:]*):\s*$')
+_LOCK_SOURCE_TYPE_RE = re.compile(r'^      type:\s*(\S+)\s*$')
+
+
+def _locked_managed_components(project_dir: Path) -> list[str]:
+    """The managed_components/ entries the variant's dependencies.lock says
+    the component manager copies there: each dependency resolved from the
+    registry or from git, `namespace/name` as `namespace__name` (ESP-IDF
+    itself and local components are not copied). Read line by line: the lock
+    is the component manager's own two-space YAML, and this module needs no
+    YAML parser for one list of names."""
+    try:
+        lines = (project_dir / 'dependencies.lock').read_text(encoding='utf-8').splitlines()
+    except (OSError, UnicodeDecodeError):
+        return []
+    names: set[str] = set()
+    in_deps = False
+    current: str | None = None
+    for line in lines:
+        if line.startswith('dependencies:'):
+            in_deps = True
+            continue
+        if line and not line.startswith(' '):
+            in_deps = False
+        if not in_deps:
+            continue
+        m = _LOCK_DEPENDENCY_RE.match(line)
+        if m:
+            current = m.group(1).strip().strip('\'"')
+            continue
+        m = _LOCK_SOURCE_TYPE_RE.match(line)
+        if m and current and m.group(1) in ('service', 'git'):
+            names.add(current.replace('/', '__'))
+    return sorted(names)
+
+
+def _configure_may_fetch(project_dir: Path, build_dir: Path, manifest_changed: bool) -> bool:
+    """Whether a configure in this build dir may have the component manager
+    fetch, and so needs _component_manager_lock: the dir's first configure (no
+    configure ever completed there), a manifest that changed, managed
+    components missing or broken. A copy is missing when its dependencies.lock
+    lists it and managed_components/ does not hold it (#215: a copy gone
+    altogether is fetched again just like one without its hash file). A warm
+    dir whose copies are all in place only has their hash files read."""
+    if manifest_changed or not (build_dir / 'build.ninja').is_file():
+        return True
+    managed = project_dir / 'managed_components'
+    if not managed.is_dir():
+        return True
+    if any(not (managed / name).is_dir() for name in _locked_managed_components(project_dir)):
+        return True
+    return bool(_broken_managed_components(project_dir))
+
+
+# ── What a precompiled library archive is (velxio/velxio-prod#214) ────────────
+# Since #87 the build links the archives a precompiled library ships for the
+# chip (_precompiled_link). An archive built for another generation of the
+# core links against the wrong C library: micro_ros_arduino 3.0.0-iron's
+# libmicroros.a was compiled by "GCC: (crosstool-NG esp-2021r2) 8.4.0", the
+# ESP-IDF 4.x toolchain behind arduino-esp32 2.x, where time_t is 32 bits
+# (ESP-IDF 5 made it 64), and it carries its own copies of the runtime's 64-bit
+# atomics, which ESP-IDF 5's newlib also defines. The user saw four "multiple
+# definition" linker lines after a full build, for an archive that would have
+# kept time in whole seconds had it linked. The verdict comes from the archive
+# itself: the toolchain each object records in .comment, and what it defines.
+class PrecompiledLibraryError(Exception):
+    """A library's precompiled archive cannot be part of this build. str() is
+    the one-line summary; `details` says what the archive is and why."""
+
+    def __init__(self, summary: str, details: str):
+        super().__init__(summary)
+        self.details = details
+
+
+@dataclass(frozen=True)
+class _ArchiveFacts:
+    objects: int                       # ELF objects read
+    compilers: tuple[str, ...]         # distinct "GCC: (...) x.y.z" records
+    esp_gcc_majors: tuple[int, ...]    # GCC majors of Espressif toolchain records
+    runtime_defs: tuple[str, ...]      # strong __atomic_* / __sync_* definitions
+
+
+_ARCHIVE_FACTS: dict[tuple[str, int, int], _ArchiveFacts] = {}
+_GCC_RECORD_RE = re.compile(rb'GCC: \(([^)\x00]*)\) (\d+)\.(\d+)(?:\.(\d+))?')
+# The names GCC gives the helpers it calls for atomics it cannot inline. They
+# belong to the toolchain's runtime (ESP-IDF 5: newlib's stdatomic.c), never to
+# a library: a strong copy in an archive is a duplicate at link.
+_RUNTIME_HELPER_PREFIXES = (b'__atomic_', b'__sync_')
+# ESP-IDF 5.0 moved to the esp-2022r1 toolchain (GCC 11.2) and made time_t
+# 64-bit; every ESP-IDF 4.x toolchain (esp-2019r2 .. esp-2021r2) is GCC 8.
+_IDF5_FIRST_GCC_MAJOR = 11
+
+
+def _ar_members(data: bytes):
+    """(name, bytes) for each member of a GNU/BSD `ar` archive; stops quietly
+    at anything it cannot read."""
+    if not data.startswith(b'!<arch>\n'):
+        return
+    pos, longnames = 8, b''
+    while pos + 60 <= len(data):
+        header = data[pos:pos + 60]
+        if header[58:60] != b'`\n':
+            return
+        try:
+            size = int(header[48:58].decode('ascii').strip() or '0')
+        except ValueError:
+            return
+        name = header[:16].decode('latin-1').rstrip()
+        body = data[pos + 60:pos + 60 + size]
+        pos += 60 + size + (size & 1)
+        if name in ('/', '/SYM64/', '__.SYMDEF', '__.SYMDEF SORTED'):
+            continue
+        if name == '//':
+            longnames = body
+            continue
+        if name.startswith('#1/'):  # BSD: the name leads the body
+            try:
+                n = int(name[3:])
+            except ValueError:
+                return
+            name, body = body[:n].rstrip(b'\x00').decode('latin-1'), body[n:]
+        elif name.startswith('/') and name[1:].isdigit():  # GNU long name
+            off = int(name[1:])
+            end = longnames.find(b'/\n', off)
+            name = longnames[off:end if end >= 0 else None].decode('latin-1')
+        else:
+            name = name.rstrip('/')
+        yield name, body
+
+
+def _elf32_facts(obj: bytes) -> tuple[list[bytes], list[str]] | None:
+    """(.comment strings, strong __atomic_*/__sync_* definitions) of a 32-bit
+    little-endian ELF object (every ESP32 target), or None for anything else."""
+    if len(obj) < 52 or obj[:4] != b'\x7fELF' or obj[4] != 1 or obj[5] != 1:
+        return None
+    try:
+        (shoff,) = struct.unpack_from('<I', obj, 32)
+        shentsize, shnum, shstrndx = struct.unpack_from('<HHH', obj, 46)
+        if not shoff or shentsize < 40 or shoff + shnum * shentsize > len(obj):
+            return None
+        sections = [
+            struct.unpack_from('<IIIIIIIIII', obj, shoff + i * shentsize) for i in range(shnum)
+        ]
+
+        def cstr(section: tuple, offset: int) -> bytes:
+            start = section[4] + offset
+            end = obj.find(b'\x00', start, section[4] + section[5])
+            return obj[start:end if end >= 0 else section[4] + section[5]]
+
+        names = sections[shstrndx] if shstrndx < shnum else None
+        comments: list[bytes] = []
+        runtime: list[str] = []
+        for sh in sections:
+            sh_name, sh_type, _f, _a, off, size, link = sh[:7]
+            if names is not None and sh_type == 1 and cstr(names, sh_name) == b'.comment':
+                comments += [s for s in obj[off:off + size].split(b'\x00') if s]
+            elif sh_type == 2 and link < shnum:  # SHT_SYMTAB
+                strtab = sections[link]
+                for k in range(size // 16):
+                    st_name, _v, _s, st_info, _o, st_shndx = struct.unpack_from(
+                        '<IIIBBH', obj, off + 16 * k,
+                    )
+                    # Defined and GLOBAL: a WEAK copy yields to the runtime's.
+                    if st_info >> 4 != 1 or st_shndx == 0:
+                        continue
+                    sym = cstr(strtab, st_name)
+                    if sym.startswith(_RUNTIME_HELPER_PREFIXES):
+                        runtime.append(sym.decode('latin-1'))
+        return comments, runtime
+    except struct.error:
+        return None
+
+
+def _archive_facts(path: Path) -> _ArchiveFacts | None:
+    """What `path` (an `ar` archive of ELF objects) records about its build,
+    or None when it holds no ELF object. Cached per file version."""
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    key = (str(path.resolve()), st.st_size, st.st_mtime_ns)
+    if key in _ARCHIVE_FACTS:
+        return _ARCHIVE_FACTS[key]
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    objects = 0
+    compilers: set[str] = set()
+    majors: set[int] = set()
+    runtime: set[str] = set()
+    for _name, body in _ar_members(data):
+        facts = _elf32_facts(body)
+        if facts is None:
+            continue
+        objects += 1
+        comments, defs = facts
+        runtime.update(defs)
+        for comment in comments:
+            m = _GCC_RECORD_RE.search(comment)
+            if not m:
+                continue
+            compilers.add(
+                f'GCC {m.group(0).decode("latin-1").rsplit(" ", 1)[-1]} '
+                f'({m.group(1).decode("latin-1")})'
+            )
+            if b'esp-' in m.group(1):
+                majors.add(int(m.group(2)))
+    result = None if not objects else _ArchiveFacts(
+        objects, tuple(sorted(compilers)), tuple(sorted(majors)), tuple(sorted(runtime)),
+    )
+    if len(_ARCHIVE_FACTS) > 256:
+        _ARCHIVE_FACTS.clear()
+    _ARCHIVE_FACTS[key] = result
+    return result
+
+
+def _precompiled_archive_problem(facts: _ArchiveFacts | None, idf5: bool) -> tuple[str, list[str]] | None:
+    """Why an archive with these facts cannot be linked into a build on ESP-IDF
+    5 (`idf5`) or 4.x: (clause for the summary, lines of explanation), or None."""
+    if facts is None:
+        return None
+    built_idf4 = any(m < _IDF5_FIRST_GCC_MAJOR for m in facts.esp_gcc_majors)
+    lines: list[str] = []
+    clause = ''
+    if facts.compilers:
+        lines.append(f'Compiled by: {", ".join(facts.compilers)}')
+    if idf5 and built_idf4:
+        clause = (
+            'was built for ESP-IDF 4.x (arduino-esp32 2.x), and Velxio builds ESP32 '
+            'sketches with arduino-esp32 3.x on ESP-IDF 5'
+        )
+        lines.append(
+            'Why: that is the ESP-IDF 4.x toolchain. ESP-IDF 5 changed the C library '
+            'the archive was compiled against (time_t became 64-bit, among others), so '
+            'code built for 4.x reads and writes those structures with the old layout: '
+            'even linked, it would not run correctly.'
+        )
+    # The other direction, an ESP-IDF 5 archive in a build on ESP-IDF 4.x (only
+    # with VELXIO_ARDUINO_IDF5=0 or no ESP-IDF 5 installed), links as it did
+    # before #214: no failure of it is known, and refusing it by toolchain alone
+    # blocked real libraries (bsec2's ESP32-S3 and C3 archives).
+    if idf5 and facts.runtime_defs:
+        lines.append(
+            f'It {"also " if clause else ""}defines {", ".join(facts.runtime_defs)}, '
+            'which the toolchain runtime provides (on ESP-IDF 5, its C library), so '
+            'the link fails with "multiple definition" errors.'
+        )
+        if not clause:
+            clause = (
+                "defines the compiler runtime's own atomic helpers, which ESP-IDF's "
+                'C library also defines'
+            )
+    if not clause:
+        return None
+    return clause, lines
 
 
 def _evict_cold_variants(target_dir: Path, keep: int, idf_target: str | None = None) -> None:
@@ -2524,6 +2962,7 @@ class ESPIDFCompiler:
 
     def _precompiled_link(
         self, lib_root: Path, has_src_layout: bool, idf_target: str | None,
+        idf5: bool = True,
     ) -> dict | None:
         """What arduino-cli links for a precompiled library on this chip.
 
@@ -2546,6 +2985,11 @@ class ESPIDFCompiler:
         target, or no folder for it: arduino-cli then builds the sources as it
         would any library's), else a dict with `archives` (Paths, sorted),
         `ldflags` (tokens) and `skip_sources`.
+
+        Raises PrecompiledLibraryError for an archive built for the other
+        generation of the core than this build's (`idf5`: ESP-IDF 5 with
+        arduino-esp32 3.x, else 4.x with 2.x), or one carrying its own copies
+        of the toolchain runtime's atomics: see _precompiled_archive_problem.
         """
         if not idf_target:
             return None
@@ -2581,6 +3025,26 @@ class ESPIDFCompiler:
                 )
                 continue
             archives.append(entry)
+
+        for archive in archives:
+            problem = _precompiled_archive_problem(_archive_facts(archive), idf5)
+            if problem is None:
+                continue
+            clause, why = problem
+            label = ' '.join(p for p in (name, props.get('version', '')) if p)
+            rel = archive.relative_to(lib_root).as_posix()
+            summary = f'{label} cannot be used on {idf_target}: its precompiled archive {rel} {clause}'
+            details = '\n'.join([
+                summary + '.',
+                '',
+                f'Library: {label} (precompiled={mode})',
+                f'Archive: {rel}',
+                *why,
+                'What to do: use a release of the library built for this core '
+                '(arduino-esp32 3.x on ESP-IDF 5), or one that builds from its sources.',
+            ])
+            logger.warning(f'[espidf] {summary}')
+            raise PrecompiledLibraryError(summary, details)
 
         raw = props.get('ldflags', '')
         try:
@@ -2956,6 +3420,7 @@ class ESPIDFCompiler:
         denied: set[str] | None = None,
         speculative_out: set[str] | None = None,
         idf_target: str | None = None,
+        idf5: bool = True,
     ) -> tuple[list[str], dict[str, str]]:
         """
         BFS over ext_headers (and transitive includes) to discover all external
@@ -2963,7 +3428,9 @@ class ESPIDFCompiler:
 
         `idf_target` (the chip this build is for) lets a precompiled library
         link the archive it ships for that chip, as arduino-cli does (see
-        _precompiled_link). None links no archive.
+        _precompiled_link). None links no archive. `idf5` says which core the
+        build uses (ESP-IDF 5 + arduino-esp32 3.x, else 4.x + 2.x): an archive
+        built for the other one raises PrecompiledLibraryError.
 
         `allowed_libraries` (P2 — project library manifest / scope): when not
         None, a USER-installed library (from arduino_libs) is merged only if its
@@ -3262,7 +3729,7 @@ class ESPIDFCompiler:
                 first_copy = lib_dir_name not in lib_prefix_by_name
                 if lib_dir_name not in precompiled_by_lib:
                     precompiled_by_lib[lib_dir_name] = self._precompiled_link(
-                        lib_root, has_src_layout, idf_target,
+                        lib_root, has_src_layout, idf_target, idf5=idf5,
                     )
                 precompiled = precompiled_by_lib[lib_dir_name]
                 # precompiled=full with an archive for this chip: arduino-cli
@@ -6228,16 +6695,27 @@ class ESPIDFCompiler:
                 # Run it off the event loop like cmake/ninja below, or the
                 # loop starves: /compile/start responses never flush and the
                 # client dies on its 30s timeout while the build is fine.
-                component_names, _ = await asyncio.to_thread(
-                    self._resolve_library_components,
-                    ext_headers, arduino_libs, esp32_libs,
-                    arduino_comp_name, user_libs_dir,
-                    allowed_libraries=allowed_libraries,
-                    merged_libs=merged_libs_report,
-                    denied=denied_libraries,
-                    speculative_out=speculative_out,
-                    idf_target=idf_target,
-                )
+                try:
+                    component_names, _ = await asyncio.to_thread(
+                        self._resolve_library_components,
+                        ext_headers, arduino_libs, esp32_libs,
+                        arduino_comp_name, user_libs_dir,
+                        allowed_libraries=allowed_libraries,
+                        merged_libs=merged_libs_report,
+                        denied=denied_libraries,
+                        speculative_out=speculative_out,
+                        idf_target=idf_target,
+                        idf5=bool(use_idf5),
+                    )
+                except PrecompiledLibraryError as exc:
+                    # A library whose archive cannot link here (#214): say so
+                    # now, instead of a full build ending in linker lines.
+                    return {
+                        'success': False,
+                        'error': str(exc),
+                        'stdout': '',
+                        'stderr': exc.details,
+                    }
 
             # Patch main/CMakeLists.txt — INCLUDE_DIRS for user_libs_all.
             # The single merged component means one entry covers all external headers.
@@ -6397,6 +6875,12 @@ class ESPIDFCompiler:
         # a missing input is not something to rely on ninja regenerating.
         if manifest_changed:
             force_configure = True
+        # A managed component left without its hash file (an interrupted copy,
+        # velxio/velxio-prod#215) fails every configure of this variant until
+        # it is copied again: the explicit configure below removes it first and
+        # has the component manager copy it back.
+        if _broken_managed_components(project_dir):
+            force_configure = True
         configure_skipped = (
             not _ALWAYS_CONFIGURE
             and not force_configure
@@ -6457,9 +6941,33 @@ class ESPIDFCompiler:
             )
 
         cmake_result = _RunResult(returncode=0, stdout='', stderr='')
+        component_cache = _component_cache_dir(env)
 
         async def _configure() -> dict | None:
-            """The explicit cmake configure. Returns an error result, or None."""
+            """The explicit cmake configure, under the component-manager lock
+            when it may fetch (see _component_manager_lock). Returns an error
+            result, or None."""
+            repaired = await asyncio.to_thread(_repair_managed_components, project_dir)
+            if repaired:
+                logger.warning(
+                    f'[espidf] managed component(s) {repaired} in {project_dir} had no '
+                    f'valid .component_hash (an interrupted copy); removed so the '
+                    f'component manager copies them again'
+                )
+                if progress_callback is not None:
+                    try:
+                        progress_callback(
+                            f'[velxio] fetching ESP-IDF component(s) {", ".join(repaired)} '
+                            f'again (an earlier copy was interrupted)\n'
+                        )
+                    except Exception:
+                        pass
+            if _configure_may_fetch(project_dir, build_dir, manifest_changed or bool(repaired)):
+                async with _component_manager_lock(component_cache, progress_callback):
+                    return await _configure_steps(fetch_locked=True)
+            return await _configure_steps(fetch_locked=False)
+
+        async def _configure_steps(fetch_locked: bool) -> dict | None:
             nonlocal cmake_result
             logger.info(f'[espidf] cmake: {" ".join(cmake_cmd)}')
             configure_t0 = time.monotonic()
@@ -6491,7 +6999,12 @@ class ESPIDFCompiler:
                         f'{project_dir}; dropped managed_components/ and reconfiguring'
                     )
                     try:
-                        cmake_result = await asyncio.to_thread(_run_cmake)
+                        # The copies are gone: this configure fetches them all.
+                        async with (
+                            contextlib.nullcontext() if fetch_locked
+                            else _component_manager_lock(component_cache, progress_callback)
+                        ):
+                            cmake_result = await asyncio.to_thread(_run_cmake)
                     except subprocess.TimeoutExpired:
                         return {
                             'success': False,
