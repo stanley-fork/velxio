@@ -18,7 +18,7 @@ import { isAuxRailNet } from './boardPinGroups';
 import { LM358_SUBCKT } from './models/lm358Subckt';
 import { getChipDrivenPins } from '../customChips/chipPinDrives';
 import { HC14_VT_NEG_FRACTION, HC14_VT_POS_FRACTION } from '../LogicFamilies';
-import { ldrParams, ldrResistance } from './ldrModel';
+import { ldrModuleFixedOhms, ldrParams, ldrResistance } from './ldrModel';
 
 export interface SpiceEmission {
   /** One or more netlist lines (without trailing newline). */
@@ -694,8 +694,10 @@ const MAPPERS: Record<string, Mapper> = {
   // right behind the sense would count as an ideal source across the
   // supply's terminals and make a supply wired to a board's 5V pin, or in
   // parallel with another supply, a "source conflict". Through 10 mΩ it is
-  // none: two supplies in parallel share the load, and one wired onto a
-  // rail runs at its limit, which the check reports as an overload.
+  // none: two supplies in parallel share the load. One wired onto a board
+  // rail at another voltage runs at its limit, which the check names as a
+  // fight with the rail, not an overload; on a 3.3 V board's VIN / 5V it
+  // powers the board (NetlistBuilder, poweredInputRails).
   //
   // Known artefact: under the trapezoidal integration every Velxio deck
   // runs, the supply's current can ring for a few dozen steps after a
@@ -1430,10 +1432,11 @@ const MAPPERS: Record<string, Mapper> = {
     };
   },
 
-  // Photoresistor sensor — 4-pin breakout module (VCC, GND, DO, AO).
-  // Internal topology: LDR between VCC and AO, plus an internal 10k pull-down
-  // from AO to GND. Brighter light → LDR resistance drops → V_AO rises.
-  // The DO (digital threshold) pin is ignored for analog simulation.
+  // Photoresistor sensor — 4-pin breakout module (VCC, GND, DO, AO), the
+  // LM393 light-sensor board. Internal topology, as on the real board and in
+  // Wokwi: a fixed 10k from VCC to AO and the LDR from AO to GND. Brighter
+  // light → LDR resistance drops → V_AO FALLS (ldrModel.ts). The DO
+  // (comparator) pin is not modelled.
   // The LDR is a GL5528 by default, R = rl10 · (10 / lux)^gamma up to its
   // dark resistance (ldrModel.ts, velxio/velxio-prod#103).
   photoresistor: (comp, netLookup) => {
@@ -1452,12 +1455,15 @@ const MAPPERS: Record<string, Mapper> = {
     const vcc = netLookup('VCC');
     const gnd = netLookup('GND');
     const ao = netLookup('AO');
-    if (vcc && gnd && ao) {
-      const Rpull = parseValueWithUnits(comp.properties.pullup, 10_000);
-      return {
-        cards: [`R_${comp.id}_ldr ${vcc} ${ao} ${Rldr}`, `R_${comp.id}_pull ${ao} ${gnd} ${Rpull}`],
-        modelsUsed: new Set(),
-      };
+    if (ao && (vcc || gnd)) {
+      // The legs that are wired: a module missing its GND reads VCC through
+      // the fixed resistor, one missing its VCC reads 0 V through the LDR. The
+      // solve then owns AO in every wiring that powers the module at all
+      // (velxio/velxio-prod#188: the part no longer writes it).
+      const cards: string[] = [];
+      if (gnd) cards.push(`R_${comp.id}_ldr ${ao} ${gnd} ${Rldr}`);
+      if (vcc) cards.push(`R_${comp.id}_pull ${vcc} ${ao} ${ldrModuleFixedOhms(comp.properties)}`);
+      return { cards, modelsUsed: new Set() };
     }
     // Legacy / discrete LDR fallbacks: emit bare 2-terminal resistor.
     const pins = twoPin(comp, netLookup, 'LDR1', 'LDR2') ?? twoPin(comp, netLookup, '1', '2');
