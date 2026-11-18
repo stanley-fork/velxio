@@ -378,6 +378,29 @@ def _sanitise_lib_dirname(name: str) -> str:
     return safe or 'lib'
 
 
+# A library file or folder name is written into SRCS "..." / INCLUDE_DIRS
+# "..." of the generated user_libs_all CMakeLists unescaped (see
+# _resolve_library_components), so a character CMake reads as syntax there
+# escapes the quoted argument: a double quote closes it, '$' expands
+# (${...}/$ENV{...}), ';' is CMake's list separator, a backslash is an escape,
+# and a control character or a Unicode line/paragraph separator breaks the
+# line (velxio/velxio-prod#223). The hosted product refuses such a library
+# before the build (its compile guard); this fails the build closed on a
+# self-host that has no such guard. _sanitise_lib_dirname already folds the
+# per-library prefix, and _PRECOMPILED_SAFE_NAME the archive names; this
+# covers the library's own file and folder names in between.
+_CMAKE_UNSAFE_NAME = re.compile(r'[\x00-\x1f\x7f";$\\\u0085\u2028\u2029]')
+
+
+def _cmake_unsafe_name_part(rel_path: Path) -> str | None:
+    """The first component of a library-relative path whose name CMake would
+    read as syntax if written into a quoted argument, or None."""
+    for part in rel_path.parts:
+        if _CMAKE_UNSAFE_NAME.search(part):
+            return part
+    return None
+
+
 def _idf_version_signature() -> str:
     """Snapshot of the ESP-IDF + arduino-esp32 toolchain version. Used to
     invalidate persistent build dirs after an upstream submodule bump (the
@@ -1004,6 +1027,21 @@ def _elf32_facts(obj: bytes) -> tuple[list[bytes], list[str]] | None:
         return comments, runtime
     except struct.error:
         return None
+
+
+def _is_real_archive(path: Path) -> bool:
+    """`path` is a regular file holding an ar archive (velxio/velxio-prod#223).
+    The build copies a precompiled library's archives (following a symbolic
+    link to the file it names) and the linker reads whatever is there: a text
+    file as a linker script, whose INPUT and INCLUDE commands read the files
+    they name, and a thin archive (`!<thin>`) as the paths it lists."""
+    if path.is_symlink():
+        return False
+    try:
+        with open(path, 'rb') as fh:
+            return fh.read(8) == b'!<arch>\n'
+    except OSError:
+        return False
 
 
 def _archive_facts(path: Path) -> _ArchiveFacts | None:
@@ -2953,12 +2991,17 @@ class ESPIDFCompiler:
             props[key.strip().lower()] = value.strip()
         return props
 
-    # What an archive's file name and an ldflags token may hold to be written
-    # into the generated CMakeLists. Both come from the library's own files;
-    # a quote, a parenthesis or a `$` would end or expand the CMake argument
-    # they sit in, so anything else is dropped with a warning.
+    # What an archive's file name may hold to be written into the generated
+    # CMakeLists, and the ldflags tokens that are kept. Both come from the
+    # library's own files; a quote, a parenthesis or a `$` would end or
+    # expand the CMake argument they sit in. An ldflags token must name a
+    # library (-l<name>) or group archives: any other option makes the build
+    # read or run what it names (a response file, -wrapper, -specs=, a linker
+    # script, another search folder). Anything else is dropped with a warning.
     _PRECOMPILED_SAFE_NAME = re.compile(r'[A-Za-z0-9_.+-]+')
-    _PRECOMPILED_SAFE_FLAG = re.compile(r'[A-Za-z0-9_.,=+:/@-]+')
+    _PRECOMPILED_SAFE_FLAG = re.compile(
+        r'-l[A-Za-z0-9_.+-]+|-Wl,--(?:no-)?whole-archive|-Wl,--start-group|-Wl,--end-group'
+    )
 
     def _precompiled_link(
         self, lib_root: Path, has_src_layout: bool, idf_target: str | None,
@@ -3024,6 +3067,26 @@ class ESPIDFCompiler:
                     f'written into the build files; skipped'
                 )
                 continue
+            if not _is_real_archive(entry):
+                label = ' '.join(p for p in (name, props.get('version', '')) if p)
+                rel = entry.relative_to(lib_root).as_posix()
+                summary = (
+                    f'{label} cannot be used on {idf_target}: its precompiled archive {rel} '
+                    f'is not a static library archive'
+                )
+                details = '\n'.join([
+                    summary + '.',
+                    '',
+                    f'Library: {label} (precompiled={mode})',
+                    f'Archive: {rel}',
+                    'Why: the build links every archive of this folder, and the linker reads '
+                    'whatever file is there. This one is a symbolic link, a thin archive or '
+                    'not an archive at all (a text file is read as a linker script).',
+                    'What to do: use a release of the library that ships real .a archives '
+                    '(made by ar), or one that builds from its sources.',
+                ])
+                logger.warning(f'[espidf] {summary}')
+                raise PrecompiledLibraryError(summary, details)
             archives.append(entry)
 
         for archive in archives:
@@ -3758,6 +3821,27 @@ class ESPIDFCompiler:
                     rel_path = f.relative_to(lib_root)
                     if not _should_include(rel_path):
                         continue
+                    # velxio/velxio-prod#223 (defense in depth): this name and
+                    # its folders are written into SRCS "..." / INCLUDE_DIRS
+                    # "..." of the generated CMakeLists unescaped. Fail the
+                    # build closed before a '"', '$', ';', backslash or control
+                    # character becomes CMake syntax. The hosted product refuses
+                    # such a library earlier; this protects a self-host.
+                    _unsafe = _cmake_unsafe_name_part(rel_path)
+                    if _unsafe is not None:
+                        summary = (
+                            f'"{lib_dir_name}" cannot be built: the file name '
+                            f'{_unsafe!r} contains a character the build system reads as code'
+                        )
+                        raise PrecompiledLibraryError(summary, '\n'.join([
+                            summary + '.',
+                            '',
+                            f'Library: {lib_dir_name}',
+                            f'File: {rel_path.as_posix()}',
+                            'A library file or folder name may use letters, digits, spaces, '
+                            'dots, dashes, underscores and parentheses — not a quote, a '
+                            'backslash, a dollar sign, a semicolon or a control character.',
+                        ]))
                     # Track file by its COMPONENT-relative path: it preserves
                     # structure, and in legacy mode it is also the cross-library
                     # dedup key.

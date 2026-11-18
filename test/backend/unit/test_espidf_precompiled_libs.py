@@ -304,6 +304,53 @@ class TestLdflagsAndArchiveNames(PrecompiledBase):
         self.assertIn('"-lm"', text)
 
 
+class TestLdflagsThatReadFiles(PrecompiledBase):
+    """A response file in ldflags (@file, -Wl,@file, -Xlinker @file) makes the
+    linker read a file of the build server as more options, and each of its
+    lines comes back in the compile log ("cannot find <line>"). Such a token
+    is dropped like any other that is not a plain linker flag (security,
+    velxio/velxio-prod#223)."""
+
+    PROPS = (
+        'name=MixedCore\nversion=1.0.0\nprecompiled=true\n'
+        'ldflags=-lm -Wl,@/srv/example/flags @/srv/example/flags -Xlinker @/srv/example/flags\n'
+        'architectures=*\n'
+    )
+
+    def test_a_response_file_never_reaches_the_link_line(self):
+        self.resolve(['MixedCore.h'], 'esp32')
+        flags = [i for kw, items in self.linked_items() if kw == 'INTERFACE' for i in items]
+        self.assertIn('-lm', flags)
+        self.assertEqual([f for f in flags if '@' in f], [], self.cmake_text())
+
+
+class TestLdflagsNameLibrariesOnly(PrecompiledBase):
+    """A precompiled library's ldflags keep what names libraries (-l<name>)
+    and the archive grouping switches; every other option makes the build run
+    or read what it names: -wrapper runs a program around the linker, -specs=
+    rewrites the driver's own command lines, -T reads a linker script, -B and
+    -L send the driver and the linker to other folders, and -Xlinker hands
+    the next argument to the linker whatever it is (security,
+    velxio/velxio-prod#223)."""
+
+    PROPS = (
+        'name=MixedCore\nversion=1.0.0\nprecompiled=true\n'
+        'ldflags=-lmixedcore -Wl,--whole-archive -lm -Wl,--no-whole-archive '
+        '-Wl,--start-group -lstdc++ -Wl,--end-group '
+        '-wrapper /srv/example/run,x -specs=../x.h -Wl,-T,/srv/example/x.ld '
+        '-B/srv/example -L/srv/example -Xlinker -Map=/srv/example/out x\n'
+        'architectures=*\n'
+    )
+
+    def test_only_libraries_and_grouping_switches_reach_the_link_line(self):
+        self.resolve(['MixedCore.h'], 'esp32')
+        flags = [i for kw, items in self.linked_items() if kw == 'INTERFACE' for i in items]
+        self.assertEqual(flags, [
+            '-lmixedcore', '-Wl,--whole-archive', '-lm', '-Wl,--no-whole-archive',
+            '-Wl,--start-group', '-lstdc++', '-Wl,--end-group',
+        ], self.cmake_text())
+
+
 class TestNotPrecompiled(PrecompiledBase):
     """An archive alone means nothing: arduino-cli needs precompiled= to link it."""
 
@@ -320,6 +367,93 @@ class TestNotPrecompiled(PrecompiledBase):
         self.assertNotIn('add_prebuilt_library', text)
         self.assertNotIn('target_link_libraries', text)
         self.assertNotIn('target_link_directories', text)
+
+
+class TestCmakeUnsafeNames(PrecompiledBase):
+    """velxio/velxio-prod#223 (defense in depth): a library file or folder name
+    is written into SRCS "..." / INCLUDE_DIRS "..." of the generated
+    user_libs_all CMakeLists unescaped. A character CMake reads as syntax there
+    fails the build closed rather than becoming code. Reproduced with cmake
+    3.31.6 (the image's version) on a CMakeLists built the generator's way:
+    a ';' in a SRCS entry injected EMBED_TXTFILES reading an absolute path, and
+    '$ENV{...}' expanded. The hosted product refuses such a library before the
+    build; this guards a self-host. Waits for review before release."""
+
+    PROPS = 'name=Namer\nversion=1.0.0\narchitectures=*\n'
+
+    def _lib_with_source(self, name: str) -> None:
+        shutil.rmtree(self.lib, ignore_errors=True)
+        write(self.lib / 'library.properties', self.PROPS)
+        write(self.lib / 'src' / 'Namer.h', '#pragma once\nint namer(void);\n')
+        write(self.lib / 'src' / name, '#include "Namer.h"\nint namer(void){return 0;}\n')
+
+    def test_a_semicolon_in_a_source_name_fails_the_build(self):
+        self._lib_with_source('a;EMBED_TXTFILES;srv.cpp')
+        with self.assertRaises(espidf_mod.PrecompiledLibraryError) as cm:
+            self.resolve(['Namer.h'], 'esp32')
+        self.assertIn('a;EMBED_TXTFILES;srv.cpp', str(cm.exception))
+
+    def test_a_quote_and_a_dollar_in_a_source_name_fail_the_build(self):
+        for name in ('b" "c.cpp', 'd$ENV{HOME}.cpp'):
+            self._lib_with_source(name)
+            with self.assertRaises(espidf_mod.PrecompiledLibraryError):
+                self.resolve(['Namer.h'], 'esp32')
+
+    def test_a_semicolon_in_a_folder_name_fails_the_build(self):
+        shutil.rmtree(self.lib, ignore_errors=True)
+        write(self.lib / 'library.properties', self.PROPS)
+        write(self.lib / 'src' / 'Namer.h', '#pragma once\nint namer(void);\n')
+        write(self.lib / 'src' / 'a;EMBED_TXTFILES;srv' / 'impl.cpp',
+              'int namer(void){return 0;}\n')
+        with self.assertRaises(espidf_mod.PrecompiledLibraryError):
+            self.resolve(['Namer.h'], 'esp32')
+
+    def test_spaces_and_parentheses_are_allowed(self):
+        # examples/docs folders use them on staging; nothing in use is refused.
+        self._lib_with_source('impl one (basic).cpp')
+        names, _ = self.resolve(['Namer.h'], 'esp32')
+        self.assertEqual(names, ['user_libs_all'])
+        self.assertIn('impl one (basic).cpp', self.cmake_text())
+
+
+
+class TestNotAnArchive(PrecompiledBase):
+    """velxio/velxio-prod#223, review round 2 (defense in depth): the build links
+    every archive of the chip's folder, and the linker reads whatever file sits
+    there. A text file named like an archive is read as a linker script (its
+    INPUT and INCLUDE commands read the files they name), a thin archive names
+    its members by path, and a symbolic link is copied as the file it points to.
+    Each fails the build closed, naming the archive, instead of being linked.
+    The hosted product refuses such a library before the build (its compile
+    guard); this guards a self-host. Waits for review before release."""
+
+    def archive_path(self) -> Path:
+        return self.lib / 'src' / 'esp32' / 'libmixedcore.a'
+
+    def assert_refused(self) -> None:
+        with self.assertRaises(espidf_mod.PrecompiledLibraryError) as cm:
+            self.resolve(['MixedCore.h'], 'esp32')
+        self.assertIn('src/esp32/libmixedcore.a', str(cm.exception))
+        self.assertIn('not a static library archive', str(cm.exception))
+
+    def test_a_text_file_named_like_an_archive_fails_the_build(self):
+        self.archive_path().write_text('INPUT(/srv/example/notes.txt)\n', encoding='utf-8')
+        self.assert_refused()
+
+    def test_a_thin_archive_fails_the_build(self):
+        self.archive_path().write_bytes(b'!<thin>\n/srv/example/notes.txt\n')
+        self.assert_refused()
+
+    def test_a_symbolic_link_fails_the_build(self):
+        target = self.tmp / 'elsewhere.a'
+        target.write_bytes(b'!<arch>\n')
+        self.archive_path().unlink()
+        self.archive_path().symlink_to(target)
+        self.assert_refused()
+
+    def test_a_real_archive_still_links(self):
+        self.resolve(['MixedCore.h'], 'esp32')
+        self.assertEqual([p.name for _, p in self.prebuilt()], ['libmixedcore.a'])
 
 
 if __name__ == '__main__':
