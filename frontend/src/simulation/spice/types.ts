@@ -62,6 +62,16 @@ export interface BoardForSpice {
    * check only; the netlist holds them on their rail.
    */
   powerInputs?: Record<string, { min: number; max: number }>;
+  /**
+   * Pins that load their net to ground inside the chip, pin name -> ohms
+   * (BoardPinGroup.pinLoads): an ATmega's AREF.
+   */
+  pinLoads?: Record<string, number>;
+  /**
+   * Series output impedance of a driven pin, ohms (BoardPinGroup.pinDrive):
+   * the pin's source sits behind it. Absent, the pin is an ideal source.
+   */
+  pinOutputOhms?: number;
 }
 
 export type PinSourceState =
@@ -92,8 +102,67 @@ export type AnalysisMode =
        * those pad states are operating points.
        */
       timeVarying?: boolean;
+      /**
+       * Store only the circuit's steady state: the netlist builder runs it
+       * first for about seven of its largest time constants (settleTime.ts),
+       * and `stop` is then the length of the stored window. In the analysis a
+       * built netlist returns, `stop` is the end of the run and `start` the
+       * start of the window, and a deck that holds a diode has a finer `step`
+       * (settledStepS; velxio/velxio-prod#143).
+       */
+      settle?: boolean;
+      /**
+       * ngspice's TSTART: the run is computed from t = 0 but stored from here
+       * on. The time axis the readers get (TimeWaveforms) starts at 0 anyway:
+       * the service takes `start` off it.
+       */
+      start?: string;
     }
   | { kind: 'ac'; type?: 'dec' | 'oct' | 'lin'; points?: number; fstart?: number; fstop?: number };
+
+/**
+ * What a circuit remembers between solves: the state each part with memory
+ * ended its last solve in. A deck built with it starts every such part there
+ * instead of from scratch (velxio/velxio-prod#109).
+ */
+export interface CircuitMemory {
+  /** Component id -> whether its armature is operated (a relay pulled in). */
+  switches?: ReadonlyMap<string, boolean>;
+  /** "componentId:pinName" of a latch gate's output -> its volts
+   *  (velxio/velxio-prod#147). */
+  nodes?: ReadonlyMap<string, number>;
+}
+
+/**
+ * A net a logic gate on a feedback loop drives (one side of an SR latch): the
+ * deck seeds it with .nodeset, and the latch settles in the state the seeds
+ * describe. `key` is the driving gate's output pin, which survives a rebuild
+ * that renames the net.
+ */
+export interface NodeMemoryCell {
+  key: string;
+  net: string;
+  /** The logic threshold: a solve that ends on the other side of it from
+   *  `seed` has flipped the latch. */
+  threshold: number;
+  seed: number;
+}
+
+/**
+ * A switch with hysteresis in the deck (a relay's armature): the node it
+ * follows and where it changes state. A solve that ends with the control
+ * above `on` leaves it operated, below `off` released, and in between in the
+ * state it started in (`seed`, what the deck gave it).
+ */
+export interface SwitchMemoryCell {
+  /** The component id. */
+  id: string;
+  /** The node whose voltage to ground the switch follows. */
+  control: string;
+  on: number;
+  off: number;
+  seed: boolean;
+}
 
 /** Everything the NetlistBuilder needs to emit a netlist. */
 export interface BuildNetlistInput {
@@ -103,6 +172,8 @@ export interface BuildNetlistInput {
   analysis: AnalysisMode;
   /** Extra cards to append verbatim (e.g., `.options abstol=1n`). */
   extraCards?: string[];
+  /** Where the parts with memory start (absent: from scratch). */
+  memory?: CircuitMemory;
 }
 
 /**

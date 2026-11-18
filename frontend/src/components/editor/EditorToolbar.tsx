@@ -9,6 +9,7 @@ import { blockedByBoardGate } from '../../lib/proBoardGate';
 import { boardFlashSupport, requestFlashDialog } from '../../lib/flashRequest';
 import { onWebFlashImplChange } from '../../lib/proWebFlash';
 import { useElectricalStore } from '../../store/useElectricalStore';
+import { useOscilloscopeStore } from '../../store/useOscilloscopeStore';
 import { type VerificationResult } from '../../simulation/verify/circuitVerifier';
 import { verifyCircuitFromStore } from '../../simulation/verify/verifyFromStore';
 import { CircuitVerificationModal } from '../simulator/CircuitVerificationModal';
@@ -35,7 +36,7 @@ import {
 import { LibraryManagerModal } from '../simulator/LibraryManagerModal';
 import { InstallLibrariesModal } from '../simulator/InstallLibrariesModal';
 import { mergeSuggestedLibraries } from '../../utils/libraryManifest';
-import { parseCompileResult, isNoiseBuildLine } from '../../utils/compilationLogger';
+import { parseCompileResult, isNoiseBuildLine, CIRCUIT_CHECK_TARGET_ID } from '../../utils/compilationLogger';
 import type { CompilationLog, CompileTarget } from '../../utils/compilationLogger';
 import { exportToWokwiZip, retargetBoardWires } from '../../utils/wokwiZip';
 import { wifiSsidNoteFor } from '../../utils/firmwareWifiNote';
@@ -52,6 +53,7 @@ import {
 import './EditorToolbar.css';
 import { ThemeToggle } from '../layout/ThemeToggle';
 import { getResolvedTheme } from '../../lib/theme';
+import { isSeatWire } from '../../utils/breadboardNets';
 
 /**
  * Output-console group for circuit pre-flight + runtime faults. Routing these
@@ -61,7 +63,7 @@ import { getResolvedTheme } from '../../lib/theme';
  * auto-compile triggered by the same Run.
  */
 const CIRCUIT_CHECK_TARGET: CompileTarget = {
-  id: 'circuit-check',
+  id: CIRCUIT_CHECK_TARGET_ID,
   label: 'Circuit check',
   kind: 'board',
 };
@@ -1413,8 +1415,14 @@ export const EditorToolbar = ({
       // board, nothing said (#268 review).
       const foreignBoardIds = boards.filter((b) => b.id !== board?.id).map((b) => b.id);
       const foreign = new Set(foreignBoardIds);
+      // A seated board's seat wires are its plugging, not wires the user drew.
+      const seatedForeign = new Set(
+        boards.filter((b) => b.id !== board?.id && b.seatedOn).map((b) => b.id),
+      );
       const strandedWires = wires.filter(
-        (w) => foreign.has(w.start.componentId) || foreign.has(w.end.componentId),
+        (w) =>
+          !(isSeatWire(w) && (seatedForeign.has(w.start.componentId) || seatedForeign.has(w.end.componentId))) &&
+          (foreign.has(w.start.componentId) || foreign.has(w.end.componentId)),
       ).length;
       await exportToWokwiZip(
         files,
@@ -1618,6 +1626,10 @@ export const EditorToolbar = ({
       const { setComponents, setWires, setBoardType, setBoardPosition, stopSimulation } =
         useSimulatorStore.getState();
       stopSimulation();
+      // The scope's channels belong to the circuit going away. A Wokwi diagram
+      // names its parts r1, led1..., so a channel probed at r1:2 would follow
+      // the imported circuit's r1:2, another point (velxio/velxio-prod#119).
+      useOscilloscopeStore.getState().resetChannels();
       // A board kind this build does not know is left alone rather than
       // coerced. The importer no longer answers 'arduino-uno' for everything
       // it fails to recognise (#268), so say what happened instead of swapping

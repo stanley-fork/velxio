@@ -36,9 +36,13 @@ const C_OUT = '#22d3ee'; // output
 const C_WIRE = '#00aaff'; // generic signal
 
 // Standard placeholder sketch text so the editor has something non-empty
-// when the user loads an analog example.
-const ANALOG_SKETCH = `// Analog-only circuit — no Arduino sketch required.
-// Toggle the electrical-simulation (⚡) button to run the SPICE engine.
+// when the user loads an analog example. A board-less circuit runs on its
+// own: loadExample leaves it unpaused, and the toolbar's Stop and Run pause
+// and resume it (there has been no electrical-simulation toggle since
+// 2026-04, velxio/velxio-prod#98).
+const ANALOG_SKETCH = `// Analog circuit, no microcontroller: nothing to program here.
+// It simulates as soon as it is on the canvas: change a part's value and the
+// circuit re-solves. Stop freezes it; Run resumes it.
 void setup() {}
 void loop() {}
 `;
@@ -241,7 +245,7 @@ export const analogExamples: ExampleProject[] = [
   analog(
     'an-rlc-series-resonance',
     'Series RLC Resonant Circuit',
-    'L = 1 mH, C = 1 µF gives fr ≈ 5 kHz. Sweep the signal generator — Vc peaks at resonance (Q-dependent).',
+    'L = 1 mH, C = 1 µF: fr = 1/(2π√LC) ≈ 5.03 kHz, Q = √(L/C)/R ≈ 3.2. Sweep the signal generator: the current peaks at fr, while the capacitor voltage (about 3.2 × the input) peaks just below it, near 4.9 kHz, as it does in a series RLC whose Q is not high.',
     'intermediate',
     [
       sigGen('src', 60, 180, { waveform: 'sine', frequency: 5000, amplitude: 1, offset: 0 }),
@@ -364,7 +368,7 @@ export const analogExamples: ExampleProject[] = [
   analog(
     'an-diode-clipper',
     'Diode Clipper',
-    'Two diodes to VCC/GND via a series resistor limit the output swing to roughly ±0.7 V — symmetric clipping.',
+    'Two diodes in anti-parallel from the output to ground, after a 1 kΩ series resistor, clip the output at one forward drop either way: about ±0.6 V for a 1N4007 at the few milliamps this circuit draws. Symmetric clipping.',
     'intermediate',
     [
       sigGen('src', 60, 180, { waveform: 'sine', frequency: 1000, amplitude: 5, offset: 0 }),
@@ -377,7 +381,7 @@ export const analogExamples: ExampleProject[] = [
       w('w1', ['src', 'SIG'], ['r1', '1'], C_SIG),
       w('w2', ['r1', '2'], ['d1', 'A'], C_OUT),
       w('w3', ['r1', '2'], ['d2', 'C'], C_OUT),
-      w('w4', ['d1', 'C'], ['src', 'GND'], C_GND), // upper clip to 0 (really D inside ±0.7 both sides)
+      w('w4', ['d1', 'C'], ['src', 'GND'], C_GND), // d1 clips the positive half, d2 the negative
       w('w5', ['d2', 'A'], ['src', 'GND'], C_GND),
       w('w6', ['r1', '2'], ['vm', 'V+'], C_OUT),
       w('w7', ['src', 'GND'], ['vm', 'V-'], C_GND),
@@ -475,12 +479,12 @@ export const analogExamples: ExampleProject[] = [
   analog(
     'an-bjt-emitter-follower',
     'BJT Emitter Follower',
-    'Common-collector buffer: unity voltage gain, high input impedance, low output impedance. Great as a driver stage.',
+    'Common-collector buffer: the emitter follows the base one diode drop (about 0.7 V) below it, a voltage gain of 0.99. Input resistance about (β + 1)(re + RE) ≈ 200 kΩ, output resistance about 10 Ω. Great as a driver stage. The 1 kΩ base resistor matters: 100 kΩ there would make a divider with that 200 kΩ and cut the gain to 0.67.',
     'intermediate',
     [
       sigGen('vcc', 60, 40, { waveform: 'dc', offset: 12, amplitude: 0, frequency: 1 }),
       sigGen('src', 60, 240, { waveform: 'sine', frequency: 1000, amplitude: 1, offset: 6 }),
-      res('rb', 260, 80, '100000'),
+      res('rb', 260, 80, '1000'),
       bjtNpn('q1', 420, 160),
       res('re', 500, 300, '1000'),
       vmeter('vm', 640, 220),
@@ -644,14 +648,14 @@ export const analogExamples: ExampleProject[] = [
   analog(
     'an-mosfet-common-source',
     'MOSFET Common-Source Amplifier',
-    '2N7000 as a small-signal amp: drain resistor sets gain, source resistor stabilises bias. AC-coupled signal input.',
+    '2N7000 as a small-signal amp. The gate divider and the 1 kΩ source resistor set the bias; the 2.2 kΩ drain resistor puts the drain near the middle of its range (about 7.4 V between the source, 2.1 V, and 12 V), so it stays in saturation and swings both ways. With the source resistor unbypassed the gain is Rd / (Rs + 1/gm), about 2: the 0.2 Vpp input comes out about 0.42 Vpp, inverted. AC-coupled signal input.',
     'advanced',
     [
       sigGen('vcc', 60, 40, { waveform: 'dc', offset: 12, amplitude: 0, frequency: 1 }),
       sigGen('src', 60, 260, { waveform: 'sine', frequency: 1000, amplitude: 0.1, offset: 0 }),
       res('rg1', 240, 40, '1000000'),
       res('rg2', 240, 200, '470000'),
-      res('rd', 420, 40, '4700'),
+      res('rd', 420, 40, '2200'),
       res('rs', 420, 300, '1000'),
       cap('cin', 220, 260, '10u'),
       mosN('m1', 380, 160),
@@ -706,14 +710,14 @@ export const analogExamples: ExampleProject[] = [
   analog(
     'an-opamp-inverting',
     'Op-Amp Inverting Amplifier',
-    'Gain = −Rf/Rin. Rf = 10 k, Rin = 1 k → gain = −10. LM358 single-supply model clamps the output to [0, VCC−1.5].',
+    'Gain = −Rf/Rin = −10 (Rf = 10 k, Rin = 1 k), around the 2.0 V reference on IN+: a 0.1 V sine on 2.0 V comes out inverted, 1 V peak, between 1.0 and 3.0 V. On 5 V the LM358 swings from about 0 V to 3.5 V, so the reference sits low enough for the swing to fit.',
     'intermediate',
     [
-      sigGen('src', 60, 200, { waveform: 'sine', frequency: 500, amplitude: 0.2, offset: 2.5 }),
+      sigGen('src', 60, 200, { waveform: 'sine', frequency: 500, amplitude: 0.1, offset: 2 }),
       res('rin', 240, 160, '1000'),
       res('rf', 420, 60, '10000'),
       opamp('u1', 400, 180),
-      sigGen('vref', 60, 360, { waveform: 'dc', offset: 2.5, amplitude: 0, frequency: 1 }),
+      sigGen('vref', 60, 360, { waveform: 'dc', offset: 2, amplitude: 0, frequency: 1 }),
       vmeter('vm', 580, 180),
     ],
     [
@@ -731,10 +735,10 @@ export const analogExamples: ExampleProject[] = [
   analog(
     'an-opamp-non-inverting',
     'Op-Amp Non-Inverting Amplifier',
-    'Gain = 1 + Rf/Rg. Rf = 10 k, Rg = 1 k → gain = +11. Output in-phase with input.',
+    'Gain = 1 + Rf/Rg = +11 (Rf = 10 k, Rg = 1 k to ground), in phase. It multiplies the whole input, its DC included: a 0.1 V sine on 0.2 V comes out between 1.1 and 3.3 V. On 5 V the LM358 tops out near 3.5 V, so the input carries little DC (2.5 V would ask for 27.5 V).',
     'intermediate',
     [
-      sigGen('src', 60, 180, { waveform: 'sine', frequency: 500, amplitude: 0.1, offset: 2.5 }),
+      sigGen('src', 60, 180, { waveform: 'sine', frequency: 500, amplitude: 0.1, offset: 0.2 }),
       opamp('u1', 280, 180),
       res('rf', 460, 80, '10000'),
       res('rg', 460, 280, '1000'),
@@ -775,16 +779,16 @@ export const analogExamples: ExampleProject[] = [
   analog(
     'an-opamp-summing',
     'Op-Amp Summing Amplifier',
-    'Virtual-ground summing junction: V_out = −Rf · (V1/R1 + V2/R2). Two-input mixer with unity gain per channel.',
+    'Summing junction held at the 2.0 V reference on IN+ (single supply): V_out = Vref − Rf · ((V1 − Vref)/R1 + (V2 − Vref)/R2), a two-input mixer with unity gain per channel. 1.5 V and 1.7 V sit 0.5 V and 0.3 V under the reference, so V_out = 2.0 + 0.8 = 2.8 V. The ground-referenced −Rf · (V1/R1 + V2/R2) needs a negative supply.',
     'advanced',
     [
-      sigGen('v1', 60, 100, { waveform: 'dc', offset: 1, amplitude: 0, frequency: 1 }),
-      sigGen('v2', 60, 260, { waveform: 'dc', offset: 2, amplitude: 0, frequency: 1 }),
+      sigGen('v1', 60, 100, { waveform: 'dc', offset: 1.5, amplitude: 0, frequency: 1 }),
+      sigGen('v2', 60, 260, { waveform: 'dc', offset: 1.7, amplitude: 0, frequency: 1 }),
       res('r1', 240, 100, '10000'),
       res('r2', 240, 260, '10000'),
       res('rf', 420, 40, '10000'),
       opamp('u1', 420, 160),
-      sigGen('vref', 60, 400, { waveform: 'dc', offset: 2.5, amplitude: 0, frequency: 1 }),
+      sigGen('vref', 60, 400, { waveform: 'dc', offset: 2, amplitude: 0, frequency: 1 }),
       vmeter('vm', 600, 180),
     ],
     [
@@ -805,14 +809,15 @@ export const analogExamples: ExampleProject[] = [
   analog(
     'an-opamp-integrator',
     'Op-Amp Integrator',
-    'Rf replaced by a cap: V_out = −(1/RC) ∫V_in dt. Square-wave in → triangle-wave out. Classic analog-computer building block.',
+    'A capacitor in the feedback path: V_out = Vref − (1/RC) ∫(V_in − Vref) dt, so the 200 Hz, 1 V peak-to-peak square comes out a triangle around the 2.0 V reference, about 1.2 V peak to peak. Rf (22 k) across Cf gives it a DC path: without one the op-amp integrates its own offset and the start-up step and sits at a rail. It integrates well above 1/(2π · Rf · Cf) = 72 Hz, and the start-up offset dies out in a few Rf · Cf (2.2 ms).',
     'advanced',
     [
-      sigGen('src', 60, 200, { waveform: 'square', frequency: 200, amplitude: 1, offset: 2.5 }),
+      sigGen('src', 60, 200, { waveform: 'square', frequency: 200, amplitude: 0.5, offset: 2 }),
       res('rin', 240, 160, '10000'),
       cap('cf', 420, 60, '100n'),
+      res('rfb', 420, 0, '22000'),
       opamp('u1', 400, 180),
-      sigGen('vref', 60, 360, { waveform: 'dc', offset: 2.5, amplitude: 0, frequency: 1 }),
+      sigGen('vref', 60, 360, { waveform: 'dc', offset: 2, amplitude: 0, frequency: 1 }),
       vmeter('vm', 580, 180),
     ],
     [
@@ -824,6 +829,8 @@ export const analogExamples: ExampleProject[] = [
       w('w6', ['vref', 'GND'], ['src', 'GND'], C_GND),
       w('w7', ['u1', 'OUT'], ['vm', 'V+'], C_OUT),
       w('w8', ['src', 'GND'], ['vm', 'V-'], C_GND),
+      w('w9', ['u1', 'IN-'], ['rfb', '1'], C_SIG),
+      w('w10', ['rfb', '2'], ['u1', 'OUT'], C_OUT),
     ],
   ),
 
